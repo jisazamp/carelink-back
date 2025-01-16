@@ -1,0 +1,1 @@
+from app.exceptions.exceptions_classes import EntityNotFoundError
