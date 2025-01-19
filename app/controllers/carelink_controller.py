@@ -10,6 +10,7 @@ from app.models.authorized_users import AuthorizedUsers
 from app.models.user import User
 from app.security.jwt_utilities import (
     decode_access_token,
+    create_access_token,
     hash_password,
 )
 from fastapi import APIRouter, Depends, HTTPException
