@@ -1,10 +1,12 @@
-import os
-from typing import List
-from sqlalchemy.orm import Session
-from app.models.user import User
+from app.models.authorized_users import AuthorizedUsers
 from app.exceptions.exceptions_classes import EntityNotFoundError
+from app.models.user import User
+from passlib.context import CryptContext
+from sqlalchemy.orm import Session
+from typing import List
+from app.security.jwt_utilities import hash_password
 
-BASE_URL = os.getenv("BASE_URL")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class CareLinkCrud:
@@ -41,6 +43,21 @@ class CareLinkCrud:
         db_user = self._get_user_by_id(user_id)
         self.__carelink_session.delete(db_user)
         self.__carelink_session.commit()
+
+    def authenticate_user(self, email: str, password: str) -> AuthorizedUsers | None:
+        user = (
+            self.__carelink_session.query(AuthorizedUsers)
+            .filter(AuthorizedUsers.email == email)
+            .first()
+        )
+        if user and pwd_context.verify(password, user.password):
+            return user
+        return None
+
+    def create_user(self, user_data: AuthorizedUsers) -> AuthorizedUsers:
+        self.__carelink_session.add(user_data)
+        self.__carelink_session.commit()
+        return user_data
 
     def _get_users(self) -> List[User]:
         users = self.__carelink_session.query(User).all()
