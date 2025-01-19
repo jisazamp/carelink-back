@@ -74,3 +74,13 @@ class CareLinkCrud:
         if user is None:
             raise EntityNotFoundError(f"No user found with id {user_id}")
         return user
+
+    def _get_authorized_user_info(self, user_id) -> AuthorizedUsers:
+        user = (
+            self.__carelink_session.query(AuthorizedUsers)
+            .filter(AuthorizedUsers.id == user_id)
+            .first()
+        )
+        if user is None:
+            raise EntityNotFoundError(f"No user found with id {user_id}")
+        return user

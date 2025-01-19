@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from fastapi import HTTPException
+from http import HTTPStatus
 from passlib.context import CryptContext
 import jwt
 import os

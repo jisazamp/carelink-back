@@ -1,15 +1,15 @@
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
 from app.dto.v1.request.user_create_request_dto import UserCreateRequestDTO
-from app.dto.v1.response.create_user import CreateUserResponseDTO 
+from app.dto.v1.response.create_user import CreateUserResponseDTO
 from app.dto.v1.request.user_login_request_dto import UserLoginRequestDTO
 from app.dto.v1.response.generic_response import Response
+from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO, UserUpdateRequestDTO
 from app.models.authorized_users import AuthorizedUsers
 from app.models.user import User
 from app.security.jwt_utilities import (
     decode_access_token,
-    create_access_token,
     hash_password,
 )
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,6 +29,11 @@ def get_crud(
     carelink_db: Session = Depends(get_carelink_db),
 ):
     return CareLinkCrud(carelink_db)
+
+
+def get_payload(token: str = Depends(token_auth_scheme)):
+    payload = decode_access_token(token.credentials)
+    return payload
 
 
 def get_current_user(
@@ -132,9 +137,7 @@ async def create_user(
     user: UserCreateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
 ) -> Response[UserResponseDTO]:
-    hashed_password = hash_password(
-        user.password
-    )
+    hashed_password = hash_password(user.password)
     user_to_save = AuthorizedUsers(**user.dict())
     user_to_save.password = hashed_password
     saved_user = crud.create_user(user_to_save)
@@ -146,4 +149,18 @@ async def create_user(
         status_code=HTTPStatus.CREATED,
         message="User created successfully",
         error=None,
+    )
+
+
+@router.get("/info", status_code=200, response_model=Response[UserInfo])
+async def get_user_info(
+    crud: CareLinkCrud = Depends(get_crud), payload: dict = Depends(get_payload)
+):
+    user = crud._get_authorized_user_info(payload["sub"])
+    result = UserInfo(**user.__dict__)
+    return Response[UserInfo](
+        data=result,
+        message="User info retrieved successfuly",
+        error=None,
+        status_code=HTTPStatus.OK,
     )
