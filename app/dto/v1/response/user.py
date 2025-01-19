@@ -54,3 +54,6 @@ class UserUpdateRequestDTO(BaseModel):
     regimen_seguridad_social: str | None
     telefono: str | None
     tipo_afiliacion: str | None
+
+    class Config:
+        orm_mode = True

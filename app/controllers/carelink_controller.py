@@ -28,8 +28,11 @@ async def list_users(
     crud: CareLinkCrud = Depends(get_crud),
 ) -> Response[List[UserResponseDTO]]:
     users = crud.list_users()
+    users_list = []
+    for user in users:
+        users_list.append(user.__dict__)
     return Response[List[UserResponseDTO]](
-        data=users, status_code=HTTPStatus.OK, message="Success", error=None
+        data=users_list, status_code=HTTPStatus.OK, message="Success", error=None
     )
 
 
