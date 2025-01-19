@@ -1,6 +1,7 @@
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
-from app.dto.v1.request.user_create_request_dto import UserCreateRequestDTO
+from app.dto.v1.request.user_create_request_dto import AuthorizedUserCreateRequestDTO
+from app.dto.v1.request.user_request_dto import UserCreateRequestDTO
 from app.dto.v1.response.create_user import CreateUserResponseDTO
 from app.dto.v1.request.user_login_request_dto import UserLoginRequestDTO
 from app.dto.v1.response.generic_response import Response
@@ -46,7 +47,8 @@ def get_current_user(
     user_id = payload.get("sub")
     if user_id is None:
         raise HTTPException(
-            status_code=401, detail="Invalid authentication credentials"
+            status_code=401,
+            detail="Credenciales inválidas. Revise sus datos e intente de nuevo.",
         )
 
     user = crud.list_user_by_user_id(user_id)
@@ -121,7 +123,8 @@ async def login_user(
     user = crud.authenticate_user(login_data.email, login_data.password)
     if not user:
         raise HTTPException(
-            status_code=HTTPStatus.UNAUTHORIZED, detail="Invalid credentials"
+            status_code=HTTPStatus.UNAUTHORIZED,
+            detail="Usuario o contraseña incorrectos. Revise sus datos e intente de nuevo.",
         )
 
     access_token = create_access_token(data={"sub": user.id})
@@ -135,7 +138,7 @@ async def login_user(
 
 @router.post("/create", status_code=201, response_model=Response[CreateUserResponseDTO])
 async def create_user(
-    user: UserCreateRequestDTO,
+    user: AuthorizedUserCreateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
 ) -> Response[UserResponseDTO]:
     hashed_password = hash_password(user.password)
