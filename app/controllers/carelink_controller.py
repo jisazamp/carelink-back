@@ -41,7 +41,7 @@ def get_payload(token: str = Depends(token_auth_scheme)):
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(token_auth_scheme),
     crud: CareLinkCrud = Depends(get_crud),
-) -> User:
+) -> AuthorizedUsers:
     token = credentials.credentials
     payload = decode_access_token(token)
     user_id = payload.get("sub")
@@ -51,7 +51,7 @@ def get_current_user(
             detail="Credenciales inválidas. Revise sus datos e intente de nuevo.",
         )
 
-    user = crud.list_user_by_user_id(user_id)
+    user = crud._get_authorized_user_info(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
@@ -60,6 +60,7 @@ def get_current_user(
 @router.get("/users", response_model=Response[List[UserResponseDTO]])
 async def list_users(
     crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[List[UserResponseDTO]]:
     users = crud.list_users()
     users_list = []
@@ -74,6 +75,7 @@ async def list_users(
 async def list_user_by_id(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[UserResponseDTO]:
     user = crud.list_user_by_user_id(id)
     return Response[UserResponseDTO](
@@ -85,6 +87,7 @@ async def list_user_by_id(
 async def create_users(
     user: UserCreateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[UserResponseDTO]:
     user_to_save = User(**user.dict())
     saved_user = crud.save_user(user_to_save)
@@ -99,7 +102,10 @@ async def create_users(
 
 @router.patch("/users/{id}", status_code=200, response_model=Response[UserResponseDTO])
 async def update_user(
-    id: int, user: UserUpdateRequestDTO, crud: CareLinkCrud = Depends(get_crud)
+    id: int,
+    user: UserUpdateRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
 ):
     user_to_update = User(**user.dict())
     updated_user = crud.update_user(id, user_to_update)
@@ -110,7 +116,9 @@ async def update_user(
 
 @router.delete("/users/{id}", status_code=200, response_model=Response[object])
 async def delete_user(
-    id: int, crud: CareLinkCrud = Depends(get_crud)
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     crud.delete_user(id)
     return Response[object](data={}, status_code=HTTPStatus.NO_CONTENT)
