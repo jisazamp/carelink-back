@@ -28,6 +28,9 @@ class UserResponseDTO(BaseModel):
     telefono: str | None
     tipo_afiliacion: str | None
 
+    class Config:
+        orm_mode = True
+
 
 class UserUpdateRequestDTO(BaseModel):
     apellidos: str | None
@@ -41,7 +44,6 @@ class UserUpdateRequestDTO(BaseModel):
     genero: str | None
     grado_escolaridad: str | None
     ha_estado_en_otro_centro: bool | None
-    id_usuario: int | None
     lee: bool | None
     lugar_nacimiento: str | None
     lugar_procedencia: str | None

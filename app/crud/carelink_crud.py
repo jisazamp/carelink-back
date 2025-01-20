@@ -1,4 +1,6 @@
 from app.models.authorized_users import AuthorizedUsers
+from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
+from app.models.family_member import FamilyMember
 from app.exceptions.exceptions_classes import EntityNotFoundError
 from app.models.user import User
 from passlib.context import CryptContext
@@ -19,11 +21,24 @@ class CareLinkCrud:
     def list_user_by_user_id(self, user_id: int) -> User:
         return self._get_user_by_id(user_id)
 
+    def list_family_members(self) -> List[FamilyMember]:
+        return self._get_family_members()
+
+    def list_family_member_by_id(self, id: int) -> FamilyMember:
+        return self._get_family_member_by_id(id)
+
     def save_user(self, user: User) -> User:
+        user.is_deleted = False
         self.__carelink_session.add(user)
         self.__carelink_session.commit()
         self.__carelink_session.refresh(user)
         return user
+
+    def save_family_member(self, family_member: FamilyMember) -> FamilyMember:
+        self.__carelink_session.add(family_member)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(family_member)
+        return family_member
 
     def _update_user(self, user: User, db_user: User) -> User:
         for key, value in user.__dict__.items():
@@ -34,14 +49,39 @@ class CareLinkCrud:
         self.__carelink_session.refresh(db_user)
         return db_user
 
+    def _update_family_member(
+        self, family_member: FamilyMember, db_family_member: FamilyMember
+    ) -> FamilyMember:
+        for key, value in family_member.__dict__.items():
+            if key != "_sa_instance_state" and value is not None:
+                if hasattr(db_family_member, key):
+                    setattr(db_family_member, key, value)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(db_family_member)
+        return db_family_member
+
     def update_user(self, user_id: int, user: User) -> User:
         db_user = self._get_user_by_id(user_id)
         updated_user = self._update_user(user, db_user)
         return updated_user
 
-    def delete_user(self, user_id) -> User:
+    def update_family_member(
+        self, family_member_id: int, family_member: FamilyMember
+    ) -> FamilyMember:
+        db_family_member = self._get_family_member_by_id(family_member_id)
+        updated_family_member = self._update_family_member(
+            family_member, db_family_member
+        )
+        return updated_family_member
+
+    def delete_user(self, user_id: int):
         db_user = self._get_user_by_id(user_id)
-        self.__carelink_session.delete(db_user)
+        db_user.is_deleted = True
+        self.__carelink_session.commit()
+
+    def delete_family_member(self, id: int):
+        db_family_member = self._get_family_member_by_id(id)
+        db_family_member.is_deleted = True
         self.__carelink_session.commit()
 
     def authenticate_user(self, email: str, password: str) -> AuthorizedUsers | None:
@@ -60,7 +100,9 @@ class CareLinkCrud:
         return user_data
 
     def _get_users(self) -> List[User]:
-        users = self.__carelink_session.query(User).all()
+        users = (
+            self.__carelink_session.query(User).filter(User.is_deleted == False).all()
+        )
         return users
 
     def _get_user_by_id(self, user_id: int) -> User:
@@ -82,3 +124,26 @@ class CareLinkCrud:
         if user is None:
             raise EntityNotFoundError(f"No user found with id {user_id}")
         return user
+
+    def _get_family_members_by_user_id(
+        self, user_id: int
+    ) -> List[FamiliaresYAcudientesPorUsuario]:
+        family_members = (
+            self.__carelink_session.query(FamiliaresYAcudientesPorUsuario)
+            .filter(FamiliaresYAcudientesPorUsuario.id_usuario == user_id)
+            .all()
+        )
+        return family_members
+
+    def _get_family_members(self) -> List[FamilyMember]:
+        return self.__carelink_session.query(FamilyMember).all()
+
+    def _get_family_member_by_id(self, id: int) -> FamilyMember:
+        family_member = (
+            self.__carelink_session.query(FamilyMember)
+            .filter(FamilyMember.id_acudiente == id)
+            .first()
+        )
+        if family_member is None:
+            raise EntityNotFoundError(f"Acudiente con id {id} no existe")
+        return family_member

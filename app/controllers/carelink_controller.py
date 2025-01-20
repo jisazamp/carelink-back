@@ -1,13 +1,20 @@
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
+from app.dto.v1.request.family_member_create_request_dto import (
+    CreateFamilyMemberRequestDTO,
+    UpdateFamilyMemberRequestDTO,
+)
 from app.dto.v1.request.user_create_request_dto import AuthorizedUserCreateRequestDTO
 from app.dto.v1.request.user_request_dto import UserCreateRequestDTO
 from app.dto.v1.response.create_user import CreateUserResponseDTO
 from app.dto.v1.request.user_login_request_dto import UserLoginRequestDTO
+from app.dto.v1.response.family_member import FamilyMemberResponseDTO
 from app.dto.v1.response.generic_response import Response
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO, UserUpdateRequestDTO
+from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.models.authorized_users import AuthorizedUsers
+from app.models.family_member import FamilyMember
 from app.models.user import User
 from app.security.jwt_utilities import (
     decode_access_token,
@@ -83,6 +90,63 @@ async def list_user_by_id(
     )
 
 
+@router.get(
+    "/family_members",
+    status_code=200,
+    response_model=Response[List[FamilyMemberResponseDTO]],
+)
+async def get_family_members(
+    crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
+):
+    family_members = crud._get_family_members()
+    family_members_dto = [
+        FamilyMemberResponseDTO.from_orm(member) for member in family_members
+    ]
+    return Response[List[FamilyMemberResponseDTO]](
+        data=family_members_dto,
+        message="Family members retrieved successfuly",
+        error=None,
+        status_code=HTTPStatus.OK,
+    )
+
+
+@router.get(
+    "/users/{id}/family_members",
+    status_code=200,
+    response_model=Response[List[FamilyMembersByUserResponseDTO]],
+)
+async def get_user_family_members(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
+):
+    family_members = crud._get_family_members_by_user_id(id)
+    family_members_dto = [
+        FamilyMembersByUserResponseDTO.from_orm(member) for member in family_members
+    ]
+    return Response[List[FamilyMembersByUserResponseDTO]](
+        data=family_members_dto,
+        message="Family members retrieved successfuly",
+        error=None,
+        status_code=HTTPStatus.OK,
+    )
+
+
+@router.get("/info", status_code=200, response_model=Response[UserInfo])
+async def get_user_info(
+    crud: CareLinkCrud = Depends(get_crud), payload: dict = Depends(get_payload)
+):
+    user = crud._get_authorized_user_info(payload["sub"])
+    result = UserInfo(**user.__dict__)
+    return Response[UserInfo](
+        data=result,
+        message="User info retrieved successfuly",
+        error=None,
+        status_code=HTTPStatus.OK,
+    )
+
+
 @router.post("/users", status_code=201, response_model=Response[UserResponseDTO])
 async def create_users(
     user: UserCreateRequestDTO,
@@ -100,28 +164,23 @@ async def create_users(
     )
 
 
-@router.patch("/users/{id}", status_code=200, response_model=Response[UserResponseDTO])
-async def update_user(
-    id: int,
-    user: UserUpdateRequestDTO,
+@router.post(
+    "/family_members", status_code=201, response_model=Response[FamilyMemberResponseDTO]
+)
+async def create_family_members(
+    family_member: CreateFamilyMemberRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
     current_user: AuthorizedUsers = Depends(get_current_user),
-):
-    user_to_update = User(**user.dict())
-    updated_user = crud.update_user(id, user_to_update)
-    return Response[UserResponseDTO](
-        data=updated_user.__dict__, status_code=HTTPStatus.OK
+) -> Response[FamilyMemberResponseDTO]:
+    family_member_to_save = FamilyMember(**family_member.dict())
+    saved_family_member = crud.save_family_member(family_member_to_save)
+
+    return Response[FamilyMemberResponseDTO](
+        data=saved_family_member.__dict__,
+        status_code=HTTPStatus.CREATED,
+        message="Family member created successfully",
+        error=None,
     )
-
-
-@router.delete("/users/{id}", status_code=200, response_model=Response[object])
-async def delete_user(
-    id: int,
-    crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
-) -> Response[object]:
-    crud.delete_user(id)
-    return Response[object](data={}, status_code=HTTPStatus.NO_CONTENT)
 
 
 @router.post("/login", response_model=Response[dict])
@@ -164,15 +223,53 @@ async def create_user(
     )
 
 
-@router.get("/info", status_code=200, response_model=Response[UserInfo])
-async def get_user_info(
-    crud: CareLinkCrud = Depends(get_crud), payload: dict = Depends(get_payload)
+@router.patch("/users/{id}", status_code=200, response_model=Response[UserResponseDTO])
+async def update_user(
+    id: int,
+    user: UserUpdateRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
 ):
-    user = crud._get_authorized_user_info(payload["sub"])
-    result = UserInfo(**user.__dict__)
-    return Response[UserInfo](
-        data=result,
-        message="User info retrieved successfuly",
-        error=None,
-        status_code=HTTPStatus.OK,
+    user_to_update = User(**user.dict())
+    updated_user = crud.update_user(id, user_to_update)
+    return Response[UserResponseDTO](
+        data=updated_user.__dict__, status_code=HTTPStatus.OK
     )
+
+
+@router.patch(
+    "/family_members/{id}",
+    status_code=200,
+    response_model=Response[FamilyMemberResponseDTO],
+)
+async def update_family_member(
+    id: int,
+    family_member: UpdateFamilyMemberRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
+):
+    family_member_to_update = FamilyMember(**family_member.dict())
+    family_member_updated = crud.update_family_member(id, family_member_to_update)
+    return Response[FamilyMemberResponseDTO](
+        data=family_member_updated.__dict__, status_code=HTTPStatus.OK
+    )
+
+
+@router.delete("/users/{id}", status_code=200, response_model=Response[object])
+async def delete_user(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
+) -> Response[object]:
+    crud.delete_user(id)
+    return Response[object](data={}, status_code=HTTPStatus.NO_CONTENT)
+
+
+@router.delete("/family_members/{id}", status_code=200, response_model=Response[object])
+async def delete_family_member(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
+) -> Response[object]:
+    crud.delete_family_member(id)
+    return Response[object](data={}, status_code=HTTPStatus.NO_CONTENT)
