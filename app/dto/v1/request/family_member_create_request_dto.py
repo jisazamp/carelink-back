@@ -12,6 +12,10 @@ class CreateFamilyMemberRequestDTO(BaseModel):
     vive: bool
 
 
+class AssociateFamilyMemberRequestDTO(BaseModel):
+    parentezco: str
+
+
 class UpdateFamilyMemberRequestDTO(BaseModel):
     acudiente: bool | None
     apellidos: str | None

@@ -1,7 +1,7 @@
 from app.models.authorized_users import AuthorizedUsers
 from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
 from app.models.family_member import FamilyMember
-from app.exceptions.exceptions_classes import EntityNotFoundError
+from app.exceptions.exceptions_classes import BusinessLogicError, EntityNotFoundError
 from app.models.user import User
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
@@ -34,11 +34,44 @@ class CareLinkCrud:
         self.__carelink_session.refresh(user)
         return user
 
-    def save_family_member(self, family_member: FamilyMember) -> FamilyMember:
+    """def save_family_member(
+        self, id: int, kinship, family_member: FamilyMember
+    ):
+        self._get_user_by_id(id)
+        kinship_string = kinship.dict()["parentezco"]
         self.__carelink_session.add(family_member)
         self.__carelink_session.commit()
         self.__carelink_session.refresh(family_member)
-        return family_member
+        associate_family = FamiliaresYAcudientesPorUsuario(
+            **{
+                "id_usuario": id,
+                "id_acudiente": family_member.id_acudiente,
+                "parentesco": kinship_string,
+            }
+        )
+        self.__carelink_session.add(associate_family)
+        self.__carelink_session.commit()"""
+
+    def save_family_member(self, id: int, kinship, family_member: FamilyMember):
+        with self.__carelink_session.begin_nested() as transaction:
+            try:
+                self._get_user_by_id(id)
+                kinship_string = kinship.dict()["parentezco"]
+                self.__carelink_session.add(family_member)
+                self.__carelink_session.flush()
+                associate_family = FamiliaresYAcudientesPorUsuario(
+                    **{
+                        "id_usuario": id,
+                        "id_acudiente": family_member.id_acudiente,
+                        "parentesco": kinship_string,
+                    }
+                )
+                self.__carelink_session.add(associate_family)
+                self.__carelink_session.commit()
+
+            except Exception as e:
+                transaction.rollback()
+                raise BusinessLogicError("Something went wrong")
 
     def _update_user(self, user: User, db_user: User) -> User:
         for key, value in user.__dict__.items():

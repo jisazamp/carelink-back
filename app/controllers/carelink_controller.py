@@ -1,6 +1,7 @@
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
 from app.dto.v1.request.family_member_create_request_dto import (
+    AssociateFamilyMemberRequestDTO,
     CreateFamilyMemberRequestDTO,
     UpdateFamilyMemberRequestDTO,
 )
@@ -15,6 +16,7 @@ from app.dto.v1.response.user import UserResponseDTO, UserUpdateRequestDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.models.authorized_users import AuthorizedUsers
 from app.models.family_member import FamilyMember
+from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
 from app.models.user import User
 from app.security.jwt_utilities import (
     decode_access_token,
@@ -165,18 +167,22 @@ async def create_users(
 
 
 @router.post(
-    "/family_members", status_code=201, response_model=Response[FamilyMemberResponseDTO]
+    "/family_members/:id",
+    status_code=201,
+    response_model=Response[object],
 )
 async def create_family_members(
+    id: int,
     family_member: CreateFamilyMemberRequestDTO,
+    kinship: AssociateFamilyMemberRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
     current_user: AuthorizedUsers = Depends(get_current_user),
-) -> Response[FamilyMemberResponseDTO]:
+) -> Response[object]:
     family_member_to_save = FamilyMember(**family_member.dict())
-    saved_family_member = crud.save_family_member(family_member_to_save)
+    saved_family_member = crud.save_family_member(id, kinship, family_member_to_save)
 
-    return Response[FamilyMemberResponseDTO](
-        data=saved_family_member.__dict__,
+    return Response[object](
+        data={},
         status_code=HTTPStatus.CREATED,
         message="Family member created successfully",
         error=None,
