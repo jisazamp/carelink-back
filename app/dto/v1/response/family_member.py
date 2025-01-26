@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 
 class FamilyMemberResponseDTO(BaseModel):
@@ -11,6 +12,7 @@ class FamilyMemberResponseDTO(BaseModel):
     nombres: str
     telefono: str
     vive: bool
+    parentesco: Optional[str]
 
     class Config:
         orm_mode = True

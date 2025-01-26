@@ -114,6 +114,28 @@ async def get_family_members(
 
 
 @router.get(
+    "/family_members/:id",
+    status_code=200,
+    response_model=Response[FamilyMemberResponseDTO],
+)
+async def get_family_member_by_id(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    current_user: AuthorizedUsers = Depends(get_current_user),
+):
+    family_member, parentesco = crud._get_family_member_by_id(id)
+    family_member.parentesco = parentesco
+    family_member_dto = FamilyMemberResponseDTO.from_orm(family_member)
+
+    return Response[FamilyMemberResponseDTO](
+        data=family_member_dto,
+        message="Family member retrieved successfuly",
+        error=None,
+        status_code=HTTPStatus.OK,
+    )
+
+
+@router.get(
     "/users/{id}/family_members",
     status_code=200,
     response_model=Response[List[FamilyMembersByUserResponseDTO]],

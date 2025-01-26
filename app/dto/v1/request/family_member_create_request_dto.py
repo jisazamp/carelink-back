@@ -6,6 +6,7 @@ class CreateFamilyMemberRequestDTO(BaseModel):
     apellidos: str
     direccion: str
     email: str
+    is_deleted: bool
     n_documento: str
     nombres: str
     telefono: str
