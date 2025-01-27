@@ -114,7 +114,7 @@ async def get_family_members(
 
 
 @router.get(
-    "/family_members/:id",
+    "/family_members/{id}",
     status_code=200,
     response_model=Response[FamilyMemberResponseDTO],
 )

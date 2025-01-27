@@ -83,7 +83,7 @@ class CareLinkCrud:
     def update_family_member(
         self, family_member_id: int, family_member: FamilyMember
     ) -> FamilyMember:
-        db_family_member = self._get_family_member_by_id(family_member_id)
+        db_family_member, _ = self._get_family_member_by_id(family_member_id)
         updated_family_member = self._update_family_member(
             family_member, db_family_member
         )
