@@ -1,12 +1,13 @@
-from app.models.authorized_users import AuthorizedUsers
-from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
-from app.models.family_member import FamilyMember
 from app.exceptions.exceptions_classes import BusinessLogicError, EntityNotFoundError
+from app.models.authorized_users import AuthorizedUsers
+from app.models.family_member import FamilyMember
+from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
+from app.models.medical_record import MedicalRecord
 from app.models.user import User
+from fastapi import HTTPException
 from passlib.context import CryptContext
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from typing import List, Tuple
-from app.security.jwt_utilities import hash_password
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -41,13 +42,11 @@ class CareLinkCrud:
                 kinship_string = kinship.dict()["parentezco"]
                 self.__carelink_session.add(family_member)
                 self.__carelink_session.flush()
-                associate_family = FamiliaresYAcudientesPorUsuario(
-                    **{
-                        "id_usuario": id,
-                        "id_acudiente": family_member.id_acudiente,
-                        "parentesco": kinship_string,
-                    }
-                )
+                associate_family = FamiliaresYAcudientesPorUsuario(**{
+                    "id_usuario": id,
+                    "id_acudiente": family_member.id_acudiente,
+                    "parentesco": kinship_string,
+                })
                 self.__carelink_session.add(associate_family)
                 self.__carelink_session.commit()
 
@@ -89,6 +88,31 @@ class CareLinkCrud:
         )
         return updated_family_member
 
+    def update_user_medical_record(
+        self, user_id: int, record_id: int, update_data: dict
+    ) -> MedicalRecord:
+        self._get_user_by_id(user_id)
+
+        record_to_update = (
+            self.__carelink_session.query(MedicalRecord)
+            .filter_by(id_historiaclinica=record_id, id_usuario=user_id)
+            .first()
+        )
+
+        if not record_to_update:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Medical record with ID {record_id} not found for user {user_id}",
+            )
+
+        for key, value in update_data.items():
+            setattr(record_to_update, key, value)
+
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(record_to_update)
+
+        return record_to_update
+
     def delete_user(self, user_id: int):
         db_user = self._get_user_by_id(user_id)
         db_user.is_deleted = True
@@ -113,6 +137,15 @@ class CareLinkCrud:
         self.__carelink_session.add(user_data)
         self.__carelink_session.commit()
         return user_data
+
+    def create_user_medical_record(
+        self, user_id: int, record: MedicalRecord
+    ) -> MedicalRecord:
+        self._get_user_by_id(user_id)
+        self.__carelink_session.add(record)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(record)
+        return record
 
     def _get_users(self) -> List[User]:
         users = (
@@ -147,11 +180,12 @@ class CareLinkCrud:
             self.__carelink_session.query(FamiliaresYAcudientesPorUsuario)
             .join(
                 FamilyMember,
-                FamiliaresYAcudientesPorUsuario.id_acudiente == FamilyMember.id_acudiente,
+                FamiliaresYAcudientesPorUsuario.id_acudiente
+                == FamilyMember.id_acudiente,
             )
             .filter(
                 FamiliaresYAcudientesPorUsuario.id_usuario == user_id,
-                FamilyMember.is_deleted == False
+                FamilyMember.is_deleted == False,
             )
             .all()
         )
