@@ -4,11 +4,15 @@ from typing import Generator
 import os
 
 DATABASE_CARELINK_CONNECTION_URL = os.getenv("DATABASE_CARELINK_CONNECTION_URL")
+
 if not DATABASE_CARELINK_CONNECTION_URL:
     raise ValueError("DATABASE_CARELINK_CONNECTION_URL environment variable is not set")
 
 carelink_engine = create_engine(
-    DATABASE_CARELINK_CONNECTION_URL, pool_pre_ping=True, echo=False
+    DATABASE_CARELINK_CONNECTION_URL,
+    pool_pre_ping=True,
+    echo=False,
+    connect_args={"ssl": {"verify_cert": False}},
 )
 carelink_session = sessionmaker(autocommit=False, autoflush=False, bind=carelink_engine)
 
