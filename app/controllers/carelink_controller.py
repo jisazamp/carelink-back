@@ -197,13 +197,11 @@ async def create_users(
     )
 
 
-router.post(
+@router.post(
     "/family_members/:id",
     status_code=201,
     response_model=Response[object],
 )
-
-
 async def create_family_members(
     id: int,
     family_member: CreateFamilyMemberRequestDTO,
