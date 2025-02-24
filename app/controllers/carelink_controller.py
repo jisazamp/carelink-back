@@ -6,9 +6,18 @@ from app.dto.v1.request.family_member_create_request_dto import (
     UpdateFamilyMemberRequestDTO,
 )
 from app.dto.v1.request.user_create_request_dto import AuthorizedUserCreateRequestDTO
+from app.dto.v1.request.user_medical_record_create_request_dto import (
+    CreateUserMedicalRecordCreateRequestDTO,
+)
+from app.dto.v1.request.user_medical_record_update_request_dto import (
+    UpdateUserMedicalRecordRequestDTO,
+)
 from app.dto.v1.request.user_request_dto import UserCreateRequestDTO
 from app.dto.v1.response.create_user import CreateUserResponseDTO
 from app.dto.v1.request.user_login_request_dto import UserLoginRequestDTO
+from app.dto.v1.response.create_user_medical_record import (
+    CreateUserMedicalRecordResponseDTO,
+)
 from app.dto.v1.response.family_member import FamilyMemberResponseDTO
 from app.dto.v1.response.generic_response import Response
 from app.dto.v1.response.user_info import UserInfo
@@ -16,7 +25,7 @@ from app.dto.v1.response.user import UserResponseDTO, UserUpdateRequestDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.models.authorized_users import AuthorizedUsers
 from app.models.family_member import FamilyMember
-from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
+from app.models.medical_record import MedicalRecord
 from app.models.user import User
 from app.security.jwt_utilities import (
     decode_access_token,
@@ -69,7 +78,7 @@ def get_current_user(
 @router.get("/users", response_model=Response[List[UserResponseDTO]])
 async def list_users(
     crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[List[UserResponseDTO]]:
     users = crud.list_users()
     users_list = []
@@ -84,7 +93,7 @@ async def list_users(
 async def list_user_by_id(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[UserResponseDTO]:
     user = crud.list_user_by_user_id(id)
     return Response[UserResponseDTO](
@@ -99,7 +108,7 @@ async def list_user_by_id(
 )
 async def get_family_members(
     crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ):
     family_members = crud._get_family_members()
     family_members_dto = [
@@ -121,7 +130,7 @@ async def get_family_members(
 async def get_family_member_by_id(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ):
     family_member, parentesco = crud._get_family_member_by_id(id)
     family_member.parentesco = parentesco
@@ -143,7 +152,7 @@ async def get_family_member_by_id(
 async def get_user_family_members(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ):
     family_members = crud._get_family_members_by_user_id(id)
     family_members_dto = [
@@ -175,7 +184,7 @@ async def get_user_info(
 async def create_users(
     user: UserCreateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[UserResponseDTO]:
     user_to_save = User(**user.dict())
     saved_user = crud.save_user(user_to_save)
@@ -188,17 +197,19 @@ async def create_users(
     )
 
 
-@router.post(
+router.post(
     "/family_members/:id",
     status_code=201,
     response_model=Response[object],
 )
+
+
 async def create_family_members(
     id: int,
     family_member: CreateFamilyMemberRequestDTO,
     kinship: AssociateFamilyMemberRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     family_member_to_save = FamilyMember(**family_member.dict())
     saved_family_member = crud.save_family_member(id, kinship, family_member_to_save)
@@ -231,6 +242,27 @@ async def login_user(
     )
 
 
+@router.post(
+    "/users/:id/medical_record",
+    status_code=201,
+    response_model=Response[CreateUserMedicalRecordResponseDTO],
+)
+async def create_user_medical_record(
+    id: int,
+    record: CreateUserMedicalRecordCreateRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+) -> Response[CreateUserMedicalRecordResponseDTO]:
+    record_to_save = MedicalRecord(**record.dict())
+    saved_record = crud.create_user_medical_record(id, record_to_save)
+    response_data = CreateUserMedicalRecordResponseDTO(**saved_record.__dict__)
+    return Response[CreateUserMedicalRecordResponseDTO](
+        data=response_data,
+        message="Historia clínica creada con éxito",
+        status_code=201,
+        error=None,
+    )
+
+
 @router.post("/create", status_code=201, response_model=Response[CreateUserResponseDTO])
 async def create_user(
     user: AuthorizedUserCreateRequestDTO,
@@ -256,12 +288,15 @@ async def update_user(
     id: int,
     user: UserUpdateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ):
     user_to_update = User(**user.dict())
     updated_user = crud.update_user(id, user_to_update)
     return Response[UserResponseDTO](
-        data=updated_user.__dict__, status_code=HTTPStatus.OK
+        data=updated_user.__dict__,
+        status_code=HTTPStatus.OK,
+        message="Usuario actualizado",
+        error=None,
     )
 
 
@@ -274,7 +309,7 @@ async def update_family_member(
     id: int,
     family_member: UpdateFamilyMemberRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ):
     family_member_to_update = FamilyMember(**family_member.dict())
     family_member_updated = crud.update_family_member(id, family_member_to_update)
@@ -283,11 +318,33 @@ async def update_family_member(
     )
 
 
+@router.patch(
+    "/users/{id}/medical_record/{record_id}",
+    status_code=200,
+    response_model=Response[CreateUserMedicalRecordResponseDTO],
+)
+async def update_user_medical_record(
+    id: int,
+    record_id: int,
+    record: UpdateUserMedicalRecordRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+) -> Response[CreateUserMedicalRecordResponseDTO]:
+    update_data = record.dict(exclude_unset=True)
+    updated_record = crud.update_user_medical_record(id, record_id, update_data)
+    response_data = CreateUserMedicalRecordResponseDTO(**updated_record.__dict__)
+    return Response[CreateUserMedicalRecordResponseDTO](
+        data=response_data,
+        message="Historia clínica actualizada con éxito",
+        status_code=200,
+        error=None,
+    )
+
+
 @router.delete("/users/{id}", status_code=200, response_model=Response[object])
 async def delete_user(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     crud.delete_user(id)
     return Response[object](data={}, status_code=HTTPStatus.NO_CONTENT)
@@ -297,7 +354,7 @@ async def delete_user(
 async def delete_family_member(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    current_user: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     crud.delete_family_member(id)
     return Response[object](data={}, status_code=HTTPStatus.NO_CONTENT)

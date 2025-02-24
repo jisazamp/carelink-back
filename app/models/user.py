@@ -29,7 +29,7 @@ class User(Base):
     regimen_seguridad_social = Column(String)
     telefono = Column(String)
     tipo_afiliacion = Column(String)
-    is_deleted=Column(Boolean)
+    is_deleted = Column(Boolean)
 
     class Config:
         orm_mode = True
