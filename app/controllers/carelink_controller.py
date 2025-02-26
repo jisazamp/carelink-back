@@ -241,7 +241,7 @@ async def login_user(
 
 
 @router.post(
-    "/users/:id/medical_record",
+    "/users/{id}/medical_record",
     status_code=201,
     response_model=Response[CreateUserMedicalRecordResponseDTO],
 )
