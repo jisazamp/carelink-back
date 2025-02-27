@@ -28,6 +28,10 @@ class CareLinkCrud:
     def list_family_member_by_id(self, id: int) -> FamilyMember:
         return self._get_family_member_by_id(id)
 
+    def list_user_medical_record(self, id: int) -> MedicalRecord | None:
+        self._get_user_by_id(id)
+        return self._get_user_medical_record_by_user_id(id)
+
     def save_user(self, user: User) -> User:
         user.is_deleted = False
         self.__carelink_session.add(user)
@@ -50,7 +54,7 @@ class CareLinkCrud:
                 self.__carelink_session.add(associate_family)
                 self.__carelink_session.commit()
 
-            except Exception as e:
+            except Exception:
                 transaction.rollback()
                 raise BusinessLogicError("Something went wrong")
 
@@ -210,3 +214,10 @@ class CareLinkCrud:
         if family_member is None:
             raise EntityNotFoundError(f"Acudiente con id {id} no existe")
         return family_member, parentesco
+
+    def _get_user_medical_record_by_user_id(self, id: int) -> MedicalRecord | None:
+        return (
+            self.__carelink_session.query(MedicalRecord)
+            .filter(MedicalRecord.id_usuario == id)
+            .first()
+        )
