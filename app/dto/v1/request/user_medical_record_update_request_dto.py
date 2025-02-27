@@ -9,13 +9,17 @@ class UpdateUserMedicalRecordRequestDTO(BaseModel):
     altura: Optional[int] = None
     cafeina: Optional[bool] = None
     cirugias: Optional[bool] = None
+    comunicacion_no_verbal: Optional[str] = None
+    comunicacion_verbal: Optional[str] = None
     discapacidad: Optional[bool] = None
     emer_medica: Optional[str] = None
     eps: Optional[str] = None
+    estado_de_animo: Optional[str] = None
     fecha_ingreso: Optional[date] = None
     frecuencia_cardiaca: Optional[float] = None
     historial_cirugias: Optional[str] = None
     maltratado: Optional[bool] = None
+    maltrato: Optional[bool] = None
     medicamentos_alergia: Optional[str] = None
     motivo_ingreso: Optional[str] = None
     observ_dietaespecial: Optional[str] = None

@@ -37,7 +37,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from functools import lru_cache
 from http import HTTPStatus
 from sqlalchemy.orm import Session
-from typing import Any, List
+from typing import List
 
 
 token_auth_scheme = HTTPBearer()
@@ -96,8 +96,9 @@ async def list_user_by_id(
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[UserResponseDTO]:
     user = crud.list_user_by_user_id(id)
+    user_response = UserResponseDTO(**user.__dict__)
     return Response[UserResponseDTO](
-        data=user.__dict__, status_code=HTTPStatus.OK, message="Success", error=None
+        data=user_response, status_code=HTTPStatus.OK, message="Success", error=None
     )
 
 
@@ -166,6 +167,31 @@ async def get_user_family_members(
     )
 
 
+@router.get(
+    "/users/{id}/medical_record",
+    status_code=200,
+    response_model=Response[CreateUserMedicalRecordResponseDTO | None],
+)
+async def get_user_medical_record(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    medical_record = crud.list_user_medical_record(id)
+    medical_record_response = None
+    if medical_record:
+        medical_record_response = CreateUserMedicalRecordResponseDTO(
+            **medical_record.__dict__
+        )
+
+    return Response[CreateUserMedicalRecordResponseDTO | None](
+        data=medical_record_response,
+        message="Historia clínica listada",
+        error=None,
+        status_code=200,
+    )
+
+
 @router.get("/info", status_code=200, response_model=Response[UserInfo])
 async def get_user_info(
     crud: CareLinkCrud = Depends(get_crud), payload: dict = Depends(get_payload)
@@ -188,9 +214,10 @@ async def create_users(
 ) -> Response[UserResponseDTO]:
     user_to_save = User(**user.dict())
     saved_user = crud.save_user(user_to_save)
+    user_response = UserResponseDTO(**saved_user.__dict__)
 
     return Response[UserResponseDTO](
-        data=saved_user.__dict__,
+        data=user_response,
         status_code=HTTPStatus.CREATED,
         message="User created successfully",
         error=None,
