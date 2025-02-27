@@ -8,10 +8,13 @@ class CreateUserMedicalRecordCreateRequestDTO(BaseModel):
     alcoholismo: bool
     alergico_medicamento: bool
     altura: int
+    apariencia_personal: str
     cafeina: bool
     cirugias: bool
     comunicacion_no_verbal: str
     comunicacion_verbal: str
+    continencia: bool
+    cuidado_personal: str
     discapacidad: bool
     emer_medica: str
     eps: str
@@ -33,4 +36,7 @@ class CreateUserMedicalRecordCreateRequestDTO(BaseModel):
     tabaquismo: bool
     telefono_emermedica: str
     temperatura_corporal: float
+    tipo_alimentacion: str
+    tipo_de_movilidad: str
+    tipo_de_sueno: str
     tipo_sangre: str
