@@ -7,10 +7,13 @@ class UpdateUserMedicalRecordRequestDTO(BaseModel):
     alcoholismo: Optional[bool] = None
     alergico_medicamento: Optional[bool] = None
     altura: Optional[int] = None
+    apariencia_personal: Optional[str] = None
     cafeina: Optional[bool] = None
     cirugias: Optional[bool] = None
     comunicacion_no_verbal: Optional[str] = None
     comunicacion_verbal: Optional[str] = None
+    continencia: Optional[bool] = None
+    cuidado_personal: Optional[str] = None
     discapacidad: Optional[bool] = None
     emer_medica: Optional[str] = None
     eps: Optional[str] = None
@@ -33,4 +36,7 @@ class UpdateUserMedicalRecordRequestDTO(BaseModel):
     temperatura_corporal: Optional[float] = None
     tiene_otrasalergias: Optional[bool] = None
     tienedieta_especial: Optional[bool] = None
+    tipo_alimentacion: Optional[str] = None
+    tipo_de_movilidad: Optional[str] = None
+    tipo_de_sueno: Optional[str] = None
     tipo_sangre: Optional[str] = None
