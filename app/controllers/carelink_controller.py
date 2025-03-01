@@ -17,7 +17,10 @@ from app.dto.v1.request.user_medical_record_update_request_dto import (
     UpdateUserMedicalRecordRequestDTO,
 )
 from app.dto.v1.request.user_request_dto import UserCreateRequestDTO
-from app.dto.v1.response.cares_per_user import CaresPerUserResponseDTO
+from app.dto.v1.response.cares_per_user import (
+    CaresPerUserResponseDTO,
+    CaresPerUserUpdateDTO,
+)
 from app.dto.v1.response.create_user import CreateUserResponseDTO
 from app.dto.v1.request.user_login_request_dto import UserLoginRequestDTO
 from app.dto.v1.response.create_user_medical_record import (
@@ -25,12 +28,21 @@ from app.dto.v1.response.create_user_medical_record import (
 )
 from app.dto.v1.response.family_member import FamilyMemberResponseDTO
 from app.dto.v1.response.generic_response import Response
-from app.dto.v1.response.interventions_per_user import InterventionsPerUserResponseDTO
-from app.dto.v1.response.medicines_per_user import MedicinesPerUserResponseDTO
+from app.dto.v1.response.interventions_per_user import (
+    InterventionsPerUserResponseDTO,
+    InterventionsPerUserUpdateDTO,
+)
+from app.dto.v1.response.medicines_per_user import (
+    MedicinesPerUserResponseDTO,
+    MedicinesPerUserUpdateDTO,
+)
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO, UserUpdateRequestDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
-from app.dto.v1.response.vaccines_per_user import VaccinesPerUserResponseDTO
+from app.dto.v1.response.vaccines_per_user import (
+    VaccinesPerUserResponseDTO,
+    VaccinesPerUserUpdateDTO,
+)
 from app.models.authorized_users import AuthorizedUsers
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.family_member import FamilyMember
@@ -441,6 +453,76 @@ async def update_user(
     )
 
 
+@router.patch("/user/treatment/{id}", status_code=200, response_model=Response[object])
+async def update_treatment(
+    id: int,
+    treatment: MedicinesPerUserUpdateDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    treatment_to_update = MedicamentosPorUsuario(**treatment.__dict__)
+    crud.update_medical_treatment(id, treatment_to_update)
+    return Response[object](
+        data={},
+        status_code=HTTPStatus.OK,
+        message="Medicamento actualizado",
+        error=None,
+    )
+
+
+@router.patch("/user/nursing/{id}", status_code=200, response_model=Response[object])
+async def update_nursing(
+    id: int,
+    treatment: CaresPerUserUpdateDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    treatment_to_update = CuidadosEnfermeriaPorUsuario(**treatment.__dict__)
+    crud.update_medical_nursing(id, treatment_to_update)
+    return Response[object](
+        data={},
+        status_code=HTTPStatus.OK,
+        message="Medicamento actualizado",
+        error=None,
+    )
+
+
+@router.patch(
+    "/user/intervention/{id}", status_code=200, response_model=Response[object]
+)
+async def update_intervention(
+    id: int,
+    treatment: InterventionsPerUserUpdateDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    treatment_to_update = IntervencionesPorUsuario(**treatment.__dict__)
+    crud.update_medical_intervention(id, treatment_to_update)
+    return Response[object](
+        data={},
+        status_code=HTTPStatus.OK,
+        message="Medicamento actualizado",
+        error=None,
+    )
+
+
+@router.patch("/user/vaccine/{id}", status_code=200, response_model=Response[object])
+async def update_vaccine(
+    id: int,
+    treatment: VaccinesPerUserUpdateDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    treatment_to_update = VacunasPorUsuario(**treatment.__dict__)
+    crud.update_medical_vaccine(id, treatment_to_update)
+    return Response[object](
+        data={},
+        status_code=HTTPStatus.OK,
+        message="Medicamento actualizado",
+        error=None,
+    )
+
+
 @router.patch(
     "/family_members/{id}",
     status_code=200,
@@ -462,19 +544,39 @@ async def update_family_member(
 @router.patch(
     "/users/{id}/medical_record/{record_id}",
     status_code=200,
-    response_model=Response[CreateUserMedicalRecordResponseDTO],
+    response_model=Response[object],
 )
 async def update_user_medical_record(
     id: int,
     record_id: int,
     record: UpdateUserMedicalRecordRequestDTO,
+    medicines: List[CreateUserAssociatedMedicinesRequestDTO],
+    cares: List[CreateUserAssociatedCaresRequestDTO],
+    interventions: List[CreateUserAssociatedInterventionsRequestDTO],
+    vaccines: List[CreateUserAssociatedVaccinesRequestDTO],
     crud: CareLinkCrud = Depends(get_crud),
-) -> Response[CreateUserMedicalRecordResponseDTO]:
+) -> Response[object]:
     update_data = record.dict(exclude_unset=True)
-    updated_record = crud.update_user_medical_record(id, record_id, update_data)
-    response_data = CreateUserMedicalRecordResponseDTO(**updated_record.__dict__)
-    return Response[CreateUserMedicalRecordResponseDTO](
-        data=response_data,
+    medicines_to_save = [
+        MedicamentosPorUsuario(**medicine.__dict__) for medicine in medicines
+    ]
+    cares_to_save = [CuidadosEnfermeriaPorUsuario(**care.__dict__) for care in cares]
+    interventions_to_save = [
+        IntervencionesPorUsuario(**intervention.__dict__)
+        for intervention in interventions
+    ]
+    vaccines_to_save = [VacunasPorUsuario(**vaccine.__dict__) for vaccine in vaccines]
+    crud.update_user_medical_record(
+        id,
+        record_id,
+        update_data,
+        medicines_to_save,
+        cares_to_save,
+        interventions_to_save,
+        vaccines_to_save,
+    )
+    return Response[object](
+        data={},
         message="Historia clínica actualizada con éxito",
         status_code=200,
         error=None,

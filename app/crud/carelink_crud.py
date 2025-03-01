@@ -103,6 +103,56 @@ class CareLinkCrud:
         self.__carelink_session.refresh(db_user)
         return db_user
 
+    def _update_treatment(
+        self, treatment: MedicamentosPorUsuario, db_treatment: MedicamentosPorUsuario
+    ) -> MedicamentosPorUsuario:
+        for key, value in treatment.__dict__.items():
+            if key != "_sa_instance_state" and value is not None:
+                if hasattr(db_treatment, key):
+                    setattr(db_treatment, key, value)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(db_treatment)
+        return db_treatment
+
+    def _update_nursing(
+        self,
+        treatment: CuidadosEnfermeriaPorUsuario,
+        db_treatment: CuidadosEnfermeriaPorUsuario,
+    ) -> CuidadosEnfermeriaPorUsuario:
+        for key, value in treatment.__dict__.items():
+            if key != "_sa_instance_state" and value is not None:
+                if hasattr(db_treatment, key):
+                    setattr(db_treatment, key, value)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(db_treatment)
+        return db_treatment
+
+    def _update_intervention(
+        self,
+        treatment: IntervencionesPorUsuario,
+        db_treatment: IntervencionesPorUsuario,
+    ) -> IntervencionesPorUsuario:
+        for key, value in treatment.__dict__.items():
+            if key != "_sa_instance_state" and value is not None:
+                if hasattr(db_treatment, key):
+                    setattr(db_treatment, key, value)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(db_treatment)
+        return db_treatment
+
+    def _update_vaccine(
+        self,
+        treatment: VacunasPorUsuario,
+        db_treatment: VacunasPorUsuario,
+    ) -> VacunasPorUsuario:
+        for key, value in treatment.__dict__.items():
+            if key != "_sa_instance_state" and value is not None:
+                if hasattr(db_treatment, key):
+                    setattr(db_treatment, key, value)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(db_treatment)
+        return db_treatment
+
     def _update_family_member(
         self, family_member: FamilyMember, db_family_member: FamilyMember
     ) -> FamilyMember:
@@ -119,6 +169,34 @@ class CareLinkCrud:
         updated_user = self._update_user(user, db_user)
         return updated_user
 
+    def update_medical_treatment(
+        self, treatment_id: int, treatment: MedicamentosPorUsuario
+    ) -> MedicamentosPorUsuario:
+        db_treatment = self._get_user_medical_treatment_by_id(treatment_id)
+        updated_treatment = self._update_treatment(treatment, db_treatment)
+        return updated_treatment
+
+    def update_medical_nursing(
+        self, treatment_id: int, treatment: CuidadosEnfermeriaPorUsuario
+    ) -> CuidadosEnfermeriaPorUsuario:
+        db_treatment = self._get_user_medical_nursing_by_id(treatment_id)
+        updated_treatment = self._update_nursing(treatment, db_treatment)
+        return updated_treatment
+
+    def update_medical_intervention(
+        self, treatment_id: int, treatment: IntervencionesPorUsuario
+    ) -> IntervencionesPorUsuario:
+        db_treatment = self._get_user_medical_intervention_by_id(treatment_id)
+        updated_treatment = self._update_intervention(treatment, db_treatment)
+        return updated_treatment
+
+    def update_medical_vaccine(
+        self, treatment_id: int, treatment: VacunasPorUsuario
+    ) -> VacunasPorUsuario:
+        db_treatment = self._get_user_medical_vaccine_by_id(treatment_id)
+        updated_treatment = self._update_vaccine(treatment, db_treatment)
+        return updated_treatment
+
     def update_family_member(
         self, family_member_id: int, family_member: FamilyMember
     ) -> FamilyMember:
@@ -129,29 +207,49 @@ class CareLinkCrud:
         return updated_family_member
 
     def update_user_medical_record(
-        self, user_id: int, record_id: int, update_data: dict
+        self,
+        user_id: int,
+        record_id: int,
+        update_data: dict,
+        medicines: List[MedicamentosPorUsuario],
+        cares: List[CuidadosEnfermeriaPorUsuario],
+        interventions: List[IntervencionesPorUsuario],
+        vaccines: List[VacunasPorUsuario],
     ) -> MedicalRecord:
-        self._get_user_by_id(user_id)
+        with self.__carelink_session.begin():
+            self._get_user_by_id(user_id)
 
-        record_to_update = (
-            self.__carelink_session.query(MedicalRecord)
-            .filter_by(id_historiaclinica=record_id, id_usuario=user_id)
-            .first()
-        )
-
-        if not record_to_update:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Medical record with ID {record_id} not found for user {user_id}",
+            record_to_update = (
+                self.__carelink_session.query(MedicalRecord)
+                .filter_by(id_historiaclinica=record_id, id_usuario=user_id)
+                .first()
             )
 
-        for key, value in update_data.items():
-            setattr(record_to_update, key, value)
+            if not record_to_update:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Medical record with ID {record_id} not found for user {user_id}",
+                )
 
-        self.__carelink_session.commit()
-        self.__carelink_session.refresh(record_to_update)
+            for key, value in update_data.items():
+                setattr(record_to_update, key, value)
 
-        return record_to_update
+            for medicine in medicines:
+                medicine.id_historiaClinica = record_to_update.id_historiaclinica
+                self.__carelink_session.add(medicine)
+            for care in cares:
+                care.id_historiaClinica = record_to_update.id_historiaclinica
+                self.__carelink_session.add(care)
+            for intervention in interventions:
+                intervention.id_historiaClinica = record_to_update.id_historiaclinica
+                self.__carelink_session.add(intervention)
+            for vaccine in vaccines:
+                vaccine.id_historiaClinica = record_to_update.id_historiaclinica
+                self.__carelink_session.add(vaccine)
+
+            self.__carelink_session.flush()
+            self.__carelink_session.refresh(record_to_update)
+            return record_to_update
 
     def delete_user(self, user_id: int):
         db_user = self._get_user_by_id(user_id)
@@ -360,3 +458,43 @@ class CareLinkCrud:
             .filter(VacunasPorUsuario.id_historiaClinica == id)
             .all()
         )
+
+    def _get_user_medical_treatment_by_id(self, id: int) -> MedicamentosPorUsuario:
+        treatment = (
+            self.__carelink_session.query(MedicamentosPorUsuario)
+            .filter(MedicamentosPorUsuario.id == id)
+            .first()
+        )
+        if treatment is None:
+            raise EntityNotFoundError("Not found")
+        return treatment
+
+    def _get_user_medical_nursing_by_id(self, id: int) -> CuidadosEnfermeriaPorUsuario:
+        treatment = (
+            self.__carelink_session.query(CuidadosEnfermeriaPorUsuario)
+            .filter(CuidadosEnfermeriaPorUsuario.id == id)
+            .first()
+        )
+        if treatment is None:
+            raise EntityNotFoundError("Not found")
+        return treatment
+
+    def _get_user_medical_intervention_by_id(self, id: int) -> IntervencionesPorUsuario:
+        treatment = (
+            self.__carelink_session.query(IntervencionesPorUsuario)
+            .filter(IntervencionesPorUsuario.id == id)
+            .first()
+        )
+        if treatment is None:
+            raise EntityNotFoundError("Not found")
+        return treatment
+
+    def _get_user_medical_vaccine_by_id(self, id: int) -> VacunasPorUsuario:
+        treatment = (
+            self.__carelink_session.query(VacunasPorUsuario)
+            .filter(VacunasPorUsuario.id == id)
+            .first()
+        )
+        if treatment is None:
+            raise EntityNotFoundError("Not found")
+        return treatment
