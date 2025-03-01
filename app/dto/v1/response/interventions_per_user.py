@@ -6,3 +6,9 @@ class InterventionsPerUserResponseDTO(BaseModel):
     diagnostico: str
     frecuencia: str
     intervencion: str
+
+
+class InterventionsPerUserUpdateDTO(BaseModel):
+    diagnostico: str | None
+    frecuencia: str | None
+    intervencion: str | None

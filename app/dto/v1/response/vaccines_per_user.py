@@ -8,3 +8,10 @@ class VaccinesPerUserResponseDTO(BaseModel):
     fecha_administracion: date | None
     fecha_proxima: date | None
     vacuna: str
+
+
+class VaccinesPerUserUpdateDTO(BaseModel):
+    efectos_secundarios: str | None
+    fecha_administracion: date | None
+    fecha_proxima: date | None
+    vacuna: str | None

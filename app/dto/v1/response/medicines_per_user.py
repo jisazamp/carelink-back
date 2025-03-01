@@ -8,3 +8,10 @@ class MedicinesPerUserResponseDTO(BaseModel):
     fecha_fin: date
     medicamento: str
     periodicidad: str
+
+
+class MedicinesPerUserUpdateDTO(BaseModel):
+    Fecha_inicio: date | None
+    fecha_fin: date | None
+    medicamento: str | None
+    periodicidad: str | None
