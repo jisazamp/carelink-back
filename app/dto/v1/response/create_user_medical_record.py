@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 
 class CreateUserMedicalRecordResponseDTO(BaseModel):
+    id_historiaclinica: int | None
     Tiene_OtrasAlergias: bool
     Tienedieta_especial: bool
     alcoholismo: bool

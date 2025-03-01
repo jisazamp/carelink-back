@@ -1,8 +1,11 @@
 from app.exceptions.exceptions_classes import BusinessLogicError, EntityNotFoundError
 from app.models.authorized_users import AuthorizedUsers
+from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.family_member import FamilyMember
 from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
+from app.models.interventions_per_user import IntervencionesPorUsuario
 from app.models.medical_record import MedicalRecord
+from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.user import User
 from fastapi import HTTPException
 from passlib.context import CryptContext
@@ -46,14 +49,43 @@ class CareLinkCrud:
                 kinship_string = kinship.dict()["parentezco"]
                 self.__carelink_session.add(family_member)
                 self.__carelink_session.flush()
-                associate_family = FamiliaresYAcudientesPorUsuario(**{
-                    "id_usuario": id,
-                    "id_acudiente": family_member.id_acudiente,
-                    "parentesco": kinship_string,
-                })
+                associate_family = FamiliaresYAcudientesPorUsuario(
+                    **{
+                        "id_usuario": id,
+                        "id_acudiente": family_member.id_acudiente,
+                        "parentesco": kinship_string,
+                    }
+                )
                 self.__carelink_session.add(associate_family)
                 self.__carelink_session.commit()
 
+            except Exception:
+                transaction.rollback()
+                raise BusinessLogicError("Something went wrong")
+
+    def save_user_medical_record(
+        self,
+        id: int,
+        record: MedicalRecord,
+        medicines: List[MedicamentosPorUsuario],
+        cares: List[CuidadosEnfermeriaPorUsuario],
+        interventions: List[IntervencionesPorUsuario]
+    ):
+        with self.__carelink_session.begin_nested() as transaction:
+            try:
+                self._get_user_by_id(id)
+                self.__carelink_session.add(record)
+                self.__carelink_session.flush()
+                for medicine in medicines:
+                    medicine.id_historiaClinica = record.id_historiaclinica
+                    self.__carelink_session.add(medicine)
+                for care in cares:
+                    care.id_historiaClinica = record.id_historiaclinica
+                    self.__carelink_session.add(care)
+                for intervention in interventions:
+                    intervention.id_historiaClinica = record.id_historiaclinica
+                    self.__carelink_session.add(intervention)
+                self.__carelink_session.commit()
             except Exception:
                 transaction.rollback()
                 raise BusinessLogicError("Something went wrong")
@@ -220,4 +252,44 @@ class CareLinkCrud:
             self.__carelink_session.query(MedicalRecord)
             .filter(MedicalRecord.id_usuario == id)
             .first()
+        )
+
+    def _get_medical_record_by_id(self, id: int) -> MedicalRecord:
+        record = (
+            self.__carelink_session.query(MedicalRecord)
+            .filter(MedicalRecord.id_historiaclinica == id)
+            .first()
+        )
+        if not record:
+            raise EntityNotFoundError("Record not found")
+        return record
+
+    def _get_user_medicines_by_medical_record_id(
+        self, id: int
+    ) -> List[MedicamentosPorUsuario]:
+        self._get_medical_record_by_id(id)
+        return (
+            self.__carelink_session.query(MedicamentosPorUsuario)
+            .filter(MedicamentosPorUsuario.id_historiaClinica == id)
+            .all()
+        )
+
+    def _get_user_cares_by_medical_record_id(
+        self, id: int
+    ) -> List[CuidadosEnfermeriaPorUsuario]:
+        self._get_medical_record_by_id(id)
+        return (
+            self.__carelink_session.query(CuidadosEnfermeriaPorUsuario)
+            .filter(CuidadosEnfermeriaPorUsuario.id_historiaClinica == id)
+            .all()
+        )
+
+    def _get_user_interventions_by_medical_record_id(
+        self, id: int
+    ) -> List[IntervencionesPorUsuario]:
+        self._get_medical_record_by_id(id)
+        return (
+            self.__carelink_session.query(IntervencionesPorUsuario)
+            .filter(IntervencionesPorUsuario.id_historiaClinica == id)
+            .all()
         )
