@@ -179,6 +179,17 @@ class CareLinkCrud:
         self.__carelink_session.delete(db_vaccine)
         self.__carelink_session.commit()
 
+    def delete_user_medicines_by_record_id(self, record_id: int, medicine_id: int):
+        db_medicines = self._get_user_medicines_by_medical_record_id(record_id)
+        medicines = []
+        for medicine in db_medicines:
+            medicines.append(medicine)
+        db_medicine = next((x for x in medicines if x.id == medicine_id), None)
+        if not db_medicines:
+            raise EntityNotFoundError("No se encuentra el medicamento")
+        self.__carelink_session.delete(db_medicine)
+        self.__carelink_session.commit()
+
     def authenticate_user(self, email: str, password: str) -> AuthorizedUsers | None:
         user = (
             self.__carelink_session.query(AuthorizedUsers)
