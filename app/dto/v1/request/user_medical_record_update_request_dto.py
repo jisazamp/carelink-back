@@ -9,12 +9,13 @@ class UpdateUserMedicalRecordRequestDTO(BaseModel):
     altura: Optional[int] = None
     apariencia_personal: Optional[str] = None
     cafeina: Optional[bool] = None
-    cirugias: Optional[bool] = None
+    cirugias: Optional[str] = None
     comunicacion_no_verbal: Optional[str] = None
     comunicacion_verbal: Optional[str] = None
     continencia: Optional[bool] = None
     cuidado_personal: Optional[str] = None
-    discapacidades: Optional[bool] = None
+    discapacidades: Optional[str] = None
+    limitaciones: Optional[str] = None
     emer_medica: Optional[str] = None
     eps: Optional[str] = None
     estado_de_animo: Optional[str] = None
@@ -35,6 +36,7 @@ class UpdateUserMedicalRecordRequestDTO(BaseModel):
     telefono_emermedica: Optional[str] = None
     temperatura_corporal: Optional[float] = None
     tiene_otrasalergias: Optional[bool] = None
+    dieta_especial: Optional[str] = None
     tienedieta_especial: Optional[bool] = None
     tipo_alimentacion: Optional[str] = None
     tipo_de_movilidad: Optional[str] = None
