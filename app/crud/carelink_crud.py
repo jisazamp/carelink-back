@@ -201,6 +201,21 @@ class CareLinkCrud:
         self.__carelink_session.delete(db_care)
         self.__carelink_session.commit()
 
+    def delete_user_intervention_by_record_id(
+        self, record_id: int, intervention_id: int
+    ):
+        db_interventions = self._get_user_interventions_by_medical_record_id(record_id)
+        interventions = []
+        for intervention in db_interventions:
+            interventions.append(intervention)
+        db_intervention = next(
+            (x for x in interventions if x.id == intervention_id), None
+        )
+        if not db_intervention:
+            raise EntityNotFoundError("No se encuentra la intervención")
+        self.__carelink_session.delete(db_intervention)
+        self.__carelink_session.commit()
+
     def authenticate_user(self, email: str, password: str) -> AuthorizedUsers | None:
         user = (
             self.__carelink_session.query(AuthorizedUsers)
