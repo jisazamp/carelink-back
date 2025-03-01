@@ -185,9 +185,20 @@ class CareLinkCrud:
         for medicine in db_medicines:
             medicines.append(medicine)
         db_medicine = next((x for x in medicines if x.id == medicine_id), None)
-        if not db_medicines:
+        if not db_medicine:
             raise EntityNotFoundError("No se encuentra el medicamento")
         self.__carelink_session.delete(db_medicine)
+        self.__carelink_session.commit()
+
+    def delete_user_care_by_record_id(self, record_id: int, care_id: int):
+        db_cares = self._get_user_cares_by_medical_record_id(record_id)
+        cares = []
+        for care in db_cares:
+            cares.append(care)
+        db_care = next((x for x in cares if x.id == care_id), None)
+        if not db_care:
+            raise EntityNotFoundError("No se encuentra el cuidado")
+        self.__carelink_session.delete(db_care)
         self.__carelink_session.commit()
 
     def authenticate_user(self, email: str, password: str) -> AuthorizedUsers | None:

@@ -549,3 +549,20 @@ async def delete_medicine(
     return Response[object](
         data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
     )
+
+
+@router.delete(
+    "/records/{id}/care/{care_id}",
+    status_code=200,
+    response_model=Response[object],
+)
+async def delete_care(
+    id: int,
+    care_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[object]:
+    crud.delete_user_care_by_record_id(id, care_id)
+    return Response[object](
+        data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
+    )
