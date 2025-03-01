@@ -51,13 +51,11 @@ class CareLinkCrud:
                 kinship_string = kinship.dict()["parentezco"]
                 self.__carelink_session.add(family_member)
                 self.__carelink_session.flush()
-                associate_family = FamiliaresYAcudientesPorUsuario(
-                    **{
-                        "id_usuario": id,
-                        "id_acudiente": family_member.id_acudiente,
-                        "parentesco": kinship_string,
-                    }
-                )
+                associate_family = FamiliaresYAcudientesPorUsuario(**{
+                    "id_usuario": id,
+                    "id_acudiente": family_member.id_acudiente,
+                    "parentesco": kinship_string,
+                })
                 self.__carelink_session.add(associate_family)
                 self.__carelink_session.commit()
 
@@ -72,7 +70,7 @@ class CareLinkCrud:
         medicines: List[MedicamentosPorUsuario],
         cares: List[CuidadosEnfermeriaPorUsuario],
         interventions: List[IntervencionesPorUsuario],
-        vaccines: List[VacunasPorUsuario]
+        vaccines: List[VacunasPorUsuario],
     ):
         with self.__carelink_session.begin_nested() as transaction:
             try:
@@ -163,6 +161,11 @@ class CareLinkCrud:
     def delete_family_member(self, id: int):
         db_family_member, _ = self._get_family_member_by_id(id)
         db_family_member.is_deleted = True
+        self.__carelink_session.commit()
+
+    def delete_user_medical_record(self, record_id: int):
+        db_record = self._get_medical_record_by_id(record_id)
+        self.__carelink_session.delete(db_record)
         self.__carelink_session.commit()
 
     def authenticate_user(self, email: str, password: str) -> AuthorizedUsers | None:

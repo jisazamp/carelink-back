@@ -488,7 +488,9 @@ async def delete_user(
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     crud.delete_user(id)
-    return Response[object](data={}, status_code=HTTPStatus.NO_CONTENT)
+    return Response[object](
+        data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
+    )
 
 
 @router.delete("/family_members/{id}", status_code=200, response_model=Response[object])
@@ -498,4 +500,18 @@ async def delete_family_member(
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     crud.delete_family_member(id)
-    return Response[object](data={}, status_code=HTTPStatus.NO_CONTENT)
+    return Response[object](
+        data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
+    )
+
+
+@router.delete("/records/{id}", status_code=200, response_model=Response[object])
+async def delete_record(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[object]:
+    crud.delete_user_medical_record(id)
+    return Response[object](
+        data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
+    )
