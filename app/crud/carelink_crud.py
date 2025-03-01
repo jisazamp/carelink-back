@@ -12,6 +12,8 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from typing import List, Tuple
 
+from app.models.vaccines import VacunasPorUsuario
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -69,7 +71,8 @@ class CareLinkCrud:
         record: MedicalRecord,
         medicines: List[MedicamentosPorUsuario],
         cares: List[CuidadosEnfermeriaPorUsuario],
-        interventions: List[IntervencionesPorUsuario]
+        interventions: List[IntervencionesPorUsuario],
+        vaccines: List[VacunasPorUsuario]
     ):
         with self.__carelink_session.begin_nested() as transaction:
             try:
@@ -85,6 +88,9 @@ class CareLinkCrud:
                 for intervention in interventions:
                     intervention.id_historiaClinica = record.id_historiaclinica
                     self.__carelink_session.add(intervention)
+                for vaccine in vaccines:
+                    vaccine.id_historiaClinica = record.id_historiaclinica
+                    self.__carelink_session.add(vaccine)
                 self.__carelink_session.commit()
             except Exception:
                 transaction.rollback()
@@ -291,5 +297,15 @@ class CareLinkCrud:
         return (
             self.__carelink_session.query(IntervencionesPorUsuario)
             .filter(IntervencionesPorUsuario.id_historiaClinica == id)
+            .all()
+        )
+
+    def _get_user_vaccines_by_medical_record_id(
+        self, id: int
+    ) -> List[VacunasPorUsuario]:
+        self._get_medical_record_by_id(id)
+        return (
+            self.__carelink_session.query(VacunasPorUsuario)
+            .filter(VacunasPorUsuario.id_historiaClinica == id)
             .all()
         )

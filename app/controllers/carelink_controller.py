@@ -10,6 +10,7 @@ from app.dto.v1.request.user_medical_record_create_request_dto import (
     CreateUserAssociatedCaresRequestDTO,
     CreateUserAssociatedInterventionsRequestDTO,
     CreateUserAssociatedMedicinesRequestDTO,
+    CreateUserAssociatedVaccinesRequestDTO,
     CreateUserMedicalRecordCreateRequestDTO,
 )
 from app.dto.v1.request.user_medical_record_update_request_dto import (
@@ -29,6 +30,7 @@ from app.dto.v1.response.medicines_per_user import MedicinesPerUserResponseDTO
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO, UserUpdateRequestDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
+from app.dto.v1.response.vaccines_per_user import VaccinesPerUserResponseDTO
 from app.models.authorized_users import AuthorizedUsers
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.family_member import FamilyMember
@@ -36,6 +38,7 @@ from app.models.interventions_per_user import IntervencionesPorUsuario
 from app.models.medical_record import MedicalRecord
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.user import User
+from app.models.vaccines import VacunasPorUsuario
 from app.security.jwt_utilities import (
     decode_access_token,
     create_access_token,
@@ -257,6 +260,23 @@ async def get_record_cares(
     )
 
 
+@router.get(
+    "/record/{id}/vaccines",
+    status_code=200,
+    response_model=Response[List[VaccinesPerUserResponseDTO]],
+)
+async def get_record_vaccines(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    vaccines = crud._get_user_vaccines_by_medical_record_id(id)
+    result = [VaccinesPerUserResponseDTO(**vaccine.__dict__) for vaccine in vaccines]
+    return Response[List[VaccinesPerUserResponseDTO]](
+        data=result, message="Success", status_code=201, error=None
+    )
+
+
 @router.get("/info", status_code=200, response_model=Response[UserInfo])
 async def get_user_info(
     crud: CareLinkCrud = Depends(get_crud), payload: dict = Depends(get_payload)
@@ -339,6 +359,7 @@ async def create_user_record(
     medicines: List[CreateUserAssociatedMedicinesRequestDTO],
     cares: List[CreateUserAssociatedCaresRequestDTO],
     interventions: List[CreateUserAssociatedInterventionsRequestDTO],
+    vaccines: List[CreateUserAssociatedVaccinesRequestDTO],
     crud: CareLinkCrud = Depends(get_crud),
 ) -> Response[object]:
     record_to_save = MedicalRecord(**record.__dict__)
@@ -350,8 +371,14 @@ async def create_user_record(
         IntervencionesPorUsuario(**intervention.__dict__)
         for intervention in interventions
     ]
+    vaccines_to_save = [VacunasPorUsuario(**vaccine.__dict__) for vaccine in vaccines]
     crud.save_user_medical_record(
-        id, record_to_save, medicines_to_save, cares_to_save, interventions_to_save
+        id,
+        record_to_save,
+        medicines_to_save,
+        cares_to_save,
+        interventions_to_save,
+        vaccines_to_save,
     )
     return Response[object](data={}, message="Success", status_code=201, error=None)
 

@@ -62,3 +62,10 @@ class CreateUserAssociatedInterventionsRequestDTO(BaseModel):
     diagnostico: str
     frecuencia: str
     intervencion: str
+
+
+class CreateUserAssociatedVaccinesRequestDTO(BaseModel):
+    efectos_secundarios: str | None
+    fecha_administracion: date | None
+    fecha_proxima: date | None
+    vacuna: str
