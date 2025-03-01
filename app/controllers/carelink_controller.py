@@ -7,12 +7,16 @@ from app.dto.v1.request.family_member_create_request_dto import (
 )
 from app.dto.v1.request.user_create_request_dto import AuthorizedUserCreateRequestDTO
 from app.dto.v1.request.user_medical_record_create_request_dto import (
+    CreateUserAssociatedCaresRequestDTO,
+    CreateUserAssociatedInterventionsRequestDTO,
+    CreateUserAssociatedMedicinesRequestDTO,
     CreateUserMedicalRecordCreateRequestDTO,
 )
 from app.dto.v1.request.user_medical_record_update_request_dto import (
     UpdateUserMedicalRecordRequestDTO,
 )
 from app.dto.v1.request.user_request_dto import UserCreateRequestDTO
+from app.dto.v1.response.cares_per_user import CaresPerUserResponseDTO
 from app.dto.v1.response.create_user import CreateUserResponseDTO
 from app.dto.v1.request.user_login_request_dto import UserLoginRequestDTO
 from app.dto.v1.response.create_user_medical_record import (
@@ -20,12 +24,17 @@ from app.dto.v1.response.create_user_medical_record import (
 )
 from app.dto.v1.response.family_member import FamilyMemberResponseDTO
 from app.dto.v1.response.generic_response import Response
+from app.dto.v1.response.interventions_per_user import InterventionsPerUserResponseDTO
+from app.dto.v1.response.medicines_per_user import MedicinesPerUserResponseDTO
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO, UserUpdateRequestDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.models.authorized_users import AuthorizedUsers
+from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.family_member import FamilyMember
+from app.models.interventions_per_user import IntervencionesPorUsuario
 from app.models.medical_record import MedicalRecord
+from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.user import User
 from app.security.jwt_utilities import (
     decode_access_token,
@@ -192,6 +201,62 @@ async def get_user_medical_record(
     )
 
 
+@router.get(
+    "/record/{id}/medicines",
+    status_code=200,
+    response_model=Response[List[MedicinesPerUserResponseDTO]],
+)
+async def get_record_medicines(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    medicines = crud._get_user_medicines_by_medical_record_id(id)
+    result = [
+        MedicinesPerUserResponseDTO(**medicine.__dict__) for medicine in medicines
+    ]
+    return Response[List[MedicinesPerUserResponseDTO]](
+        data=result, message="Success", status_code=201, error=None
+    )
+
+
+@router.get(
+    "/record/{id}/interventions",
+    status_code=200,
+    response_model=Response[List[InterventionsPerUserResponseDTO]],
+)
+async def get_record_interventions(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    interventions = crud._get_user_interventions_by_medical_record_id(id)
+    result = [
+        InterventionsPerUserResponseDTO(**intervention.__dict__)
+        for intervention in interventions
+    ]
+    return Response[List[InterventionsPerUserResponseDTO]](
+        data=result, message="Success", status_code=201, error=None
+    )
+
+
+@router.get(
+    "/record/{id}/cares",
+    status_code=200,
+    response_model=Response[List[CaresPerUserResponseDTO]],
+)
+async def get_record_cares(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    cares = crud._get_user_cares_by_medical_record_id(id)
+    result = [CaresPerUserResponseDTO(**care.__dict__) for care in cares]
+    return Response[List[CaresPerUserResponseDTO]](
+        data=result, message="Success", status_code=201, error=None
+    )
+
+
 @router.get("/info", status_code=200, response_model=Response[UserInfo])
 async def get_user_info(
     crud: CareLinkCrud = Depends(get_crud), payload: dict = Depends(get_payload)
@@ -237,7 +302,7 @@ async def create_family_members(
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     family_member_to_save = FamilyMember(**family_member.dict())
-    saved_family_member = crud.save_family_member(id, kinship, family_member_to_save)
+    crud.save_family_member(id, kinship, family_member_to_save)
 
     return Response[object](
         data={},
@@ -265,6 +330,30 @@ async def login_user(
         message="Login successful",
         error=None,
     )
+
+
+@router.post("/users/{id}/record", status_code=201, response_model=Response[object])
+async def create_user_record(
+    id: int,
+    record: CreateUserMedicalRecordCreateRequestDTO,
+    medicines: List[CreateUserAssociatedMedicinesRequestDTO],
+    cares: List[CreateUserAssociatedCaresRequestDTO],
+    interventions: List[CreateUserAssociatedInterventionsRequestDTO],
+    crud: CareLinkCrud = Depends(get_crud),
+) -> Response[object]:
+    record_to_save = MedicalRecord(**record.__dict__)
+    medicines_to_save = [
+        MedicamentosPorUsuario(**medicine.__dict__) for medicine in medicines
+    ]
+    cares_to_save = [CuidadosEnfermeriaPorUsuario(**care.__dict__) for care in cares]
+    interventions_to_save = [
+        IntervencionesPorUsuario(**intervention.__dict__)
+        for intervention in interventions
+    ]
+    crud.save_user_medical_record(
+        id, record_to_save, medicines_to_save, cares_to_save, interventions_to_save
+    )
+    return Response[object](data={}, message="Success", status_code=201, error=None)
 
 
 @router.post(

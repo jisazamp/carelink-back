@@ -1,6 +1,5 @@
 from .base import Base
 from sqlalchemy import Column, Integer, String, Boolean
-from sqlalchemy.orm import relationship
 
 
 class FamilyMember(Base):
