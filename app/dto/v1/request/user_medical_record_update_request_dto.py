@@ -14,7 +14,7 @@ class UpdateUserMedicalRecordRequestDTO(BaseModel):
     comunicacion_verbal: Optional[str] = None
     continencia: Optional[bool] = None
     cuidado_personal: Optional[str] = None
-    discapacidad: Optional[bool] = None
+    discapacidades: Optional[bool] = None
     emer_medica: Optional[str] = None
     eps: Optional[str] = None
     estado_de_animo: Optional[str] = None
