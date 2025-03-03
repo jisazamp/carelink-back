@@ -5,6 +5,7 @@ from app.dto.v1.request.family_member_create_request_dto import (
     CreateFamilyMemberRequestDTO,
     UpdateFamilyMemberRequestDTO,
 )
+from app.dto.v1.request.medical_report import ReporteClinicoCreate, ReporteClinicoUpdate
 from app.dto.v1.request.user_create_request_dto import AuthorizedUserCreateRequestDTO
 from app.dto.v1.request.user_medical_record_create_request_dto import (
     CreateUserAssociatedCaresRequestDTO,
@@ -32,10 +33,12 @@ from app.dto.v1.response.interventions_per_user import (
     InterventionsPerUserResponseDTO,
     InterventionsPerUserUpdateDTO,
 )
+from app.dto.v1.response.medical_report import ReporteClinicoResponse
 from app.dto.v1.response.medicines_per_user import (
     MedicinesPerUserResponseDTO,
     MedicinesPerUserUpdateDTO,
 )
+from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO, UserUpdateRequestDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
@@ -48,6 +51,7 @@ from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.family_member import FamilyMember
 from app.models.interventions_per_user import IntervencionesPorUsuario
 from app.models.medical_record import MedicalRecord
+from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.user import User
 from app.models.vaccines import VacunasPorUsuario
@@ -303,6 +307,44 @@ async def get_user_info(
     )
 
 
+@router.get(
+    "/medical_reports/{reporte_id}", response_model=Response[ReporteClinicoResponse]
+)
+def get_reporte_clinico(
+    reporte_id: int, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[ReporteClinicoResponse]:
+    report = crud._get_medical_report_by_id(reporte_id)
+    report_dict = report.__dict__
+    professional_response = None
+    if report.profesional:
+        professional_response = ProfessionalResponse.from_orm(report.profesional)
+    report_response = ReporteClinicoResponse(**report_dict)
+    del report_response.profesional
+    report_response.profesional = professional_response
+    return Response[ReporteClinicoResponse](
+        data=report_response,
+        message="Reporte consultado",
+        status_code=200,
+        error=None,
+    )
+
+
+@router.get(
+    "/user/{user_id}/medical_reports",
+    response_model=Response[List[ReporteClinicoResponse]],
+)
+def get_medical_reports(
+    user_id: int, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[List[ReporteClinicoResponse]]:
+    reports = crud._get_medical_reports_by_user_id(user_id)
+    return Response[List[ReporteClinicoResponse]](
+        data=[ReporteClinicoResponse(**report.__dict__) for report in reports],
+        message="Reporte consultado",
+        status_code=200,
+        error=None,
+    )
+
+
 @router.post("/users", status_code=201, response_model=Response[UserResponseDTO])
 async def create_users(
     user: UserCreateRequestDTO,
@@ -432,6 +474,20 @@ async def create_user(
         data=saved_user.__dict__,
         status_code=HTTPStatus.CREATED,
         message="User created successfully",
+        error=None,
+    )
+
+
+@router.post("/medical_reports/", response_model=Response[ReporteClinicoResponse])
+def create_reporte_clinico(
+    reporte: ReporteClinicoCreate, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[ReporteClinicoResponse]:
+    report_to_save = ReportesClinicos(**reporte.dict())
+    resulting_report = crud.save_medical_report(report_to_save)
+    return Response[ReporteClinicoResponse](
+        data=ReporteClinicoResponse(**resulting_report.__dict__),
+        message="Reporte creado",
+        status_code=200,
         error=None,
     )
 
@@ -579,6 +635,24 @@ async def update_user_medical_record(
         data={},
         message="Historia clínica actualizada con éxito",
         status_code=200,
+        error=None,
+    )
+
+
+@router.patch(
+    "/medical_reports/{reporte_id}", response_model=Response[ReporteClinicoResponse]
+)
+def update_reporte_clinico(
+    reporte_id: int,
+    reporte: ReporteClinicoUpdate,
+    crud: CareLinkCrud = Depends(get_crud),
+) -> Response[ReporteClinicoResponse]:
+    report_to_update = ReportesClinicos(**reporte.__dict__)
+    result = crud.update_medical_record(reporte_id, report_to_update)
+    return Response[ReporteClinicoResponse](
+        data=ReporteClinicoResponse(**result.__dict__),
+        status_code=HTTPStatus.OK,
+        message="Reporte actualizado",
         error=None,
     )
 

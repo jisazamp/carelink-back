@@ -5,6 +5,7 @@ from app.models.family_member import FamilyMember
 from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
 from app.models.interventions_per_user import IntervencionesPorUsuario
 from app.models.medical_record import MedicalRecord
+from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.user import User
 from fastapi import HTTPException
@@ -94,6 +95,12 @@ class CareLinkCrud:
                 transaction.rollback()
                 raise BusinessLogicError("Something went wrong")
 
+    def save_medical_report(self, report: ReportesClinicos):
+        self.__carelink_session.add(report)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(report)
+        return report
+
     def _update_user(self, user: User, db_user: User) -> User:
         for key, value in user.__dict__.items():
             if key != "_sa_instance_state" and value is not None:
@@ -163,6 +170,17 @@ class CareLinkCrud:
         self.__carelink_session.commit()
         self.__carelink_session.refresh(db_family_member)
         return db_family_member
+
+    def _update_record(
+        self, record: ReportesClinicos, db_record: ReportesClinicos
+    ) -> ReportesClinicos:
+        for key, value in record.__dict__.items():
+            if key != "_sa_instance_state" and value is not None:
+                if hasattr(db_record, key):
+                    setattr(db_record, key, value)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(db_record)
+        return db_record
 
     def update_user(self, user_id: int, user: User) -> User:
         db_user = self._get_user_by_id(user_id)
@@ -250,6 +268,13 @@ class CareLinkCrud:
             self.__carelink_session.flush()
             self.__carelink_session.refresh(record_to_update)
             return record_to_update
+
+    def update_medical_record(
+        self, report_id: int, report: ReportesClinicos
+    ) -> ReportesClinicos:
+        db_report = self._get_medical_record_by_id(report_id)
+        updated_report = self._update_record(report, db_report)
+        return updated_report
 
     def delete_user(self, user_id: int):
         db_user = self._get_user_by_id(user_id)
@@ -498,3 +523,28 @@ class CareLinkCrud:
         if treatment is None:
             raise EntityNotFoundError("Not found")
         return treatment
+
+    def _get_medical_report_by_id(self, id: int) -> ReportesClinicos:
+        db_reporte = (
+            self.__carelink_session.query(ReportesClinicos)
+            .filter(ReportesClinicos.id_reporteclinico == id)
+            .first()
+        )
+        if db_reporte is None:
+            raise EntityNotFoundError("Reporte Clinico not found")
+        return db_reporte
+
+    def _get_medical_reports_by_user_id(self, user_id: int) -> List[ReportesClinicos]:
+        db_medical_record = self._get_user_medical_record_by_user_id(user_id)
+        if db_medical_record is None:
+            raise EntityNotFoundError(
+                "No se encuentra historia clínica para el usuario"
+            )
+        return (
+            self.__carelink_session.query(ReportesClinicos)
+            .filter(
+                ReportesClinicos.id_historiaclinica
+                == db_medical_record.id_historiaclinica
+            )
+            .all()
+        )
