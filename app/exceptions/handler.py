@@ -21,7 +21,7 @@ async def request_validation_error_handler(
     return JSONResponse(
         jsonable_encoder(
             Response[str](
-                message="Invalid data",
+                message="Información inválida",
                 error=jsonable_encoder(exc.errors()),
                 status_code=HTTPStatus.BAD_REQUEST,
             )
@@ -35,7 +35,7 @@ async def entity_not_found_error_handler(request: Request, exc: EntityNotFoundEr
     return JSONResponse(
         jsonable_encoder(
             Response[str](
-                message="Entity not found",
+                message="Información no encontrada",
                 error=[str(exc)],
                 status_code=HTTPStatus.NOT_FOUND,
             )
@@ -49,7 +49,7 @@ async def business_logic_error_handler(request: Request, exc: BusinessLogicError
     return JSONResponse(
         jsonable_encoder(
             Response[str](
-                message="Invalid request",
+                message="Solicitud no válida",
                 error=[str(exc)],
                 status_code=HTTPStatus.BAD_REQUEST,
             )
@@ -63,7 +63,7 @@ async def security_error_handler(request: Request, exc: SecurityError):
     return JSONResponse(
         jsonable_encoder(
             Response[str](
-                message="Unauthorized",
+                message="El usuario no tiene permisos para realizar esta acción",
                 error=[str(exc)],
                 status_code=HTTPStatus.UNAUTHORIZED,
             )

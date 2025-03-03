@@ -1,11 +1,14 @@
 from app.exceptions.exceptions_classes import BusinessLogicError, EntityNotFoundError
 from app.models.authorized_users import AuthorizedUsers
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
+from app.models.clinical_evolutions import EvolucionesClinicas
 from app.models.family_member import FamilyMember
 from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
 from app.models.interventions_per_user import IntervencionesPorUsuario
 from app.models.medical_record import MedicalRecord
+from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
+from app.models.professional import Profesionales
 from app.models.user import User
 from fastapi import HTTPException
 from passlib.context import CryptContext
@@ -94,6 +97,18 @@ class CareLinkCrud:
                 transaction.rollback()
                 raise BusinessLogicError("Something went wrong")
 
+    def save_medical_report(self, report: ReportesClinicos):
+        self.__carelink_session.add(report)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(report)
+        return report
+
+    def save_clinical_evolution(self, evolution: EvolucionesClinicas):
+        self.__carelink_session.add(evolution)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(evolution)
+        return evolution
+
     def _update_user(self, user: User, db_user: User) -> User:
         for key, value in user.__dict__.items():
             if key != "_sa_instance_state" and value is not None:
@@ -102,6 +117,17 @@ class CareLinkCrud:
         self.__carelink_session.commit()
         self.__carelink_session.refresh(db_user)
         return db_user
+
+    def _update_evolution(
+        self, evolution: EvolucionesClinicas, db_evolution: EvolucionesClinicas
+    ) -> EvolucionesClinicas:
+        for key, value in evolution.__dict__.items():
+            if key != "_sa_instance_state" and value is not None:
+                if hasattr(db_evolution, key):
+                    setattr(db_evolution, key, value)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(db_evolution)
+        return db_evolution
 
     def _update_treatment(
         self, treatment: MedicamentosPorUsuario, db_treatment: MedicamentosPorUsuario
@@ -164,10 +190,28 @@ class CareLinkCrud:
         self.__carelink_session.refresh(db_family_member)
         return db_family_member
 
+    def _update_record(
+        self, record: ReportesClinicos, db_record: ReportesClinicos
+    ) -> ReportesClinicos:
+        for key, value in record.__dict__.items():
+            if key != "_sa_instance_state" and value is not None:
+                if hasattr(db_record, key):
+                    setattr(db_record, key, value)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(db_record)
+        return db_record
+
     def update_user(self, user_id: int, user: User) -> User:
         db_user = self._get_user_by_id(user_id)
         updated_user = self._update_user(user, db_user)
         return updated_user
+
+    def update_clinical_evolution(
+        self, evolution_id: int, evolution: EvolucionesClinicas
+    ) -> EvolucionesClinicas:
+        db_evolution = self._get_clinical_evolution_by_evolution_id(evolution_id)
+        updated_evolution = self._update_evolution(evolution, db_evolution)
+        return updated_evolution
 
     def update_medical_treatment(
         self, treatment_id: int, treatment: MedicamentosPorUsuario
@@ -250,6 +294,13 @@ class CareLinkCrud:
             self.__carelink_session.flush()
             self.__carelink_session.refresh(record_to_update)
             return record_to_update
+
+    def update_medical_record(
+        self, report_id: int, report: ReportesClinicos
+    ) -> ReportesClinicos:
+        db_report = self._get_medical_record_by_id(report_id)
+        updated_report = self._update_record(report, db_report)
+        return updated_report
 
     def delete_user(self, user_id: int):
         db_user = self._get_user_by_id(user_id)
@@ -498,3 +549,50 @@ class CareLinkCrud:
         if treatment is None:
             raise EntityNotFoundError("Not found")
         return treatment
+
+    def _get_medical_report_by_id(self, id: int) -> ReportesClinicos:
+        db_reporte = (
+            self.__carelink_session.query(ReportesClinicos)
+            .filter(ReportesClinicos.id_reporteclinico == id)
+            .first()
+        )
+        if db_reporte is None:
+            raise EntityNotFoundError("Reporte Clinico not found")
+        return db_reporte
+
+    def _get_medical_reports_by_user_id(self, user_id: int) -> List[ReportesClinicos]:
+        db_medical_record = self._get_user_medical_record_by_user_id(user_id)
+        if db_medical_record is None:
+            return []
+        return (
+            self.__carelink_session.query(ReportesClinicos)
+            .filter(
+                ReportesClinicos.id_historiaclinica
+                == db_medical_record.id_historiaclinica
+            )
+            .all()
+        )
+
+    def _get_professionals(self) -> List[Profesionales]:
+        return self.__carelink_session.query(Profesionales).all()
+
+    def _get_clinical_evolutions_by_report_id(
+        self, report_id: int
+    ) -> List[EvolucionesClinicas]:
+        return (
+            self.__carelink_session.query(EvolucionesClinicas)
+            .filter(EvolucionesClinicas.id_reporteclinico == report_id)
+            .all()
+        )
+
+    def _get_clinical_evolution_by_evolution_id(
+        self, evolution_id: int
+    ) -> EvolucionesClinicas:
+        evolucion = (
+            self.__carelink_session.query(EvolucionesClinicas)
+            .filter(EvolucionesClinicas.id_TipoReporte == evolution_id)
+            .first()
+        )
+        if evolucion is None:
+            raise EntityNotFoundError("No se encuentra el reporte clínico")
+        return evolucion
