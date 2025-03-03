@@ -1,10 +1,15 @@
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
+from app.dto.v1.request.clinical_evolution import (
+    ClinicalEvolutionCreate,
+    ClinicalEvolutionUpdate,
+)
 from app.dto.v1.request.family_member_create_request_dto import (
     AssociateFamilyMemberRequestDTO,
     CreateFamilyMemberRequestDTO,
     UpdateFamilyMemberRequestDTO,
 )
+from app.dto.v1.request.medical_report import ReporteClinicoCreate, ReporteClinicoUpdate
 from app.dto.v1.request.user_create_request_dto import AuthorizedUserCreateRequestDTO
 from app.dto.v1.request.user_medical_record_create_request_dto import (
     CreateUserAssociatedCaresRequestDTO,
@@ -21,6 +26,7 @@ from app.dto.v1.response.cares_per_user import (
     CaresPerUserResponseDTO,
     CaresPerUserUpdateDTO,
 )
+from app.dto.v1.response.clinical_evolution import ClinicalEvolutionResponse
 from app.dto.v1.response.create_user import CreateUserResponseDTO
 from app.dto.v1.request.user_login_request_dto import UserLoginRequestDTO
 from app.dto.v1.response.create_user_medical_record import (
@@ -32,10 +38,12 @@ from app.dto.v1.response.interventions_per_user import (
     InterventionsPerUserResponseDTO,
     InterventionsPerUserUpdateDTO,
 )
+from app.dto.v1.response.medical_report import ReporteClinicoResponse
 from app.dto.v1.response.medicines_per_user import (
     MedicinesPerUserResponseDTO,
     MedicinesPerUserUpdateDTO,
 )
+from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO, UserUpdateRequestDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
@@ -45,9 +53,11 @@ from app.dto.v1.response.vaccines_per_user import (
 )
 from app.models.authorized_users import AuthorizedUsers
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
+from app.models.clinical_evolutions import EvolucionesClinicas
 from app.models.family_member import FamilyMember
 from app.models.interventions_per_user import IntervencionesPorUsuario
 from app.models.medical_record import MedicalRecord
+from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.user import User
 from app.models.vaccines import VacunasPorUsuario
@@ -109,7 +119,10 @@ async def list_users(
     for user in users:
         users_list.append(user.__dict__)
     return Response[List[UserResponseDTO]](
-        data=users_list, status_code=HTTPStatus.OK, message="Success", error=None
+        data=users_list,
+        status_code=HTTPStatus.OK,
+        message="Usuarios consultados con éxito",
+        error=None,
     )
 
 
@@ -122,7 +135,10 @@ async def list_user_by_id(
     user = crud.list_user_by_user_id(id)
     user_response = UserResponseDTO(**user.__dict__)
     return Response[UserResponseDTO](
-        data=user_response, status_code=HTTPStatus.OK, message="Success", error=None
+        data=user_response,
+        status_code=HTTPStatus.OK,
+        message="Usuario consultado con éxito",
+        error=None,
     )
 
 
@@ -141,7 +157,7 @@ async def get_family_members(
     ]
     return Response[List[FamilyMemberResponseDTO]](
         data=family_members_dto,
-        message="Family members retrieved successfuly",
+        message="Acudientes consultados exitosamente",
         error=None,
         status_code=HTTPStatus.OK,
     )
@@ -163,7 +179,7 @@ async def get_family_member_by_id(
 
     return Response[FamilyMemberResponseDTO](
         data=family_member_dto,
-        message="Family member retrieved successfuly",
+        message="Acudiente consultado exitosamente",
         error=None,
         status_code=HTTPStatus.OK,
     )
@@ -185,7 +201,7 @@ async def get_user_family_members(
     ]
     return Response[List[FamilyMembersByUserResponseDTO]](
         data=family_members_dto,
-        message="Family members retrieved successfuly",
+        message="Acudientes consultados de manera exitosa",
         error=None,
         status_code=HTTPStatus.OK,
     )
@@ -231,7 +247,10 @@ async def get_record_medicines(
         MedicinesPerUserResponseDTO(**medicine.__dict__) for medicine in medicines
     ]
     return Response[List[MedicinesPerUserResponseDTO]](
-        data=result, message="Success", status_code=201, error=None
+        data=result,
+        message="Medicamentos consultados con éxito",
+        status_code=201,
+        error=None,
     )
 
 
@@ -303,6 +322,90 @@ async def get_user_info(
     )
 
 
+@router.get(
+    "/medical_reports/{reporte_id}", response_model=Response[ReporteClinicoResponse]
+)
+def get_reporte_clinico(
+    reporte_id: int, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[ReporteClinicoResponse]:
+    report = crud._get_medical_report_by_id(reporte_id)
+    report_dict = report.__dict__
+    professional_response = None
+    if report.profesional:
+        professional_response = ProfessionalResponse.from_orm(report.profesional)
+    report_response = ReporteClinicoResponse(**report_dict)
+    del report_response.profesional
+    report_response.profesional = professional_response
+    return Response[ReporteClinicoResponse](
+        data=report_response,
+        message="Reporte consultado",
+        status_code=200,
+        error=None,
+    )
+
+
+@router.get(
+    "/user/{user_id}/medical_reports",
+    response_model=Response[List[ReporteClinicoResponse]],
+)
+def get_medical_reports(
+    user_id: int, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[List[ReporteClinicoResponse]]:
+    reports = crud._get_medical_reports_by_user_id(user_id)
+    return Response[List[ReporteClinicoResponse]](
+        data=[ReporteClinicoResponse(**report.__dict__) for report in reports],
+        message="Reporte consultado",
+        status_code=200,
+        error=None,
+    )
+
+
+@router.get("/professionals", response_model=Response[List[ProfessionalResponse]])
+async def get_professionals(
+    crud: CareLinkCrud = Depends(get_crud),
+) -> Response[List[ProfessionalResponse]]:
+    professionals = crud._get_professionals()
+    response = [
+        ProfessionalResponse.from_orm(professional) for professional in professionals
+    ]
+    return Response[List[ProfessionalResponse]](
+        data=response, message="Lista de profesionales", status_code=200, error=None
+    )
+
+
+@router.get(
+    "/reports/{id}/evolutions", response_model=Response[List[ClinicalEvolutionResponse]]
+)
+async def get_clinical_evolutions(
+    id: int, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[List[ClinicalEvolutionResponse]]:
+    evolutions = crud._get_clinical_evolutions_by_report_id(id)
+    response = [
+        ClinicalEvolutionResponse.from_orm(evolution) for evolution in evolutions
+    ]
+    return Response[List[ClinicalEvolutionResponse]](
+        data=response,
+        message="Evoluciones clínicas consultadas con éxito",
+        error=None,
+        status_code=200,
+    )
+
+
+@router.get("/evolutions/{id}", response_model=Response[ClinicalEvolutionResponse])
+async def get_clinical_evolution(
+    id: int, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[ClinicalEvolutionResponse]:
+    evolution = crud._get_clinical_evolution_by_evolution_id(id)
+    response = ClinicalEvolutionResponse.from_orm(evolution)
+
+    return Response[ClinicalEvolutionResponse](
+        data=response,
+        message="Evoluciones clínicas consultadas con éxito",
+        error=None,
+        status_code=200,
+    )
+
+
 @router.post("/users", status_code=201, response_model=Response[UserResponseDTO])
 async def create_users(
     user: UserCreateRequestDTO,
@@ -316,7 +419,7 @@ async def create_users(
     return Response[UserResponseDTO](
         data=user_response,
         status_code=HTTPStatus.CREATED,
-        message="User created successfully",
+        message="Usuario creado de manera exitosa",
         error=None,
     )
 
@@ -339,7 +442,7 @@ async def create_family_members(
     return Response[object](
         data={},
         status_code=HTTPStatus.CREATED,
-        message="Family member created successfully",
+        message="Acudiente registrado de manera exitosa",
         error=None,
     )
 
@@ -359,7 +462,7 @@ async def login_user(
     return Response[dict](
         data={"access_token": access_token, "token_type": "bearer"},
         status_code=HTTPStatus.OK,
-        message="Login successful",
+        message="Inicio de sesión exitoso",
         error=None,
     )
 
@@ -392,7 +495,12 @@ async def create_user_record(
         interventions_to_save,
         vaccines_to_save,
     )
-    return Response[object](data={}, message="Success", status_code=201, error=None)
+    return Response[object](
+        data={},
+        message="Historia clínica registrada de manera exitosa",
+        status_code=201,
+        error=None,
+    )
 
 
 @router.post(
@@ -436,6 +544,36 @@ async def create_user(
     )
 
 
+@router.post("/medical_reports/", response_model=Response[ReporteClinicoResponse])
+def create_reporte_clinico(
+    reporte: ReporteClinicoCreate, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[ReporteClinicoResponse]:
+    report_to_save = ReportesClinicos(**reporte.dict())
+    resulting_report = crud.save_medical_report(report_to_save)
+    return Response[ReporteClinicoResponse](
+        data=ReporteClinicoResponse(**resulting_report.__dict__),
+        message="Reporte clínico creado de manera exitosa",
+        status_code=200,
+        error=None,
+    )
+
+
+@router.post(
+    "/reports/{id}/evolutions", response_model=Response[ClinicalEvolutionResponse]
+)
+def create_clinical_evolution(
+    evolution: ClinicalEvolutionCreate, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[ClinicalEvolutionResponse]:
+    report_to_save = EvolucionesClinicas(**evolution.dict())
+    resulting_report = crud.save_clinical_evolution(report_to_save)
+    return Response[ClinicalEvolutionResponse](
+        data=ClinicalEvolutionResponse(**resulting_report.__dict__),
+        message="Evolución clínica creada de manera exitosa",
+        status_code=200,
+        error=None,
+    )
+
+
 @router.patch("/users/{id}", status_code=200, response_model=Response[UserResponseDTO])
 async def update_user(
     id: int,
@@ -448,7 +586,7 @@ async def update_user(
     return Response[UserResponseDTO](
         data=updated_user.__dict__,
         status_code=HTTPStatus.OK,
-        message="Usuario actualizado",
+        message="Usuario actualizado de manera exitosa",
         error=None,
     )
 
@@ -465,7 +603,7 @@ async def update_treatment(
     return Response[object](
         data={},
         status_code=HTTPStatus.OK,
-        message="Medicamento actualizado",
+        message="Medicamento actualizado de manera exitosa",
         error=None,
     )
 
@@ -482,7 +620,7 @@ async def update_nursing(
     return Response[object](
         data={},
         status_code=HTTPStatus.OK,
-        message="Medicamento actualizado",
+        message="Tratamiento actualizado de manera exitosa",
         error=None,
     )
 
@@ -501,7 +639,7 @@ async def update_intervention(
     return Response[object](
         data={},
         status_code=HTTPStatus.OK,
-        message="Medicamento actualizado",
+        message="Intervención actualizada de manera exitosa",
         error=None,
     )
 
@@ -518,7 +656,7 @@ async def update_vaccine(
     return Response[object](
         data={},
         status_code=HTTPStatus.OK,
-        message="Medicamento actualizado",
+        message="Vacuna actualizada de manera exitosa",
         error=None,
     )
 
@@ -537,7 +675,10 @@ async def update_family_member(
     family_member_to_update = FamilyMember(**family_member.dict())
     family_member_updated = crud.update_family_member(id, family_member_to_update)
     return Response[FamilyMemberResponseDTO](
-        data=family_member_updated.__dict__, status_code=HTTPStatus.OK
+        data=family_member_updated.__dict__,
+        status_code=HTTPStatus.OK,
+        message="Acudiente actualizado de manera exitosa",
+        error=None,
     )
 
 
@@ -583,6 +724,42 @@ async def update_user_medical_record(
     )
 
 
+@router.patch(
+    "/medical_reports/{reporte_id}", response_model=Response[ReporteClinicoResponse]
+)
+def update_reporte_clinico(
+    reporte_id: int,
+    reporte: ReporteClinicoUpdate,
+    crud: CareLinkCrud = Depends(get_crud),
+) -> Response[ReporteClinicoResponse]:
+    report_to_update = ReportesClinicos(**reporte.__dict__)
+    result = crud.update_medical_record(reporte_id, report_to_update)
+    return Response[ReporteClinicoResponse](
+        data=ReporteClinicoResponse(**result.__dict__),
+        status_code=HTTPStatus.OK,
+        message="Reporte clínico actualizado de manera exitosa",
+        error=None,
+    )
+
+
+@router.patch(
+    "/evolutions/{evolution_id}", response_model=Response[ClinicalEvolutionResponse]
+)
+def update_evolution(
+    evolution_id: int,
+    evolution: ClinicalEvolutionUpdate,
+    crud: CareLinkCrud = Depends(get_crud),
+) -> Response[ClinicalEvolutionResponse]:
+    report_to_update = EvolucionesClinicas(**evolution.__dict__)
+    result = crud.update_clinical_evolution(evolution_id, report_to_update)
+    return Response[ClinicalEvolutionResponse](
+        data=ClinicalEvolutionResponse(**result.__dict__),
+        status_code=HTTPStatus.OK,
+        message="Evolución clínica actualizada de manera exitosa",
+        error=None,
+    )
+
+
 @router.delete("/users/{id}", status_code=200, response_model=Response[object])
 async def delete_user(
     id: int,
@@ -591,7 +768,10 @@ async def delete_user(
 ) -> Response[object]:
     crud.delete_user(id)
     return Response[object](
-        data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
+        data={},
+        status_code=HTTPStatus.NO_CONTENT,
+        message="Usuario eliminado de manera exitosa",
+        error=None,
     )
 
 
@@ -603,7 +783,10 @@ async def delete_family_member(
 ) -> Response[object]:
     crud.delete_family_member(id)
     return Response[object](
-        data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
+        data={},
+        status_code=HTTPStatus.NO_CONTENT,
+        message="Acudiente eliminado de manera exitosa",
+        error=None,
     )
 
 
@@ -615,7 +798,10 @@ async def delete_record(
 ) -> Response[object]:
     crud.delete_user_medical_record(id)
     return Response[object](
-        data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
+        data={},
+        status_code=HTTPStatus.NO_CONTENT,
+        message="Historia clínica eliminada de manera exitosa",
+        error=None,
     )
 
 
@@ -632,7 +818,10 @@ async def delete_vaccine(
 ) -> Response[object]:
     crud.delete_user_vaccine_by_record_id(id, vaccine_id)
     return Response[object](
-        data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
+        data={},
+        status_code=HTTPStatus.NO_CONTENT,
+        message="Vacuna eliminada de manera exitosa",
+        error=None,
     )
 
 
@@ -649,7 +838,10 @@ async def delete_medicine(
 ) -> Response[object]:
     crud.delete_user_medicines_by_record_id(id, medicine_id)
     return Response[object](
-        data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
+        data={},
+        status_code=HTTPStatus.NO_CONTENT,
+        message="Medicamento eliminado de manera exitosa",
+        error=None,
     )
 
 
@@ -666,7 +858,10 @@ async def delete_care(
 ) -> Response[object]:
     crud.delete_user_care_by_record_id(id, care_id)
     return Response[object](
-        data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
+        data={},
+        status_code=HTTPStatus.NO_CONTENT,
+        message="Cuidado eliminado de manera exitosa",
+        error=None,
     )
 
 
@@ -683,5 +878,8 @@ async def delete_intervention(
 ) -> Response[object]:
     crud.delete_user_intervention_by_record_id(id, intervention_id)
     return Response[object](
-        data={}, status_code=HTTPStatus.NO_CONTENT, message="", error=None
+        data={},
+        status_code=HTTPStatus.NO_CONTENT,
+        message="Intervención eliminada de manera exitosa",
+        error=None,
     )
