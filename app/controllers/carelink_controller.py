@@ -883,3 +883,33 @@ async def delete_intervention(
         message="Intervención eliminada de manera exitosa",
         error=None,
     )
+
+
+@router.delete("/evolutions/{id}", status_code=200, response_model=Response[object])
+async def delete_evolution(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    crud.delete_clinical_evolution(id)
+    return Response[object](
+        data={},
+        status_code=HTTPStatus.NO_CONTENT,
+        message="Reporte de evolución clínica eliminado con éxito",
+        error=None,
+    )
+
+
+@router.delete("/reports/{id}", status_code=200, response_model=Response[object])
+async def delete_report(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    crud.delete_medical_report(id)
+    return Response[object](
+        data={},
+        status_code=HTTPStatus.NO_CONTENT,
+        message="Reporte clínico eliminado con éxito",
+        error=None,
+    )

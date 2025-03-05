@@ -54,11 +54,13 @@ class CareLinkCrud:
                 kinship_string = kinship.dict()["parentezco"]
                 self.__carelink_session.add(family_member)
                 self.__carelink_session.flush()
-                associate_family = FamiliaresYAcudientesPorUsuario(**{
-                    "id_usuario": id,
-                    "id_acudiente": family_member.id_acudiente,
-                    "parentesco": kinship_string,
-                })
+                associate_family = FamiliaresYAcudientesPorUsuario(
+                    **{
+                        "id_usuario": id,
+                        "id_acudiente": family_member.id_acudiente,
+                        "parentesco": kinship_string,
+                    }
+                )
                 self.__carelink_session.add(associate_family)
                 self.__carelink_session.commit()
 
@@ -310,6 +312,16 @@ class CareLinkCrud:
     def delete_family_member(self, id: int):
         db_family_member, _ = self._get_family_member_by_id(id)
         db_family_member.is_deleted = True
+        self.__carelink_session.commit()
+
+    def delete_clinical_evolution(self, id: int):
+        db_clinical_evolution = self._get_clinical_evolution_by_evolution_id(id)
+        self.__carelink_session.delete(db_clinical_evolution)
+        self.__carelink_session.commit()
+
+    def delete_medical_report(self, id: int):
+        db_clinical_evolution = self._get_medical_report_by_id(id)
+        self.__carelink_session.delete(db_clinical_evolution)
         self.__carelink_session.commit()
 
     def delete_user_medical_record(self, record_id: int):
