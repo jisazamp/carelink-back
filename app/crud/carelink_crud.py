@@ -1,4 +1,5 @@
 from app.exceptions.exceptions_classes import BusinessLogicError, EntityNotFoundError
+from app.models.activities import ActividadesGrupales
 from app.models.authorized_users import AuthorizedUsers
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.clinical_evolutions import EvolucionesClinicas
@@ -111,6 +112,12 @@ class CareLinkCrud:
         self.__carelink_session.refresh(evolution)
         return evolution
 
+    def save_activity(self, activity: ActividadesGrupales):
+        self.__carelink_session.add(activity)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(activity)
+        return activity
+
     def _update_user(self, user: User, db_user: User) -> User:
         for key, value in user.__dict__.items():
             if key != "_sa_instance_state" and value is not None:
@@ -202,6 +209,17 @@ class CareLinkCrud:
         self.__carelink_session.commit()
         self.__carelink_session.refresh(db_record)
         return db_record
+
+    def _update_activity(
+        self, activity: ActividadesGrupales, db_activity: ActividadesGrupales
+    ) -> ActividadesGrupales:
+        for key, value in activity.__dict__.items():
+            if key != "_sa_instance_state" and value is not None:
+                if hasattr(db_activity, key):
+                    setattr(db_activity, key, value)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(db_activity)
+        return db_activity
 
     def update_user(self, user_id: int, user: User) -> User:
         db_user = self._get_user_by_id(user_id)
@@ -300,9 +318,16 @@ class CareLinkCrud:
     def update_medical_record(
         self, report_id: int, report: ReportesClinicos
     ) -> ReportesClinicos:
-        db_report = self._get_medical_record_by_id(report_id)
+        db_report = self._get_medical_report_by_id(report_id)
         updated_report = self._update_record(report, db_report)
         return updated_report
+
+    def update_activity(
+        self, activity_id: int, activity: ActividadesGrupales
+    ) -> ActividadesGrupales:
+        db_activity = self._get_activity_by_id(activity_id)
+        updated_activity = self._update_activity(activity, db_activity)
+        return updated_activity
 
     def delete_user(self, user_id: int):
         db_user = self._get_user_by_id(user_id)
@@ -327,6 +352,11 @@ class CareLinkCrud:
     def delete_user_medical_record(self, record_id: int):
         db_record = self._get_medical_record_by_id(record_id)
         self.__carelink_session.delete(db_record)
+        self.__carelink_session.commit()
+
+    def delete_activity(self, activity_id: int):
+        db_activity = self._get_activity_by_id(activity_id)
+        self.__carelink_session.delete(db_activity)
         self.__carelink_session.commit()
 
     def delete_user_vaccine_by_record_id(self, record_id: int, vaccine_id: int):
@@ -588,6 +618,16 @@ class CareLinkCrud:
     def _get_professionals(self) -> List[Profesionales]:
         return self.__carelink_session.query(Profesionales).all()
 
+    def _get_professional_by_id(self, id: int) -> Profesionales:
+        professional = (
+            self.__carelink_session.query(Profesionales)
+            .filter(Profesionales.id_profesional == id)
+            .first()
+        )
+        if professional is None:
+            raise EntityNotFoundError(f"Profesional con identificador #{id} no existe")
+        return professional
+
     def _get_clinical_evolutions_by_report_id(
         self, report_id: int
     ) -> List[EvolucionesClinicas]:
@@ -608,3 +648,18 @@ class CareLinkCrud:
         if evolucion is None:
             raise EntityNotFoundError("No se encuentra el reporte clínico")
         return evolucion
+
+    def _get_activities(self) -> List[ActividadesGrupales]:
+        return self.__carelink_session.query(ActividadesGrupales).all()
+
+    def _get_activity_by_id(self, id: int) -> ActividadesGrupales:
+        activity = (
+            self.__carelink_session.query(ActividadesGrupales)
+            .filter(ActividadesGrupales.id == id)
+            .first()
+        )
+        if activity is None:
+            raise EntityNotFoundError(
+                f"No se encuentra una actividad con el identificador #{id}"
+            )
+        return activity
