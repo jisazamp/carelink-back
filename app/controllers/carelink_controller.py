@@ -1,5 +1,9 @@
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
+from app.dto.v1.request.activities import (
+    ActividadesGrupalesCreate,
+    ActividadesGrupalesUpdate,
+)
 from app.dto.v1.request.clinical_evolution import (
     ClinicalEvolutionCreate,
     ClinicalEvolutionUpdate,
@@ -22,6 +26,7 @@ from app.dto.v1.request.user_medical_record_update_request_dto import (
     UpdateUserMedicalRecordRequestDTO,
 )
 from app.dto.v1.request.user_request_dto import UserCreateRequestDTO
+from app.dto.v1.response.activities import ActivitiesResponse
 from app.dto.v1.response.cares_per_user import (
     CaresPerUserResponseDTO,
     CaresPerUserUpdateDTO,
@@ -51,6 +56,7 @@ from app.dto.v1.response.vaccines_per_user import (
     VaccinesPerUserResponseDTO,
     VaccinesPerUserUpdateDTO,
 )
+from app.models.activities import ActividadesGrupales
 from app.models.authorized_users import AuthorizedUsers
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.clinical_evolutions import EvolucionesClinicas
@@ -326,7 +332,9 @@ async def get_user_info(
     "/medical_reports/{reporte_id}", response_model=Response[ReporteClinicoResponse]
 )
 def get_reporte_clinico(
-    reporte_id: int, crud: CareLinkCrud = Depends(get_crud)
+    reporte_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[ReporteClinicoResponse]:
     report = crud._get_medical_report_by_id(reporte_id)
     report_dict = report.__dict__
@@ -349,7 +357,9 @@ def get_reporte_clinico(
     response_model=Response[List[ReporteClinicoResponse]],
 )
 def get_medical_reports(
-    user_id: int, crud: CareLinkCrud = Depends(get_crud)
+    user_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[List[ReporteClinicoResponse]]:
     reports = crud._get_medical_reports_by_user_id(user_id)
     return Response[List[ReporteClinicoResponse]](
@@ -363,6 +373,7 @@ def get_medical_reports(
 @router.get("/professionals", response_model=Response[List[ProfessionalResponse]])
 async def get_professionals(
     crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[List[ProfessionalResponse]]:
     professionals = crud._get_professionals()
     response = [
@@ -377,7 +388,9 @@ async def get_professionals(
     "/reports/{id}/evolutions", response_model=Response[List[ClinicalEvolutionResponse]]
 )
 async def get_clinical_evolutions(
-    id: int, crud: CareLinkCrud = Depends(get_crud)
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[List[ClinicalEvolutionResponse]]:
     evolutions = crud._get_clinical_evolutions_by_report_id(id)
     response = [
@@ -393,7 +406,9 @@ async def get_clinical_evolutions(
 
 @router.get("/evolutions/{id}", response_model=Response[ClinicalEvolutionResponse])
 async def get_clinical_evolution(
-    id: int, crud: CareLinkCrud = Depends(get_crud)
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[ClinicalEvolutionResponse]:
     evolution = crud._get_clinical_evolution_by_evolution_id(id)
     response = ClinicalEvolutionResponse.from_orm(evolution)
@@ -403,6 +418,45 @@ async def get_clinical_evolution(
         message="Evoluciones clínicas consultadas con éxito",
         error=None,
         status_code=200,
+    )
+
+
+@router.get(
+    "/activities",
+    status_code=200,
+    response_model=Response[List[ActivitiesResponse]],
+)
+async def get_activities(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[ActivitiesResponse]]:
+    activities = crud._get_activities()
+    result = [ActivitiesResponse(**activity.__dict__) for activity in activities]
+    return Response[List[ActivitiesResponse]](
+        data=result,
+        message="Actividades consultadas con éxito",
+        status_code=201,
+        error=None,
+    )
+
+
+@router.get(
+    "/activities/{id}",
+    status_code=200,
+    response_model=Response[ActivitiesResponse],
+)
+async def get_activity_by_id(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[ActivitiesResponse]:
+    activity = crud._get_activity_by_id(id)
+    result = ActivitiesResponse(**activity.__dict__)
+    return Response[ActivitiesResponse](
+        data=result,
+        message="Actividad consultada con éxito",
+        status_code=201,
+        error=None,
     )
 
 
@@ -476,6 +530,7 @@ async def create_user_record(
     interventions: List[CreateUserAssociatedInterventionsRequestDTO],
     vaccines: List[CreateUserAssociatedVaccinesRequestDTO],
     crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     record_to_save = MedicalRecord(**record.__dict__)
     medicines_to_save = [
@@ -512,6 +567,7 @@ async def create_user_medical_record(
     id: int,
     record: CreateUserMedicalRecordCreateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[CreateUserMedicalRecordResponseDTO]:
     record_to_save = MedicalRecord(**record.dict())
     saved_record = crud.create_user_medical_record(id, record_to_save)
@@ -528,6 +584,7 @@ async def create_user_medical_record(
 async def create_user(
     user: AuthorizedUserCreateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[UserResponseDTO]:
     hashed_password = hash_password(user.password)
     user_to_save = AuthorizedUsers(**user.dict())
@@ -546,7 +603,9 @@ async def create_user(
 
 @router.post("/medical_reports/", response_model=Response[ReporteClinicoResponse])
 def create_reporte_clinico(
-    reporte: ReporteClinicoCreate, crud: CareLinkCrud = Depends(get_crud)
+    reporte: ReporteClinicoCreate,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[ReporteClinicoResponse]:
     report_to_save = ReportesClinicos(**reporte.dict())
     resulting_report = crud.save_medical_report(report_to_save)
@@ -562,13 +621,31 @@ def create_reporte_clinico(
     "/reports/{id}/evolutions", response_model=Response[ClinicalEvolutionResponse]
 )
 def create_clinical_evolution(
-    evolution: ClinicalEvolutionCreate, crud: CareLinkCrud = Depends(get_crud)
+    evolution: ClinicalEvolutionCreate,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[ClinicalEvolutionResponse]:
     report_to_save = EvolucionesClinicas(**evolution.dict())
     resulting_report = crud.save_clinical_evolution(report_to_save)
     return Response[ClinicalEvolutionResponse](
         data=ClinicalEvolutionResponse(**resulting_report.__dict__),
         message="Evolución clínica creada de manera exitosa",
+        status_code=200,
+        error=None,
+    )
+
+
+@router.post("/activities", response_model=Response[ActivitiesResponse])
+def create_activity(
+    activity: ActividadesGrupalesCreate,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[ActivitiesResponse]:
+    activity_to_save = ActividadesGrupales(**activity.dict())
+    resulting_activity = crud.save_activity(activity_to_save)
+    return Response[ActivitiesResponse](
+        data=ActivitiesResponse(**resulting_activity.__dict__),
+        message="Actividad creada de manera exitosa",
         status_code=200,
         error=None,
     )
@@ -696,6 +773,7 @@ async def update_user_medical_record(
     interventions: List[CreateUserAssociatedInterventionsRequestDTO],
     vaccines: List[CreateUserAssociatedVaccinesRequestDTO],
     crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     update_data = record.dict(exclude_unset=True)
     medicines_to_save = [
@@ -731,6 +809,7 @@ def update_reporte_clinico(
     reporte_id: int,
     reporte: ReporteClinicoUpdate,
     crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[ReporteClinicoResponse]:
     report_to_update = ReportesClinicos(**reporte.__dict__)
     result = crud.update_medical_record(reporte_id, report_to_update)
@@ -749,6 +828,7 @@ def update_evolution(
     evolution_id: int,
     evolution: ClinicalEvolutionUpdate,
     crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[ClinicalEvolutionResponse]:
     report_to_update = EvolucionesClinicas(**evolution.__dict__)
     result = crud.update_clinical_evolution(evolution_id, report_to_update)
@@ -756,6 +836,23 @@ def update_evolution(
         data=ClinicalEvolutionResponse(**result.__dict__),
         status_code=HTTPStatus.OK,
         message="Evolución clínica actualizada de manera exitosa",
+        error=None,
+    )
+
+
+@router.patch("/activities/{id}", response_model=Response[ActivitiesResponse])
+def update_activity(
+    id: int,
+    activity: ActividadesGrupalesUpdate,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[ActivitiesResponse]:
+    activity_to_update = ActividadesGrupales(**activity.__dict__)
+    result = crud.update_activity(id, activity_to_update)
+    return Response[ActivitiesResponse](
+        data=ActivitiesResponse(**result.__dict__),
+        status_code=HTTPStatus.OK,
+        message="Actividad actualizada de manera exitosa",
         error=None,
     )
 
@@ -911,5 +1008,24 @@ async def delete_report(
         data={},
         status_code=HTTPStatus.NO_CONTENT,
         message="Reporte clínico eliminado con éxito",
+        error=None,
+    )
+
+
+@router.delete(
+    "/activities/{id}",
+    status_code=200,
+    response_model=Response[object],
+)
+async def delete_activity(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[object]:
+    crud.delete_activity(id)
+    return Response[object](
+        data={},
+        status_code=HTTPStatus.NO_CONTENT,
+        message="Actividad eliminada de manera exitosa",
         error=None,
     )
