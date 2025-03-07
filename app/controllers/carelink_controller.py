@@ -26,7 +26,7 @@ from app.dto.v1.request.user_medical_record_update_request_dto import (
     UpdateUserMedicalRecordRequestDTO,
 )
 from app.dto.v1.request.user_request_dto import UserCreateRequestDTO
-from app.dto.v1.response.activities import ActivitiesResponse
+from app.dto.v1.response.activities import ActivitiesResponse, TypeOfActivityResponse
 from app.dto.v1.response.cares_per_user import (
     CaresPerUserResponseDTO,
     CaresPerUserUpdateDTO,
@@ -455,6 +455,24 @@ async def get_activity_by_id(
     return Response[ActivitiesResponse](
         data=result,
         message="Actividad consultada con éxito",
+        status_code=201,
+        error=None,
+    )
+
+@router.get(
+    "/activity_types",
+    status_code=200,
+    response_model=Response[List[TypeOfActivityResponse]],
+)
+async def get_activity_types(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[TypeOfActivityResponse]]:
+    activity_types = crud._get_activity_types()
+    result = [TypeOfActivityResponse(**type.__dict__) for type in activity_types]
+    return Response[List[TypeOfActivityResponse]](
+        data=result,
+        message="Tipos de actividad consultados con éxito",
         status_code=201,
         error=None,
     )
