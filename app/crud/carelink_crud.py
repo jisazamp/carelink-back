@@ -1,5 +1,5 @@
 from app.exceptions.exceptions_classes import BusinessLogicError, EntityNotFoundError
-from app.models.activities import ActividadesGrupales
+from app.models.activities import ActividadesGrupales, TipoActividad
 from app.models.authorized_users import AuthorizedUsers
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.clinical_evolutions import EvolucionesClinicas
@@ -663,3 +663,6 @@ class CareLinkCrud:
                 f"No se encuentra una actividad con el identificador #{id}"
             )
         return activity
+
+    def _get_activity_types(self) -> List[TipoActividad]:
+        return self.__carelink_session.query(TipoActividad).all()
