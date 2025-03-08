@@ -1,4 +1,4 @@
-from app.exceptions.exceptions_classes import BusinessLogicError, EntityNotFoundError
+from app.exceptions.exceptions_classes import EntityNotFoundError
 from app.models.activities import ActividadesGrupales, TipoActividad
 from app.models.authorized_users import AuthorizedUsers
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
@@ -11,12 +11,12 @@ from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.professional import Profesionales
 from app.models.user import User
+from app.models.vaccines import VacunasPorUsuario
+from datetime import date
 from fastapi import HTTPException
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from typing import List, Tuple
-
-from app.models.vaccines import VacunasPorUsuario
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -49,25 +49,17 @@ class CareLinkCrud:
         return user
 
     def save_family_member(self, id: int, kinship, family_member: FamilyMember):
-        with self.__carelink_session.begin_nested() as transaction:
-            try:
-                self._get_user_by_id(id)
-                kinship_string = kinship.dict()["parentezco"]
-                self.__carelink_session.add(family_member)
-                self.__carelink_session.flush()
-                associate_family = FamiliaresYAcudientesPorUsuario(
-                    **{
-                        "id_usuario": id,
-                        "id_acudiente": family_member.id_acudiente,
-                        "parentesco": kinship_string,
-                    }
-                )
-                self.__carelink_session.add(associate_family)
-                self.__carelink_session.commit()
-
-            except Exception:
-                transaction.rollback()
-                raise BusinessLogicError("Something went wrong")
+        self._get_user_by_id(id)
+        kinship_string = kinship.dict()["parentezco"]
+        self.__carelink_session.add(family_member)
+        self.__carelink_session.flush()
+        associate_family = FamiliaresYAcudientesPorUsuario(**{
+            "id_usuario": id,
+            "id_acudiente": family_member.id_acudiente,
+            "parentesco": kinship_string,
+        })
+        self.__carelink_session.add(associate_family)
+        self.__carelink_session.commit()
 
     def save_user_medical_record(
         self,
@@ -78,27 +70,22 @@ class CareLinkCrud:
         interventions: List[IntervencionesPorUsuario],
         vaccines: List[VacunasPorUsuario],
     ):
-        with self.__carelink_session.begin_nested() as transaction:
-            try:
-                self._get_user_by_id(id)
-                self.__carelink_session.add(record)
-                self.__carelink_session.flush()
-                for medicine in medicines:
-                    medicine.id_historiaClinica = record.id_historiaclinica
-                    self.__carelink_session.add(medicine)
-                for care in cares:
-                    care.id_historiaClinica = record.id_historiaclinica
-                    self.__carelink_session.add(care)
-                for intervention in interventions:
-                    intervention.id_historiaClinica = record.id_historiaclinica
-                    self.__carelink_session.add(intervention)
-                for vaccine in vaccines:
-                    vaccine.id_historiaClinica = record.id_historiaclinica
-                    self.__carelink_session.add(vaccine)
-                self.__carelink_session.commit()
-            except Exception:
-                transaction.rollback()
-                raise BusinessLogicError("Something went wrong")
+        self._get_user_by_id(id)
+        self.__carelink_session.add(record)
+        self.__carelink_session.flush()
+        for medicine in medicines:
+            medicine.id_historiaClinica = record.id_historiaclinica
+            self.__carelink_session.add(medicine)
+        for care in cares:
+            care.id_historiaClinica = record.id_historiaclinica
+            self.__carelink_session.add(care)
+        for intervention in interventions:
+            intervention.id_historiaClinica = record.id_historiaclinica
+            self.__carelink_session.add(intervention)
+        for vaccine in vaccines:
+            vaccine.id_historiaClinica = record.id_historiaclinica
+            self.__carelink_session.add(vaccine)
+        self.__carelink_session.commit()
 
     def save_medical_report(self, report: ReportesClinicos):
         self.__carelink_session.add(report)
@@ -280,40 +267,39 @@ class CareLinkCrud:
         interventions: List[IntervencionesPorUsuario],
         vaccines: List[VacunasPorUsuario],
     ) -> MedicalRecord:
-        with self.__carelink_session.begin():
-            self._get_user_by_id(user_id)
+        self._get_user_by_id(user_id)
 
-            record_to_update = (
-                self.__carelink_session.query(MedicalRecord)
-                .filter_by(id_historiaclinica=record_id, id_usuario=user_id)
-                .first()
+        record_to_update = (
+            self.__carelink_session.query(MedicalRecord)
+            .filter_by(id_historiaclinica=record_id, id_usuario=user_id)
+            .first()
+        )
+
+        if not record_to_update:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Medical record with ID {record_id} not found for user {user_id}",
             )
 
-            if not record_to_update:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Medical record with ID {record_id} not found for user {user_id}",
-                )
+        for key, value in update_data.items():
+            setattr(record_to_update, key, value)
 
-            for key, value in update_data.items():
-                setattr(record_to_update, key, value)
+        for medicine in medicines:
+            medicine.id_historiaClinica = record_to_update.id_historiaclinica
+            self.__carelink_session.add(medicine)
+        for care in cares:
+            care.id_historiaClinica = record_to_update.id_historiaclinica
+            self.__carelink_session.add(care)
+        for intervention in interventions:
+            intervention.id_historiaClinica = record_to_update.id_historiaclinica
+            self.__carelink_session.add(intervention)
+        for vaccine in vaccines:
+            vaccine.id_historiaClinica = record_to_update.id_historiaclinica
+            self.__carelink_session.add(vaccine)
 
-            for medicine in medicines:
-                medicine.id_historiaClinica = record_to_update.id_historiaclinica
-                self.__carelink_session.add(medicine)
-            for care in cares:
-                care.id_historiaClinica = record_to_update.id_historiaclinica
-                self.__carelink_session.add(care)
-            for intervention in interventions:
-                intervention.id_historiaClinica = record_to_update.id_historiaclinica
-                self.__carelink_session.add(intervention)
-            for vaccine in vaccines:
-                vaccine.id_historiaClinica = record_to_update.id_historiaclinica
-                self.__carelink_session.add(vaccine)
-
-            self.__carelink_session.flush()
-            self.__carelink_session.refresh(record_to_update)
-            return record_to_update
+        self.__carelink_session.flush()
+        self.__carelink_session.refresh(record_to_update)
+        return record_to_update
 
     def update_medical_record(
         self, report_id: int, report: ReportesClinicos
@@ -666,3 +652,14 @@ class CareLinkCrud:
 
     def _get_activity_types(self) -> List[TipoActividad]:
         return self.__carelink_session.query(TipoActividad).all()
+
+    def _get_upcoming_activities(self) -> List[ActividadesGrupales]:
+        print("HOLAAA")
+        today = date.today()
+        upcoming_activities = (
+            self.__carelink_session.query(ActividadesGrupales)
+            .filter(ActividadesGrupales.fecha >= today)
+            .order_by(ActividadesGrupales.fecha.asc())
+            .all()
+        )
+        return upcoming_activities

@@ -459,6 +459,7 @@ async def get_activity_by_id(
         error=None,
     )
 
+
 @router.get(
     "/activity_types",
     status_code=200,
@@ -473,6 +474,25 @@ async def get_activity_types(
     return Response[List[TypeOfActivityResponse]](
         data=result,
         message="Tipos de actividad consultados con éxito",
+        status_code=201,
+        error=None,
+    )
+
+
+@router.get(
+    "/activities-upcoming",
+    status_code=200,
+    response_model=Response[List[ActivitiesResponse]],
+)
+async def get_upcoming_activities(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[ActivitiesResponse]]:
+    activities = crud._get_upcoming_activities()
+    result = [ActivitiesResponse(**activity.__dict__) for activity in activities]
+    return Response[List[ActivitiesResponse]](
+        data=result,
+        message="Actividades consultadas con éxito",
         status_code=201,
         error=None,
     )
