@@ -72,12 +72,12 @@ from app.security.jwt_utilities import (
     create_access_token,
     hash_password,
 )
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from functools import lru_cache
 from http import HTTPStatus
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 
 token_auth_scheme = HTTPBearer()
@@ -500,12 +500,19 @@ async def get_upcoming_activities(
 
 @router.post("/users", status_code=201, response_model=Response[UserResponseDTO])
 async def create_users(
-    user: UserCreateRequestDTO,
+    user: str = Form(...),
+    photo: Optional[UploadFile] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[UserResponseDTO]:
-    user_to_save = User(**user.dict())
-    saved_user = crud.save_user(user_to_save)
+    try:
+        user_data = UserCreateRequestDTO.parse_raw(user)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid user data: {str(e)}")
+
+    user_to_save = User(**user_data.dict())
+
+    saved_user = crud.save_user(user_to_save, photo)
     user_response = UserResponseDTO(**saved_user.__dict__)
 
     return Response[UserResponseDTO](
@@ -692,14 +699,23 @@ def create_activity(
 @router.patch("/users/{id}", status_code=200, response_model=Response[UserResponseDTO])
 async def update_user(
     id: int,
-    user: UserUpdateRequestDTO,
+    user: str = Form(...),
+    photo: Optional[UploadFile] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ):
-    user_to_update = User(**user.dict())
-    updated_user = crud.update_user(id, user_to_update)
+    try:
+        user_data = UserCreateRequestDTO.parse_raw(user)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid user data: {str(e)}")
+
+    user_to_save = User(**user_data.dict())
+
+    saved_user = crud.update_user(id, user_to_save, photo)
+    user_response = UserResponseDTO(**saved_user.__dict__)
+
     return Response[UserResponseDTO](
-        data=updated_user.__dict__,
+        data=user_response,
         status_code=HTTPStatus.OK,
         message="Usuario actualizado de manera exitosa",
         error=None,
