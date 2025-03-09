@@ -12,18 +12,28 @@ from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.professional import Profesionales
 from app.models.user import User
 from app.models.vaccines import VacunasPorUsuario
+from boto3 import client
+from botocore.exceptions import NoCredentialsError
 from datetime import date
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+INVALID_CHARS = ["#", "@", "$", "%", " ", "&", "|", "(", ")", "-", "+"]
 
 
 class CareLinkCrud:
     def __init__(self, carelink_db: Session) -> None:
         self.__carelink_session = carelink_db
+        self.__s3_client = client("s3")
+
+    def clean_string(self, string: str) -> str:
+        cleaned_string = string
+        for char in INVALID_CHARS:
+            cleaned_string = cleaned_string.replace(char, "_")
+        return cleaned_string
 
     def list_users(self) -> List[User]:
         return self._get_users()
@@ -41,11 +51,20 @@ class CareLinkCrud:
         self._get_user_by_id(id)
         return self._get_user_medical_record_by_user_id(id)
 
-    def save_user(self, user: User) -> User:
+    def save_user(self, user: User, image: UploadFile | None) -> User:
         user.is_deleted = False
         self.__carelink_session.add(user)
         self.__carelink_session.commit()
         self.__carelink_session.refresh(user)
+        if image:
+            image_url = self.upload_file_to_s3(
+                image.file,
+                "images-carelink",
+                f"user_photos/{user.id_usuario}/{image.filename}",
+            )
+            user.url_imagen = image_url
+        self.__carelink_session.commit()
+
         return user
 
     def save_family_member(self, id: int, kinship, family_member: FamilyMember):
@@ -107,7 +126,7 @@ class CareLinkCrud:
 
     def _update_user(self, user: User, db_user: User) -> User:
         for key, value in user.__dict__.items():
-            if key != "_sa_instance_state" and value is not None:
+            if key != "_sa_instance_state":
                 if hasattr(db_user, key):
                     setattr(db_user, key, value)
         self.__carelink_session.commit()
@@ -208,8 +227,28 @@ class CareLinkCrud:
         self.__carelink_session.refresh(db_activity)
         return db_activity
 
-    def update_user(self, user_id: int, user: User) -> User:
+    def update_user(
+        self, user_id: int, user: User, photo: Optional[UploadFile] = None
+    ) -> User:
         db_user = self._get_user_by_id(user_id)
+
+        if db_user.url_imagen:
+            old_photo_key = db_user.url_imagen.split("/")[-1]
+            self.delete_s3_file(
+                "images-carelink", f"user_photos/{user_id}/{old_photo_key}"
+            )
+
+        if photo:
+            photo_url = self.upload_file_to_s3(
+                photo.file,
+                "images-carelink",
+                f"user_photos/{user_id}/{photo.filename}",
+            )
+            user.url_imagen = photo_url
+        elif user.url_imagen is None:
+            self.delete_s3_folder("images-carelink", f"user_photos/{user_id}")
+            user.url_imagen = None
+
         updated_user = self._update_user(user, db_user)
         return updated_user
 
@@ -654,7 +693,6 @@ class CareLinkCrud:
         return self.__carelink_session.query(TipoActividad).all()
 
     def _get_upcoming_activities(self) -> List[ActividadesGrupales]:
-        print("HOLAAA")
         today = date.today()
         upcoming_activities = (
             self.__carelink_session.query(ActividadesGrupales)
@@ -663,3 +701,29 @@ class CareLinkCrud:
             .all()
         )
         return upcoming_activities
+
+    def upload_file_to_s3(self, file, bucket_name, object_name):
+        try:
+            self.__s3_client.upload_fileobj(file, bucket_name, object_name)
+            return f"https://{bucket_name}.s3.amazonaws.com/{object_name}"
+        except NoCredentialsError:
+            raise Exception("AWS credentials not available")
+
+    def delete_s3_folder(self, bucket_name: str, folder_path: str):
+        try:
+            objects = self.__s3_client.list_objects_v2(
+                Bucket=bucket_name, Prefix=folder_path
+            )
+            if "Contents" in objects:
+                delete_keys = [{"Key": obj["Key"]} for obj in objects["Contents"]]
+                self.__s3_client.delete_objects(
+                    Bucket=bucket_name, Delete={"Objects": delete_keys}
+                )
+        except NoCredentialsError:
+            raise Exception("AWS credentials not available")
+
+    def delete_s3_file(self, bucket_name, object_name):
+        try:
+            self.__s3_client.delete_object(Bucket=bucket_name, Key=object_name)
+        except NoCredentialsError:
+            raise Exception("AWS credentials not available")

@@ -11,7 +11,7 @@ class UserCreateRequestDTO(BaseModel):
     estado_civil: str | None = None
     fecha_nacimiento: date
     fecha_registro: datetime
-    genero: str | None = None 
+    genero: str | None = None
     grado_escolaridad: str | None = None
     ha_estado_en_otro_centro: bool
     lee: bool
@@ -26,3 +26,4 @@ class UserCreateRequestDTO(BaseModel):
     regimen_seguridad_social: str | None = None
     telefono: int | None = None
     tipo_afiliacion: str | None = None
+    url_imagen: str | None = None
