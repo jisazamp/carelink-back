@@ -29,6 +29,7 @@ class User(Base):
     regimen_seguridad_social = Column(String)
     telefono = Column(String)
     tipo_afiliacion = Column(String)
+    url_imagen = Column(String)
     is_deleted = Column(Boolean)
 
     class Config:
