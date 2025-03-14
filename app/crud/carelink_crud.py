@@ -88,22 +88,36 @@ class CareLinkCrud:
         cares: List[CuidadosEnfermeriaPorUsuario],
         interventions: List[IntervencionesPorUsuario],
         vaccines: List[VacunasPorUsuario],
+        attachments: List[UploadFile],
     ):
         self._get_user_by_id(id)
         self.__carelink_session.add(record)
         self.__carelink_session.flush()
+
         for medicine in medicines:
             medicine.id_historiaClinica = record.id_historiaclinica
             self.__carelink_session.add(medicine)
+
         for care in cares:
             care.id_historiaClinica = record.id_historiaclinica
             self.__carelink_session.add(care)
+
         for intervention in interventions:
             intervention.id_historiaClinica = record.id_historiaclinica
             self.__carelink_session.add(intervention)
+
         for vaccine in vaccines:
             vaccine.id_historiaClinica = record.id_historiaclinica
             self.__carelink_session.add(vaccine)
+
+        if attachments:
+            for attachment in attachments:
+                self.upload_file_to_s3(
+                    attachment.file,
+                    "images-carelink",
+                    f"user_attachments/{id}/{attachment.filename}",
+                )
+
         self.__carelink_session.commit()
 
     def save_medical_report(self, report: ReportesClinicos):

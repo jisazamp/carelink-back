@@ -78,6 +78,7 @@ from functools import lru_cache
 from http import HTTPStatus
 from sqlalchemy.orm import Session
 from typing import List, Optional
+import json
 
 
 token_auth_scheme = HTTPBearer()
@@ -569,24 +570,31 @@ async def login_user(
 @router.post("/users/{id}/record", status_code=201, response_model=Response[object])
 async def create_user_record(
     id: int,
-    record: CreateUserMedicalRecordCreateRequestDTO,
-    medicines: List[CreateUserAssociatedMedicinesRequestDTO],
-    cares: List[CreateUserAssociatedCaresRequestDTO],
-    interventions: List[CreateUserAssociatedInterventionsRequestDTO],
-    vaccines: List[CreateUserAssociatedVaccinesRequestDTO],
+    record: str = Form(...),
+    medicines: str = Form(None),
+    cares: str = Form(None),
+    interventions: str = Form(None),
+    vaccines: str = Form(None),
+    attachments: List[UploadFile] = File(...),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
-    record_to_save = MedicalRecord(**record.__dict__)
+    record_data = json.loads(record)
+    medicines_data = json.loads(medicines) if medicines else []
+    cares_data = json.loads(cares) if cares else []
+    interventions_data = json.loads(interventions) if interventions else []
+    vaccines_data = json.loads(vaccines) if vaccines else []
+
+    record_to_save = MedicalRecord(**record_data)
     medicines_to_save = [
-        MedicamentosPorUsuario(**medicine.__dict__) for medicine in medicines
+        MedicamentosPorUsuario(**medicine) for medicine in medicines_data
     ]
-    cares_to_save = [CuidadosEnfermeriaPorUsuario(**care.__dict__) for care in cares]
+    cares_to_save = [CuidadosEnfermeriaPorUsuario(**care) for care in cares_data]
     interventions_to_save = [
-        IntervencionesPorUsuario(**intervention.__dict__)
-        for intervention in interventions
+        IntervencionesPorUsuario(**intervention) for intervention in interventions_data
     ]
-    vaccines_to_save = [VacunasPorUsuario(**vaccine.__dict__) for vaccine in vaccines]
+    vaccines_to_save = [VacunasPorUsuario(**vaccine) for vaccine in vaccines_data]
+
     crud.save_user_medical_record(
         id,
         record_to_save,
@@ -594,7 +602,9 @@ async def create_user_record(
         cares_to_save,
         interventions_to_save,
         vaccines_to_save,
+        attachments,
     )
+
     return Response[object](
         data={},
         message="Historia clínica registrada de manera exitosa",
