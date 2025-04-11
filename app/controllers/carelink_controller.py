@@ -50,7 +50,7 @@ from app.dto.v1.response.medicines_per_user import (
 )
 from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
-from app.dto.v1.response.user import UserResponseDTO, UserUpdateRequestDTO
+from app.dto.v1.response.user import UserResponseDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.dto.v1.response.vaccines_per_user import (
     VaccinesPerUserResponseDTO,
@@ -66,6 +66,8 @@ from app.models.medical_record import MedicalRecord
 from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.user import User
+from app.models.contracts import Contratos, ServiciosPorContrato, FechasServicio
+from app.dto.v1.request.contracts import ContratoCreateDTO
 from app.models.vaccines import VacunasPorUsuario
 from app.security.jwt_utilities import (
     decode_access_token,
@@ -575,7 +577,7 @@ async def create_user_record(
     cares: str = Form(None),
     interventions: str = Form(None),
     vaccines: str = Form(None),
-    attachments: List[UploadFile] = File(...),
+    attachments: Optional[List[UploadFile]] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
@@ -1093,3 +1095,49 @@ async def delete_activity(
         message="Actividad eliminada de manera exitosa",
         error=None,
     )
+
+
+@router.post("/contratos/")
+def crear_contrato(data: ContratoCreateDTO, db: Session = Depends(get_carelink_db)):
+    try:
+        contrato = Contratos(
+            id_usuario=data.id_usuario,
+            tipo_contrato=data.tipo_contrato,
+            fecha_inicio=data.fecha_inicio,
+            fecha_fin=data.fecha_fin,
+            facturar_contrato=data.facturar_contrato,
+        )
+        db.add(contrato)
+        db.commit()
+        db.refresh(contrato)
+
+        for servicio in data.servicios:
+            servicio_contratado = ServiciosPorContrato(
+                id_contrato=contrato.id_contrato,
+                id_servicio=servicio.id_servicio,
+                fecha=servicio.fecha,
+                descripcion=servicio.descripcion,
+                precio_por_dia=servicio.precio_por_dia,
+            )
+            db.add(servicio_contratado)
+            db.commit()
+            db.refresh(servicio_contratado)
+
+            for f in servicio.fechas_servicio:
+                fecha_servicio = FechasServicio(
+                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
+                    fecha=f.fecha,
+                )
+                db.add(fecha_servicio)
+
+        db.commit()
+        return {
+            "message": "Contrato creado correctamente",
+            "id_contrato": contrato.id_contrato,
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500, detail=f"Error al crear contrato: {str(e)}"
+        )
