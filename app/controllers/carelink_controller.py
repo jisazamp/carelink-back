@@ -50,7 +50,7 @@ from app.dto.v1.response.medicines_per_user import (
 )
 from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
-from app.dto.v1.response.user import UserResponseDTO, UserUpdateRequestDTO
+from app.dto.v1.response.user import UserResponseDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.dto.v1.response.vaccines_per_user import (
     VaccinesPerUserResponseDTO,
@@ -66,6 +66,8 @@ from app.models.medical_record import MedicalRecord
 from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.user import User
+from app.models.contracts import Contratos, ServiciosPorContrato, FechasServicio
+from app.dto.v1.request.contracts import ContratoCreateDTO
 from app.models.vaccines import VacunasPorUsuario
 from app.security.jwt_utilities import (
     decode_access_token,
@@ -78,6 +80,7 @@ from functools import lru_cache
 from http import HTTPStatus
 from sqlalchemy.orm import Session
 from typing import List, Optional
+import json
 
 
 token_auth_scheme = HTTPBearer()
@@ -569,24 +572,31 @@ async def login_user(
 @router.post("/users/{id}/record", status_code=201, response_model=Response[object])
 async def create_user_record(
     id: int,
-    record: CreateUserMedicalRecordCreateRequestDTO,
-    medicines: List[CreateUserAssociatedMedicinesRequestDTO],
-    cares: List[CreateUserAssociatedCaresRequestDTO],
-    interventions: List[CreateUserAssociatedInterventionsRequestDTO],
-    vaccines: List[CreateUserAssociatedVaccinesRequestDTO],
+    record: str = Form(...),
+    medicines: str = Form(None),
+    cares: str = Form(None),
+    interventions: str = Form(None),
+    vaccines: str = Form(None),
+    attachments: Optional[List[UploadFile]] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
-    record_to_save = MedicalRecord(**record.__dict__)
+    record_data = json.loads(record)
+    medicines_data = json.loads(medicines) if medicines else []
+    cares_data = json.loads(cares) if cares else []
+    interventions_data = json.loads(interventions) if interventions else []
+    vaccines_data = json.loads(vaccines) if vaccines else []
+
+    record_to_save = MedicalRecord(**record_data)
     medicines_to_save = [
-        MedicamentosPorUsuario(**medicine.__dict__) for medicine in medicines
+        MedicamentosPorUsuario(**medicine) for medicine in medicines_data
     ]
-    cares_to_save = [CuidadosEnfermeriaPorUsuario(**care.__dict__) for care in cares]
+    cares_to_save = [CuidadosEnfermeriaPorUsuario(**care) for care in cares_data]
     interventions_to_save = [
-        IntervencionesPorUsuario(**intervention.__dict__)
-        for intervention in interventions
+        IntervencionesPorUsuario(**intervention) for intervention in interventions_data
     ]
-    vaccines_to_save = [VacunasPorUsuario(**vaccine.__dict__) for vaccine in vaccines]
+    vaccines_to_save = [VacunasPorUsuario(**vaccine) for vaccine in vaccines_data]
+
     crud.save_user_medical_record(
         id,
         record_to_save,
@@ -594,7 +604,9 @@ async def create_user_record(
         cares_to_save,
         interventions_to_save,
         vaccines_to_save,
+        attachments,
     )
+
     return Response[object](
         data={},
         message="Historia clínica registrada de manera exitosa",
@@ -1083,3 +1095,49 @@ async def delete_activity(
         message="Actividad eliminada de manera exitosa",
         error=None,
     )
+
+
+@router.post("/contratos/")
+def crear_contrato(data: ContratoCreateDTO, db: Session = Depends(get_carelink_db)):
+    try:
+        contrato = Contratos(
+            id_usuario=data.id_usuario,
+            tipo_contrato=data.tipo_contrato,
+            fecha_inicio=data.fecha_inicio,
+            fecha_fin=data.fecha_fin,
+            facturar_contrato=data.facturar_contrato,
+        )
+        db.add(contrato)
+        db.commit()
+        db.refresh(contrato)
+
+        for servicio in data.servicios:
+            servicio_contratado = ServiciosPorContrato(
+                id_contrato=contrato.id_contrato,
+                id_servicio=servicio.id_servicio,
+                fecha=servicio.fecha,
+                descripcion=servicio.descripcion,
+                precio_por_dia=servicio.precio_por_dia,
+            )
+            db.add(servicio_contratado)
+            db.commit()
+            db.refresh(servicio_contratado)
+
+            for f in servicio.fechas_servicio:
+                fecha_servicio = FechasServicio(
+                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
+                    fecha=f.fecha,
+                )
+                db.add(fecha_servicio)
+
+        db.commit()
+        return {
+            "message": "Contrato creado correctamente",
+            "id_contrato": contrato.id_contrato,
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500, detail=f"Error al crear contrato: {str(e)}"
+        )
