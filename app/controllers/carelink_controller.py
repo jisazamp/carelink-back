@@ -68,6 +68,11 @@ from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.user import User
 from app.models.contracts import Contratos, ServiciosPorContrato, FechasServicio
 from app.dto.v1.request.contracts import ContratoCreateDTO
+from app.dto.v1.response.contracts import (
+    ContratoResponseDTO,
+    FechaServicioDTO,
+    ServicioContratoDTO,
+)
 from app.models.vaccines import VacunasPorUsuario
 from app.security.jwt_utilities import (
     decode_access_token,
@@ -1140,4 +1145,62 @@ def crear_contrato(data: ContratoCreateDTO, db: Session = Depends(get_carelink_d
         db.rollback()
         raise HTTPException(
             status_code=500, detail=f"Error al crear contrato: {str(e)}"
+        )
+
+
+@router.get("/contratos/{id_usuario}", response_model=List[ContratoResponseDTO])
+def listar_contratos_por_usuario(
+    id_usuario: int, db: Session = Depends(get_carelink_db)
+):
+    try:
+        contratos = db.query(Contratos).filter(Contratos.id_usuario == id_usuario).all()
+
+        if not contratos:
+            return []
+
+        result = []
+        for contrato in contratos:
+            servicios_db = (
+                db.query(ServiciosPorContrato)
+                .filter(ServiciosPorContrato.id_contrato == contrato.id_contrato)
+                .all()
+            )
+            servicios = []
+            for s in servicios_db:
+                fechas = (
+                    db.query(FechasServicio)
+                    .filter(
+                        FechasServicio.id_servicio_contratado
+                        == s.id_servicio_contratado
+                    )
+                    .all()
+                )
+                fechas_dto = [FechaServicioDTO(fecha=f.fecha) for f in fechas]
+
+                servicios.append(
+                    ServicioContratoDTO(
+                        id_servicio=s.id_servicio,
+                        fecha=s.fecha,
+                        descripcion=s.descripcion,
+                        precio_por_dia=s.precio_por_dia,
+                        fechas_servicio=fechas_dto,
+                    )
+                )
+
+            result.append(
+                ContratoResponseDTO(
+                    id_contrato=contrato.id_contrato,
+                    tipo_contrato=contrato.tipo_contrato,
+                    fecha_inicio=contrato.fecha_inicio,
+                    fecha_fin=contrato.fecha_fin,
+                    facturar_contrato=contrato.facturar_contrato,
+                    servicios=servicios,
+                )
+            )
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error al listar contratos: {str(e)}"
         )
