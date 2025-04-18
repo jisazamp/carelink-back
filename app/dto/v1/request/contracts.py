@@ -1,6 +1,6 @@
 from datetime import date
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 
 class FechaServicioCreateDTO(BaseModel):
@@ -22,3 +22,10 @@ class ContratoCreateDTO(BaseModel):
     fecha_fin: date
     facturar_contrato: bool
     servicios: List[ServicioContratadoCreateDTO]
+
+
+class ContratoUpdateDTO(BaseModel):
+    tipo_contrato: Optional[str]
+    fecha_inicio: Optional[date]
+    fecha_fin: Optional[date]
+    facturar_contrato: Optional[bool]
