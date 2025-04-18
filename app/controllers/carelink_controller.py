@@ -1180,6 +1180,7 @@ def listar_contratos_por_usuario(
                 servicios.append(
                     ServicioContratoDTO(
                         id_servicio=s.id_servicio,
+                        id_servicio_contratado=s.id_servicio_contratado,
                         fecha=s.fecha,
                         descripcion=s.descripcion,
                         precio_por_dia=s.precio_por_dia,
