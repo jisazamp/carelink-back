@@ -67,7 +67,7 @@ from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.user import User
 from app.models.contracts import Contratos, ServiciosPorContrato, FechasServicio
-from app.dto.v1.request.contracts import ContratoCreateDTO
+from app.dto.v1.request.contracts import ContratoCreateDTO, ContratoUpdateDTO
 from app.dto.v1.response.contracts import (
     ContratoResponseDTO,
     FechaServicioDTO,
@@ -1204,3 +1204,98 @@ def listar_contratos_por_usuario(
         raise HTTPException(
             status_code=500, detail=f"Error al listar contratos: {str(e)}"
         )
+
+
+@router.get("/contrato/{id_contrato}", response_model=ContratoResponseDTO)
+def obtener_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
+    contrato = db.query(Contratos).filter(Contratos.id_contrato == id_contrato).first()
+
+    if not contrato:
+        raise HTTPException(status_code=404, detail="Contrato no encontrado")
+
+    servicios_db = (
+        db.query(ServiciosPorContrato)
+        .filter(ServiciosPorContrato.id_contrato == contrato.id_contrato)
+        .all()
+    )
+    servicios = []
+    for s in servicios_db:
+        fechas = (
+            db.query(FechasServicio)
+            .filter(FechasServicio.id_servicio_contratado == s.id_servicio_contratado)
+            .all()
+        )
+        fechas_dto = [FechaServicioDTO(fecha=f.fecha) for f in fechas]
+
+        servicios.append(
+            ServicioContratoDTO(
+                id_servicio=s.id_servicio,
+                fecha=s.fecha,
+                descripcion=s.descripcion,
+                precio_por_dia=s.precio_por_dia,
+                fechas_servicio=fechas_dto,
+            )
+        )
+
+    return ContratoResponseDTO(
+        id_contrato=contrato.id_contrato,
+        tipo_contrato=contrato.tipo_contrato,
+        fecha_inicio=contrato.fecha_inicio,
+        fecha_fin=contrato.fecha_fin,
+        facturar_contrato=contrato.facturar_contrato,
+        servicios=servicios,
+    )
+
+
+@router.patch("/contrato/{id_contrato}")
+def actualizar_contrato(
+    id_contrato: int,
+    data: ContratoUpdateDTO,
+    db: Session = Depends(get_carelink_db),
+):
+    contrato = db.query(Contratos).filter(Contratos.id_contrato == id_contrato).first()
+
+    if not contrato:
+        raise HTTPException(status_code=404, detail="Contrato no encontrado")
+
+    for attr, value in data.dict(exclude_unset=True).items():
+        setattr(contrato, attr, value)
+
+    try:
+        db.commit()
+        db.refresh(contrato)
+        return {"message": "Contrato actualizado correctamente"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500, detail=f"Error al actualizar contrato: {str(e)}"
+        )
+
+
+@router.patch("/servicios/{id_servicio_contratado}/fechas")
+def actualizar_fechas_servicio(
+    id_servicio_contratado: int,
+    fechas: List[FechaServicioDTO],
+    db: Session = Depends(get_carelink_db),
+):
+    servicio = (
+        db.query(ServiciosPorContrato)
+        .filter_by(id_servicio_contratado=id_servicio_contratado)
+        .first()
+    )
+
+    if not servicio:
+        raise HTTPException(status_code=404, detail="Servicio contratado no encontrado")
+
+    db.query(FechasServicio).filter_by(
+        id_servicio_contratado=id_servicio_contratado
+    ).delete()
+
+    for f in fechas:
+        nueva_fecha = FechasServicio(
+            id_servicio_contratado=id_servicio_contratado, fecha=f.fecha
+        )
+        db.add(nueva_fecha)
+
+    db.commit()
+    return {"message": "Fechas actualizadas correctamente"}
