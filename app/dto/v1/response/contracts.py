@@ -11,6 +11,7 @@ class FechaServicioDTO(BaseModel):
 
 
 class ServicioContratoDTO(BaseModel):
+    id_servicio_contratado: int
     id_servicio: int
     fecha: date
     descripcion: str

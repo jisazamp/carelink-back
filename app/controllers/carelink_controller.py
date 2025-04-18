@@ -1229,6 +1229,7 @@ def obtener_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
 
         servicios.append(
             ServicioContratoDTO(
+                id_servicio_contratado=s.id_servicio_contratado,
                 id_servicio=s.id_servicio,
                 fecha=s.fecha,
                 descripcion=s.descripcion,
