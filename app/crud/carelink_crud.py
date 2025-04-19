@@ -352,6 +352,7 @@ class CareLinkCrud:
 
         self.__carelink_session.flush()
         self.__carelink_session.refresh(record_to_update)
+        self.__carelink_session.commit()
         return record_to_update
 
     def update_medical_record(
