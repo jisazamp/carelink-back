@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
 from app.dto.v1.request.activities import (
@@ -66,10 +67,26 @@ from app.models.medical_record import MedicalRecord
 from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.user import User
-from app.models.contracts import Contratos, ServiciosPorContrato, FechasServicio
-from app.dto.v1.request.contracts import ContratoCreateDTO, ContratoUpdateDTO
+from app.models.contracts import (
+    Contratos,
+    Facturas,
+    MetodoPago,
+    Pagos,
+    ServiciosPorContrato,
+    FechasServicio,
+    TipoPago,
+)
+from app.dto.v1.request.contracts import (
+    ContratoCreateDTO,
+    ContratoUpdateDTO,
+    FacturaCreate,
+    PagoCreate,
+    PagoCreateDTO,
+    PagoResponseDTO,
+)
 from app.dto.v1.response.contracts import (
     ContratoResponseDTO,
+    FacturaOut,
     FechaServicioDTO,
     ServicioContratoDTO,
 )
@@ -1301,3 +1318,183 @@ def actualizar_fechas_servicio(
 
     db.commit()
     return {"message": "Fechas actualizadas correctamente"}
+
+
+@router.post("/pagos/")
+def crear_pago(data: PagoCreateDTO, db: Session = Depends(get_carelink_db)):
+    factura = db.query(Facturas).filter(Facturas.id_factura == data.id_factura).first()
+    if not factura:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+
+    # Calcular total de pagos existentes para la factura
+    total_pagado = (
+        db.query(func.sum(Pagos.valor))
+        .filter(Pagos.id_factura == data.id_factura)
+        .scalar()
+        or 0
+    )
+
+    # Validar que el nuevo pago no supere el total de la factura
+    if total_pagado + data.valor > factura.total_factura:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El pago excede el total restante de la factura. Total restante: {factura.total_factura - total_pagado:.2f}",
+        )
+
+    nuevo_pago = Pagos(
+        id_factura=data.id_factura,
+        id_metodo_pago=data.id_metodo_pago,
+        id_tipo_pago=data.id_tipo_pago,
+        fecha_pago=data.fecha_pago,
+        valor=data.valor,
+    )
+    db.add(nuevo_pago)
+    db.commit()
+    db.refresh(nuevo_pago)
+    return {"message": "Pago registrado correctamente", "id_pago": nuevo_pago.id_pago}
+
+
+@router.get("/pagos/factura/{id_factura}", response_model=List[PagoResponseDTO])
+def listar_pagos_por_factura(id_factura: int, db: Session = Depends(get_carelink_db)):
+    pagos = db.query(Pagos).filter(Pagos.id_factura == id_factura).all()
+    return pagos
+
+
+@router.delete("/pagos/{id_pago}")
+def eliminar_pago(id_pago: int, db: Session = Depends(get_carelink_db)):
+    pago = db.query(Pagos).filter(Pagos.id_pago == id_pago).first()
+    if not pago:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+
+    db.delete(pago)
+    db.commit()
+    return {"message": "Pago eliminado correctamente"}
+
+
+@router.post("/facturas/")
+def create_factura(factura_data: FacturaCreate, db: Session = Depends(get_carelink_db)):
+    # Verificar que el contrato exista
+    contrato = (
+        db.query(Contratos)
+        .filter(Contratos.id_contrato == factura_data.id_contrato)
+        .first()
+    )
+    if not contrato:
+        raise HTTPException(status_code=404, detail="Contrato no encontrado")
+
+    # Crear la factura
+    factura = Facturas(
+        id_contrato=factura_data.id_contrato,
+        fecha_emision=factura_data.fecha_emision,
+        fecha_vencimiento=factura_data.fecha_vencimiento,
+        total=factura_data.total,
+    )
+    db.add(factura)
+    db.flush()  # Para obtener el ID de la factura recién creada
+
+    # Crear los pagos si vienen en el request
+    for pago_data in factura_data.pagos:
+        # Validar método y tipo de pago
+        if (
+            not db.query(MetodoPago)
+            .filter_by(id_metodo_pago=pago_data.id_metodo_pago)
+            .first()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Método de pago {pago_data.id_metodo_pago} no existe",
+            )
+        if (
+            not db.query(TipoPago)
+            .filter_by(id_tipo_pago=pago_data.id_tipo_pago)
+            .first()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tipo de pago {pago_data.id_tipo_pago} no existe",
+            )
+
+        pago = Pagos(
+            id_factura=factura.id_factura,
+            id_metodo_pago=pago_data.id_metodo_pago,
+            id_tipo_pago=pago_data.id_tipo_pago,
+            fecha_pago=pago_data.fecha_pago,
+            valor=pago_data.valor,
+        )
+        db.add(pago)
+
+    db.commit()
+    return {"id_factura": factura.id_factura}
+
+
+@router.post("/facturas/{factura_id}/pagos/")
+def add_pago_to_factura(
+    factura_id: int, pagos: List[PagoCreate], db: Session = Depends(get_carelink_db)
+):
+    factura = db.query(Facturas).filter(Facturas.id_factura == factura_id).first()
+    if not factura:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+
+    total_existente = sum(p.valor for p in factura.pagos)
+    total_nuevo = sum(p.valor for p in pagos)
+    if total_existente + total_nuevo > factura.total_factura:
+        raise HTTPException(
+            status_code=400, detail="Los pagos exceden el total de la factura"
+        )
+
+    for pago_data in pagos:
+        if (
+            not db.query(MetodoPago)
+            .filter_by(id_metodo_pago=pago_data.id_metodo_pago)
+            .first()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Método de pago {pago_data.id_metodo_pago} no existe",
+            )
+        if (
+            not db.query(TipoPago)
+            .filter_by(id_tipo_pago=pago_data.id_tipo_pago)
+            .first()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tipo de pago {pago_data.id_tipo_pago} no existe",
+            )
+
+        pago = Pagos(
+            id_factura=factura_id,
+            id_metodo_pago=pago_data.id_metodo_pago,
+            id_tipo_pago=pago_data.id_tipo_pago,
+            fecha_pago=pago_data.fecha_pago,
+            valor=pago_data.valor,
+        )
+        db.add(pago)
+
+    db.commit()
+    return {"message": "Pagos agregados correctamente"}
+
+
+@router.delete("/facturas/{factura_id}")
+def delete_factura(factura_id: int, db: Session = Depends(get_carelink_db)):
+    factura = db.query(Facturas).filter(Facturas.id_factura == factura_id).first()
+    if not factura:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+
+    db.delete(factura)
+    db.commit()
+    return {"message": "Factura eliminada correctamente"}
+
+
+def get_facturas_by_contrato(db: Session, contrato_id: int):
+    facturas = db.query(Facturas).filter(Facturas.id_contrato == contrato_id).all()
+    if not facturas:
+        raise HTTPException(
+            status_code=404, detail=f"No hay facturas para el contrato {contrato_id}"
+        )
+    return facturas
+
+
+@router.get("/contratos/{contrato_id}/facturas", response_model=list[FacturaOut])
+def read_facturas_by_contrato(contrato_id: int, db: Session = Depends(get_carelink_db)):
+    return get_facturas_by_contrato(db, contrato_id)
