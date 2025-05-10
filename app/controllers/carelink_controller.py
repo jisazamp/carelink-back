@@ -1354,10 +1354,10 @@ def crear_pago(data: PagoCreateDTO, db: Session = Depends(get_carelink_db)):
     return {"message": "Pago registrado correctamente", "id_pago": nuevo_pago.id_pago}
 
 
-@router.get("/pagos/factura/{id_factura}", response_model=List[PagoResponseDTO])
-def listar_pagos_por_factura(id_factura: int, db: Session = Depends(get_carelink_db)):
-    pagos = db.query(Pagos).filter(Pagos.id_factura == id_factura).all()
-    return pagos
+@router.get("/pagos/factura/{factura_id}", response_model=list[PagoResponseDTO])
+def get_pagos_by_factura(factura_id: int, db: Session = Depends(get_carelink_db)):
+    pagos = db.query(Pagos).filter(Pagos.id_factura == factura_id).all()
+    return [PagoResponseDTO.from_orm(pago) for pago in pagos]
 
 
 @router.delete("/pagos/{id_pago}")

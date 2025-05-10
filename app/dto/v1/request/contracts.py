@@ -40,8 +40,16 @@ class PagoCreateDTO(BaseModel):
     valor: condecimal(gt=0, decimal_places=2)
 
 
-class PagoResponseDTO(PagoCreateDTO):
+class PagoResponseDTO(BaseModel):
     id_pago: int
+    id_factura: int
+    id_metodo_pago: int
+    id_tipo_pago: int
+    fecha_pago: date
+    valor: float
+
+    class Config:
+        orm_mode = True
 
 
 class PagoCreate(BaseModel):
