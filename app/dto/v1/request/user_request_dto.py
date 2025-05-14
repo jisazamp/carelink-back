@@ -27,3 +27,5 @@ class UserCreateRequestDTO(BaseModel):
     telefono: int | None = None
     tipo_afiliacion: str | None = None
     url_imagen: str | None = None
+    profesion: str | None = None
+    tipo_usuario: str | None = None
