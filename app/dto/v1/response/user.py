@@ -28,6 +28,7 @@ class UserResponseDTO(BaseModel):
     telefono: str | None
     tipo_afiliacion: str | None
     url_imagen: str | None
+    profesion: str | None
 
     class Config:
         orm_mode = True
@@ -58,6 +59,7 @@ class UserUpdateRequestDTO(BaseModel):
     telefono: str | None
     tipo_afiliacion: str | None
     url_imagen: str | None
+    profesion: str | None
 
     class Config:
         orm_mode = True

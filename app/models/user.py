@@ -31,6 +31,7 @@ class User(Base):
     tipo_afiliacion = Column(String)
     url_imagen = Column(String)
     is_deleted = Column(Boolean)
+    profesion = Column(String)
 
     class Config:
         orm_mode = True
