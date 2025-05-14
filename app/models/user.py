@@ -32,6 +32,7 @@ class User(Base):
     url_imagen = Column(String)
     is_deleted = Column(Boolean)
     profesion = Column(String)
+    tipo_usuario = Column(String)
 
     class Config:
         orm_mode = True
