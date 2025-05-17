@@ -46,10 +46,9 @@ class CreateUserMedicalRecordCreateRequestDTO(BaseModel):
 
 
 class CreateUserAssociatedMedicinesRequestDTO(BaseModel):
-    Fecha_inicio: date
-    fecha_fin: date
     medicamento: str
     periodicidad: str
+    observaciones: str
 
 
 class CreateUserAssociatedCaresRequestDTO(BaseModel):
