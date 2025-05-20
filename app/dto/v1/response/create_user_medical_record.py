@@ -6,15 +6,15 @@ class CreateUserMedicalRecordResponseDTO(BaseModel):
     id_historiaclinica: int | None
     Tiene_OtrasAlergias: bool
     Tienedieta_especial: bool
-    alcoholismo: bool
+    alcoholismo: str | None
     alergico_medicamento: bool
     altura: int
     apariencia_personal: str
-    cafeina: bool
+    cafeina: str | None
     cirugias: str | None
     comunicacion_no_verbal: str
     comunicacion_verbal: str
-    continencia: bool
+    continencia: str | None
     cuidado_personal: str
     dieta_especial: str | None
     discapacidades: str | None
@@ -26,8 +26,8 @@ class CreateUserMedicalRecordResponseDTO(BaseModel):
     historial_cirugias: str
     id_usuario: int
     limitaciones: str | None
-    maltratado: bool
-    maltrato: bool
+    maltratado: str
+    maltrato: str
     medicamentos_alergia: str | None
     motivo_ingreso: str
     observ_dietaEspecial: str
@@ -36,11 +36,12 @@ class CreateUserMedicalRecordResponseDTO(BaseModel):
     otras_alergias: str | None
     peso: float
     presion_arterial: float
-    sustanciaspsico: bool
-    tabaquismo: bool
+    sustanciaspsico: str | None
+    tabaquismo: str
     telefono_emermedica: str
     temperatura_corporal: float
     tipo_alimentacion: str
     tipo_de_movilidad: str
     tipo_de_sueno: str
     tipo_sangre: str
+    diagnosticos: str | None

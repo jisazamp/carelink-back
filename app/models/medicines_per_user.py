@@ -1,5 +1,5 @@
 from .base import Base
-from sqlalchemy import Column, Integer, String, Date, ForeignKey
+from sqlalchemy import Column, Integer, String, ForeignKey
 
 
 class MedicamentosPorUsuario(Base):
@@ -14,8 +14,7 @@ class MedicamentosPorUsuario(Base):
     )
     medicamento = Column(String)
     periodicidad = Column(String)
-    Fecha_inicio = Column(Date)
-    fecha_fin = Column(Date)
+    observaciones = Column(String)
 
     class Config:
         orm_mode = True
