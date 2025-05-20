@@ -43,6 +43,7 @@ class CreateUserMedicalRecordCreateRequestDTO(BaseModel):
     tipo_de_movilidad: str
     tipo_de_sueno: str
     tipo_sangre: str
+    diagnosticos: str
 
 
 class CreateUserAssociatedMedicinesRequestDTO(BaseModel):

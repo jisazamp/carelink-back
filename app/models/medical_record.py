@@ -47,3 +47,4 @@ class MedicalRecord(Base):
     tipo_de_movilidad = Column(String())
     tipo_de_sueno = Column(String())
     tipo_sangre = Column(String(), nullable=False)
+    diagnosticos = Column(Text)

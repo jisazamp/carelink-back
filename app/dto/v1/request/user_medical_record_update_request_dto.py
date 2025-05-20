@@ -42,3 +42,4 @@ class UpdateUserMedicalRecordRequestDTO(BaseModel):
     tipo_de_movilidad: Optional[str] = None
     tipo_de_sueno: Optional[str] = None
     tipo_sangre: Optional[str] = None
+    diagnosticos: Optional[str] = None
