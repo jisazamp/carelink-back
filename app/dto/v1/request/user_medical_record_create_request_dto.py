@@ -5,28 +5,28 @@ from datetime import date
 class CreateUserMedicalRecordCreateRequestDTO(BaseModel):
     Tiene_OtrasAlergias: bool
     Tienedieta_especial: bool
-    alcoholismo: bool
+    alcoholismo: str | None
     alergico_medicamento: bool
     altura: int
     apariencia_personal: str
-    cafeina: bool
+    cafeina: str | None
     cirugias: str
     comunicacion_no_verbal: str
     comunicacion_verbal: str
-    continencia: bool
-    cuidado_personal: str
+    continencia: str | None
+    cuidado_personal: str | None
     dieta_especial: str
     discapacidades: str
     emer_medica: str
     eps: str
-    estado_de_animo: str
+    estado_de_animo: str | None
     fecha_ingreso: date
     frecuencia_cardiaca: float
     historial_cirugias: str
     id_usuario: int
     limitaciones: str
-    maltratado: bool
-    maltrato: bool
+    maltratado: str
+    maltrato: str
     medicamentos_alergia: str
     motivo_ingreso: str
     observ_dietaEspecial: str
@@ -35,8 +35,8 @@ class CreateUserMedicalRecordCreateRequestDTO(BaseModel):
     otras_alergias: str
     peso: float
     presion_arterial: float
-    sustanciaspsico: bool
-    tabaquismo: bool
+    sustanciaspsico: str | None
+    tabaquismo: str
     telefono_emermedica: str
     temperatura_corporal: float
     tipo_alimentacion: str
