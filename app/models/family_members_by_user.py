@@ -1,6 +1,6 @@
 from .base import Base
 from .family_member import FamilyMember
-from sqlalchemy import Column, Enum, ForeignKey, Integer
+from sqlalchemy import Column, String, ForeignKey, Integer
 from sqlalchemy.orm import relationship
 
 
@@ -18,19 +18,7 @@ class FamiliaresYAcudientesPorUsuario(Base):
         primary_key=True,
     )
     parentesco = Column(
-        Enum(
-            "Amigo",
-            "Hermana",
-            "Hermano",
-            "Madre",
-            "Otro",
-            "Padre",
-            "Prima",
-            "Primo",
-            "Tía",
-            "Tío",
-            name="parentesco_enum",
-        ),
+        String,
         nullable=False,
     )
     acudiente = relationship(FamilyMember, foreign_keys=[id_acudiente])
