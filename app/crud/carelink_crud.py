@@ -209,12 +209,29 @@ class CareLinkCrud:
         return db_treatment
 
     def _update_family_member(
-        self, family_member: FamilyMember, db_family_member: FamilyMember
+        self,
+        user_id: int,
+        family_member: FamilyMember,
+        kinship,
+        db_family_member: FamilyMember,
     ) -> FamilyMember:
+        kinship_string = kinship.dict()["parentezco"]
+
         for key, value in family_member.__dict__.items():
             if key != "_sa_instance_state" and value is not None:
                 if hasattr(db_family_member, key):
                     setattr(db_family_member, key, value)
+
+        association = (
+            self.__carelink_session.query(FamiliaresYAcudientesPorUsuario)
+            .filter_by(id_usuario=user_id, id_acudiente=db_family_member.id_acudiente)
+            .first()
+        )
+        print(association)
+
+        if association:
+            association.parentesco = kinship_string
+
         self.__carelink_session.commit()
         self.__carelink_session.refresh(db_family_member)
         return db_family_member

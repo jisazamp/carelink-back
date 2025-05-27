@@ -816,12 +816,27 @@ async def update_vaccine(
 )
 async def update_family_member(
     id: int,
+    family_member_id: int,
     family_member: UpdateFamilyMemberRequestDTO,
+    kinship: AssociateFamilyMemberRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ):
+    db_family_member = crud._get_family_member_by_id(family_member_id)
+    if not db_family_member:
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND, detail="Acudiente no encontrado"
+        )
+
     family_member_to_update = FamilyMember(**family_member.dict())
-    family_member_updated = crud.update_family_member(id, family_member_to_update)
+
+    family_member_updated = crud._update_family_member(
+        user_id=id,
+        family_member=family_member_to_update,
+        kinship=kinship,
+        db_family_member=db_family_member[0],
+    )
+
     return Response[FamilyMemberResponseDTO](
         data=family_member_updated.__dict__,
         status_code=HTTPStatus.OK,
