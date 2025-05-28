@@ -1223,6 +1223,7 @@ def listar_contratos_por_usuario(
             result.append(
                 ContratoResponseDTO(
                     id_contrato=contrato.id_contrato,
+                    id_usuario=id_usuario,
                     tipo_contrato=contrato.tipo_contrato,
                     fecha_inicio=contrato.fecha_inicio,
                     fecha_fin=contrato.fecha_fin,
@@ -1273,6 +1274,7 @@ def obtener_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
 
     return ContratoResponseDTO(
         id_contrato=contrato.id_contrato,
+        id_usuario=contrato.id_usuario,
         tipo_contrato=contrato.tipo_contrato,
         fecha_inicio=contrato.fecha_inicio,
         fecha_fin=contrato.fecha_fin,
