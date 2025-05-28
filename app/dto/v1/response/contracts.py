@@ -32,3 +32,13 @@ class ContratoResponseDTO(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class FacturaOut(BaseModel):
+    id_factura: int
+    id_contrato: int | None
+    fecha_emision: date
+    total_factura: float
+
+    class Config:
+        orm_mode = True

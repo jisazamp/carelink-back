@@ -15,6 +15,7 @@ class Contratos(Base):
     fecha_inicio = Column(Date)
     fecha_fin = Column(Date)
     facturar_contrato = Column(Boolean)
+    facturas = relationship("Facturas", back_populates="contrato")
 
     class Config:
         orm_mode = True
@@ -31,6 +32,7 @@ class Facturas(Base):
     fecha_emision = Column(Date)
     total_factura = Column(Float)
     contrato = relationship("Contratos", foreign_keys=[id_contrato], lazy="joined")
+    pagos = relationship("Pagos", back_populates="factura", cascade="all, delete")
 
     class Config:
         orm_mode = True
@@ -106,6 +108,7 @@ class Pagos(Base):
     id_tipo_pago = Column(Integer, ForeignKey("TipoPago.id_tipo_pago"))
     fecha_pago = Column(Date)
     valor = Column(Float)
+    factura = relationship("Facturas", back_populates="pagos")
 
     class Config:
         orm_mode = True

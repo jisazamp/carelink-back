@@ -1,5 +1,6 @@
 from datetime import date
-from pydantic import BaseModel
+from decimal import Decimal
+from pydantic import BaseModel, condecimal
 from typing import List, Optional
 
 
@@ -29,3 +30,38 @@ class ContratoUpdateDTO(BaseModel):
     fecha_inicio: Optional[date]
     fecha_fin: Optional[date]
     facturar_contrato: Optional[bool]
+
+
+class PagoCreateDTO(BaseModel):
+    id_factura: int
+    id_metodo_pago: int
+    id_tipo_pago: int
+    fecha_pago: date
+    valor: condecimal(gt=0, decimal_places=2)
+
+
+class PagoResponseDTO(BaseModel):
+    id_pago: int
+    id_factura: int
+    id_metodo_pago: int
+    id_tipo_pago: int
+    fecha_pago: date
+    valor: float
+
+    class Config:
+        orm_mode = True
+
+
+class PagoCreate(BaseModel):
+    id_metodo_pago: int
+    id_tipo_pago: int
+    fecha_pago: date
+    valor: Decimal
+
+
+class FacturaCreate(BaseModel):
+    id_contrato: int
+    fecha_emision: date
+    fecha_vencimiento: date
+    total: Decimal
+    pagos: Optional[List[PagoCreate]] = []
