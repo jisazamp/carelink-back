@@ -24,6 +24,7 @@ class ServicioContratoDTO(BaseModel):
 
 class ContratoResponseDTO(BaseModel):
     id_contrato: int
+    id_usuario: int
     tipo_contrato: str
     fecha_inicio: date
     fecha_fin: date
