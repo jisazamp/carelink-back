@@ -1515,3 +1515,17 @@ def get_facturas_by_contrato(db: Session, contrato_id: int):
 @router.get("/contratos/{contrato_id}/facturas", response_model=list[FacturaOut])
 def read_facturas_by_contrato(contrato_id: int, db: Session = Depends(get_carelink_db)):
     return get_facturas_by_contrato(db, contrato_id)
+
+
+@router.delete("/contratos/{contrato_id}", response_model=Response[object])
+def delete_contract_by_id(
+    contract_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+):
+    crud.delete_contract_by_id(contract_id)
+    return Response[object](
+        data={},
+        status_code=HTTPStatus.NO_CONTENT,
+        message=f"El contrato {contract_id} se ha eliminado de manera exitosa",
+        error=None,
+    )
