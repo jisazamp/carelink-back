@@ -3,6 +3,7 @@ from app.models.activities import ActividadesGrupales, TipoActividad
 from app.models.authorized_users import AuthorizedUsers
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.clinical_evolutions import EvolucionesClinicas
+from app.models.contracts import Contratos
 from app.models.family_member import FamilyMember
 from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
 from app.models.interventions_per_user import IntervencionesPorUsuario
@@ -391,6 +392,11 @@ class CareLinkCrud:
         db_user.is_deleted = True
         self.__carelink_session.commit()
 
+    def delete_contract_by_id(self, contract_id: int):
+        db_contract = self._get_contract_by_id(contract_id)
+        self.__carelink_session.delete(db_contract)
+        self.__carelink_session.commit()
+
     def delete_family_member(self, id: int):
         db_family_member, _ = self._get_family_member_by_id(id)
         db_family_member.is_deleted = True
@@ -493,6 +499,16 @@ class CareLinkCrud:
             self.__carelink_session.query(User).filter(User.is_deleted == False).all()
         )
         return users
+
+    def _get_contract_by_id(self, contract_id: int) -> Contratos:
+        contract = (
+            self.__carelink_session.query(Contratos)
+            .filter(Contratos.id_contrato == contract_id)
+            .first()
+        )
+        if contract is None:
+            raise EntityNotFoundError(f"El contrato con id {contract_id} no existe")
+        return contract
 
     def _get_user_by_id(self, user_id: int) -> User:
         user = (
