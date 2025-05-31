@@ -1,9 +1,16 @@
+from app.dto.v1.request.contracts import ContratoCreateDTO
+from app.dto.v1.response.contracts import ContratoResponseDTO, ServicioContratoDTO
 from app.exceptions.exceptions_classes import EntityNotFoundError
 from app.models.activities import ActividadesGrupales, TipoActividad
 from app.models.authorized_users import AuthorizedUsers
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.clinical_evolutions import EvolucionesClinicas
-from app.models.contracts import Contratos
+from app.models.contracts import (
+    Contratos,
+    Facturas,
+    FechasServicio,
+    ServiciosPorContrato,
+)
 from app.models.family_member import FamilyMember
 from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
 from app.models.interventions_per_user import IntervencionesPorUsuario
@@ -11,11 +18,12 @@ from app.models.medical_record import MedicalRecord
 from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.professional import Profesionales
+from app.models.rates import TarifasServicioPorAnio
 from app.models.user import User
 from app.models.vaccines import VacunasPorUsuario
 from boto3 import client
 from botocore.exceptions import NoCredentialsError
-from datetime import date
+from datetime import date, datetime
 from fastapi import HTTPException, UploadFile
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
@@ -485,6 +493,100 @@ class CareLinkCrud:
         self.__carelink_session.commit()
         return user_data
 
+    def _get_service_dates(self, service: ServiciosPorContrato) -> list[FechasServicio]:
+        service_dates = (
+            self.__carelink_session.query(FechasServicio)
+            .filter(
+                FechasServicio.id_servicio_contratado == service.id_servicio_contratado
+            )
+            .all()
+        )
+        return service_dates
+
+    def _calculate_service_total(
+        self, service: ServiciosPorContrato, contract_start_year: int
+    ) -> float:
+        rate = self._get_service_rate(service.id_servicio, contract_start_year)
+        service_dates = self._get_service_dates(service)
+        return rate.precio_por_dia * len(service_dates)
+
+    def _calculate_contract_bill_total(self, contract_id: int) -> float:
+        contract = self._get_contract_by_id(contract_id)
+        contract_start_date = contract.fecha_inicio
+        contract_start_year = contract_start_date.year
+        contract_services = self._get_contract_services(contract_id)
+        total = 0.0
+        for contract_service in contract_services:
+            result = self._calculate_service_total(
+                contract_service, contract_start_year
+            )
+            total += result
+        return total
+
+    def create_contract_bill(self, contract_id: int) -> Facturas:
+        bill_total = self._calculate_contract_bill_total(contract_id)
+        bill = Facturas(
+            id_contrato=contract_id,
+            fecha_emision=datetime.now(),
+            total_factura=bill_total,
+        )
+        self.__carelink_session.add(bill)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(bill)
+        return bill
+
+    def _add_contract_services(
+        self, contract_data: ContratoCreateDTO, contract: Contratos
+    ) -> ServicioContratoDTO | None:
+        servicio_dto = None
+
+        for servicio in contract_data.servicios:
+            servicio_contratado = ServiciosPorContrato(
+                id_contrato=contract.id_contrato,
+                id_servicio=servicio.id_servicio,
+                fecha=servicio.fecha,
+                descripcion=servicio.descripcion,
+                precio_por_dia=servicio.precio_por_dia,
+            )
+            self.__carelink_session.add(servicio_contratado)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(servicio_contratado)
+
+            for f in servicio.fechas_servicio:
+                fecha_servicio = FechasServicio(
+                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
+                    fecha=f.fecha,
+                )
+                self.__carelink_session.add(fecha_servicio)
+
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(servicio_contratado)
+
+            if servicio_dto is None:
+                servicio_dto = ServicioContratoDTO.from_orm(servicio_contratado)
+
+        return servicio_dto
+
+    def create_contract(self, contract_data: ContratoCreateDTO) -> Contratos:
+        try:
+            contrato = Contratos(
+                id_usuario=contract_data.id_usuario,
+                tipo_contrato=contract_data.tipo_contrato,
+                fecha_inicio=contract_data.fecha_inicio,
+                fecha_fin=contract_data.fecha_fin,
+                facturar_contrato=contract_data.facturar_contrato,
+            )
+            self.__carelink_session.add(contrato)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(contrato)
+            self._add_contract_services(contract_data, contrato)
+            return contrato
+        except Exception as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=500, detail=f"Error al crear contrato: {str(e)}"
+            )
+
     def create_user_medical_record(
         self, user_id: int, record: MedicalRecord
     ) -> MedicalRecord:
@@ -493,6 +595,27 @@ class CareLinkCrud:
         self.__carelink_session.commit()
         self.__carelink_session.refresh(record)
         return record
+
+    def _get_service_rate(self, service_id: int, year: int) -> TarifasServicioPorAnio:
+        rate = (
+            self.__carelink_session.query(TarifasServicioPorAnio)
+            .filter(
+                TarifasServicioPorAnio.id_servicio == service_id,
+                TarifasServicioPorAnio.anio == year,
+            )
+            .one()
+        )
+        if rate is None:
+            raise EntityNotFoundError("Tarifa no encontrada")
+        return rate
+
+    def _get_contract_services(self, contract_id: int) -> list[ServiciosPorContrato]:
+        services = (
+            self.__carelink_session.query(ServiciosPorContrato)
+            .filter(ServiciosPorContrato.id_contrato == contract_id)
+            .all()
+        )
+        return services
 
     def _get_users(self) -> List[User]:
         users = (
