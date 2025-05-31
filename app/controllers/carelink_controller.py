@@ -1,3 +1,4 @@
+from botocore.compat import HTTPResponse
 from sqlalchemy import func
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
@@ -1134,8 +1135,10 @@ async def delete_activity(
     )
 
 
-@router.post("/contratos/")
-def crear_contrato(data: ContratoCreateDTO, db: Session = Depends(get_carelink_db)):
+@router.post("/contratos/", response_model=Response[ContratoResponseDTO])
+def crear_contrato(
+    data: ContratoCreateDTO, db: Session = Depends(get_carelink_db)
+) -> Response[ContratoResponseDTO]:
     try:
         contrato = Contratos(
             id_usuario=data.id_usuario,
@@ -1168,10 +1171,15 @@ def crear_contrato(data: ContratoCreateDTO, db: Session = Depends(get_carelink_d
                 db.add(fecha_servicio)
 
         db.commit()
-        return {
-            "message": "Contrato creado correctamente",
-            "id_contrato": contrato.id_contrato,
-        }
+        contract_response_dto: ContratoResponseDTO = ContratoResponseDTO.from_orm(
+            contrato
+        )
+        return Response[ContratoResponseDTO](
+            data=contract_response_dto,
+            message="Contrato creado de manera exitosa",
+            status_code=HTTPStatus.CREATED,
+            error=None,
+        )
 
     except Exception as e:
         db.rollback()
@@ -1343,7 +1351,6 @@ def crear_pago(data: PagoCreateDTO, db: Session = Depends(get_carelink_db)):
     if not factura:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
 
-    # Calcular total de pagos existentes para la factura
     total_pagado = (
         db.query(func.sum(Pagos.valor))
         .filter(Pagos.id_factura == data.id_factura)
@@ -1351,7 +1358,6 @@ def crear_pago(data: PagoCreateDTO, db: Session = Depends(get_carelink_db)):
         or 0
     )
 
-    # Validar que el nuevo pago no supere el total de la factura
     if total_pagado + data.valor > factura.total_factura:
         raise HTTPException(
             status_code=400,
@@ -1515,6 +1521,25 @@ def get_facturas_by_contrato(db: Session, contrato_id: int):
 @router.get("/contratos/{contrato_id}/facturas", response_model=list[FacturaOut])
 def read_facturas_by_contrato(contrato_id: int, db: Session = Depends(get_carelink_db)):
     return get_facturas_by_contrato(db, contrato_id)
+
+
+@router.post("/facturas/{contrato_id}", response_model=Response[FacturaOut])
+def create_contract_bill(
+    contrato_id: int, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[FacturaOut]:
+    bill = crud.create_contract_bill(contrato_id)
+    bill_response = FacturaOut(
+        id_factura=bill.id_factura,
+        id_contrato=bill.id_contrato,
+        fecha_emision=bill.fecha_emision,
+        total_factura=bill.total_factura,
+    )
+    return Response[FacturaOut](
+        data=bill_response,
+        status_code=HTTPStatus.CREATED,
+        message="Factura asociada de manera exitosa",
+        error=None,
+    )
 
 
 @router.delete("/contratos/{contrato_id}", response_model=Response[object])
