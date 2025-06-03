@@ -51,6 +51,7 @@ from app.dto.v1.response.medicines_per_user import (
     MedicinesPerUserResponseDTO,
     MedicinesPerUserUpdateDTO,
 )
+from app.dto.v1.response.payment_method import PaymentMethodResponseDTO
 from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO
@@ -506,6 +507,22 @@ async def get_activity_types(
     )
 
 
+@router.get("/metodos_pago", response_model=Response[List[PaymentMethodResponseDTO]])
+async def get_payment_methods(
+    crud: CareLinkCrud = Depends(get_crud),
+) -> Response[List[PaymentMethodResponseDTO]]:
+    payment_methods = crud._get_payment_methods()
+    payment_methods_response = [
+        PaymentMethodResponseDTO.from_orm(method) for method in payment_methods
+    ]
+    return Response[List[PaymentMethodResponseDTO]](
+        data=payment_methods_response,
+        status_code=HTTPStatus.OK,
+        error=None,
+        message="Métodos de pago retornados con éxito",
+    )
+
+
 @router.get(
     "/activities-upcoming",
     status_code=200,
@@ -525,8 +542,13 @@ async def get_upcoming_activities(
     )
 
 
+@router.post("/pagos/registrar", response_model=Response[object])
+async def register_payment():
+    pass
+
+
 @router.post("/calcular/factura", response_model=Response[float])
-def calculate_partial_bill(
+async def calculate_partial_bill(
     partial_bill: CalculatePartialBillRequestDTO, crud: CareLinkCrud = Depends(get_crud)
 ) -> Response[float]:
     result = crud.calculate_partial_bill(

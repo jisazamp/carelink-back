@@ -9,6 +9,7 @@ from app.models.contracts import (
     Contratos,
     Facturas,
     FechasServicio,
+    MetodoPago,
     ServiciosPorContrato,
 )
 from app.models.family_member import FamilyMember
@@ -492,6 +493,10 @@ class CareLinkCrud:
         self.__carelink_session.add(user_data)
         self.__carelink_session.commit()
         return user_data
+
+    def _get_payment_methods(self) -> list[MetodoPago]:
+        payment_methods = self.__carelink_session.query(MetodoPago).all()
+        return payment_methods
 
     def _get_service_dates(self, service: ServiciosPorContrato) -> list[FechasServicio]:
         service_dates = (
