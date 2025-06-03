@@ -523,6 +523,15 @@ class CareLinkCrud:
             total += result
         return total
 
+    def calculate_partial_bill(
+        self, service_ids: list[int], quantities: list[int], year: int
+    ) -> float:
+        total = 0.0
+        for index, service_id in enumerate(service_ids):
+            rate = self._get_service_rate(service_id, year)
+            total += rate.precio_por_dia * quantities[index]
+        return total
+
     def create_contract_bill(self, contract_id: int) -> Facturas:
         bill_total = self._calculate_contract_bill_total(contract_id)
         bill = Facturas(

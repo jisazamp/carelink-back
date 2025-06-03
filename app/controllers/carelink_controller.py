@@ -6,6 +6,7 @@ from app.dto.v1.request.activities import (
     ActividadesGrupalesCreate,
     ActividadesGrupalesUpdate,
 )
+from app.dto.v1.request.bill import CalculatePartialBillRequestDTO
 from app.dto.v1.request.clinical_evolution import (
     ClinicalEvolutionCreate,
     ClinicalEvolutionUpdate,
@@ -520,6 +521,23 @@ async def get_upcoming_activities(
         data=result,
         message="Actividades consultadas con éxito",
         status_code=201,
+        error=None,
+    )
+
+
+@router.post("/calcular/factura", response_model=Response[float])
+def calculate_partial_bill(
+    partial_bill: CalculatePartialBillRequestDTO, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[float]:
+    result = crud.calculate_partial_bill(
+        service_ids=partial_bill.service_ids,
+        quantities=partial_bill.quantities,
+        year=partial_bill.year,
+    )
+    return Response[float](
+        data=result,
+        message="Factura calculada con éxito",
+        status_code=HTTPStatus.OK,
         error=None,
     )
 
@@ -1396,7 +1414,6 @@ def eliminar_pago(id_pago: int, db: Session = Depends(get_carelink_db)):
 
 @router.post("/facturas/")
 def create_factura(factura_data: FacturaCreate, db: Session = Depends(get_carelink_db)):
-    # Verificar que el contrato exista
     contrato = (
         db.query(Contratos)
         .filter(Contratos.id_contrato == factura_data.id_contrato)
@@ -1405,7 +1422,6 @@ def create_factura(factura_data: FacturaCreate, db: Session = Depends(get_careli
     if not contrato:
         raise HTTPException(status_code=404, detail="Contrato no encontrado")
 
-    # Crear la factura
     factura = Facturas(
         id_contrato=factura_data.id_contrato,
         fecha_emision=factura_data.fecha_emision,
@@ -1413,11 +1429,9 @@ def create_factura(factura_data: FacturaCreate, db: Session = Depends(get_careli
         total=factura_data.total,
     )
     db.add(factura)
-    db.flush()  # Para obtener el ID de la factura recién creada
+    db.flush()
 
-    # Crear los pagos si vienen en el request
     for pago_data in factura_data.pagos:
-        # Validar método y tipo de pago
         if (
             not db.query(MetodoPago)
             .filter_by(id_metodo_pago=pago_data.id_metodo_pago)
