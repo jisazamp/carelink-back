@@ -17,6 +17,7 @@ from app.dto.v1.request.family_member_create_request_dto import (
     UpdateFamilyMemberRequestDTO,
 )
 from app.dto.v1.request.medical_report import ReporteClinicoCreate, ReporteClinicoUpdate
+from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
 from app.dto.v1.request.user_create_request_dto import AuthorizedUserCreateRequestDTO
 from app.dto.v1.request.user_medical_record_create_request_dto import (
     CreateUserAssociatedCaresRequestDTO,
@@ -51,7 +52,10 @@ from app.dto.v1.response.medicines_per_user import (
     MedicinesPerUserResponseDTO,
     MedicinesPerUserUpdateDTO,
 )
-from app.dto.v1.response.payment_method import PaymentMethodResponseDTO
+from app.dto.v1.response.payment_method import (
+    PaymentMethodResponseDTO,
+    PaymentResponseDTO,
+)
 from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO
@@ -542,9 +546,27 @@ async def get_upcoming_activities(
     )
 
 
-@router.post("/pagos/registrar", response_model=Response[object])
-async def register_payment():
-    pass
+@router.post("/pagos/registrar", response_model=Response[PaymentResponseDTO])
+async def register_payment(
+    payment: CreateUserPaymentRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    # _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[PaymentResponseDTO]:
+    payment_data = Pagos(
+        id_factura=payment.id_factura,
+        id_metodo_pago=payment.id_metodo_pago,
+        id_tipo_pago=1,
+        fecha_pago=payment.fecha_pago,
+        valor=payment.valor,
+    )
+    payment_response = crud.create_payment(payment_data)
+
+    return Response[PaymentResponseDTO](
+        data=PaymentResponseDTO.from_orm(payment_response),
+        error=None,
+        message="Pago creado de manera exitosa",
+        status_code=HTTPStatus.CREATED,
+    )
 
 
 @router.post("/calcular/factura", response_model=Response[float])

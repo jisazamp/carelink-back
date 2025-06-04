@@ -1,4 +1,5 @@
 from app.dto.v1.request.contracts import ContratoCreateDTO
+from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
 from app.dto.v1.response.contracts import ContratoResponseDTO, ServicioContratoDTO
 from app.exceptions.exceptions_classes import EntityNotFoundError
 from app.models.activities import ActividadesGrupales, TipoActividad
@@ -10,6 +11,7 @@ from app.models.contracts import (
     Facturas,
     FechasServicio,
     MetodoPago,
+    Pagos,
     ServiciosPorContrato,
 )
 from app.models.family_member import FamilyMember
@@ -489,6 +491,32 @@ class CareLinkCrud:
             return user
         return None
 
+    def create_payment(self, payment_data: Pagos) -> Pagos:
+        try:
+            bill = self.get_bill_by_id(payment_data.id_factura)
+            if not bill:
+                raise EntityNotFoundError("Factura no encontrada")
+
+            payment = Pagos(
+                id_factura=payment_data.id_factura,
+                id_metodo_pago=payment_data.id_metodo_pago,
+                id_tipo_pago=1,
+                fecha_pago=payment_data.fecha_pago,
+                valor=payment_data.valor,
+            )
+
+            self.__carelink_session.add(payment)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(payment)
+
+            return payment
+
+        except Exception as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=500, detail=f"Error al crear el pago: {str(e)}"
+            )
+
     def create_user(self, user_data: AuthorizedUsers) -> AuthorizedUsers:
         self.__carelink_session.add(user_data)
         self.__carelink_session.commit()
@@ -497,6 +525,18 @@ class CareLinkCrud:
     def _get_payment_methods(self) -> list[MetodoPago]:
         payment_methods = self.__carelink_session.query(MetodoPago).all()
         return payment_methods
+
+    def get_bill_by_id(self, bill_id: int) -> Facturas:
+        bill = (
+            self.__carelink_session.query(Facturas)
+            .filter(Facturas.id_factura == bill_id)
+            .first()
+        )
+        if bill is None:
+            raise EntityNotFoundError(
+                f"No hay factura registrada con el identificador {bill_id}"
+            )
+        return bill
 
     def _get_service_dates(self, service: ServiciosPorContrato) -> list[FechasServicio]:
         service_dates = (
