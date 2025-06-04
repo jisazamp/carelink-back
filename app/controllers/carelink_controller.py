@@ -550,7 +550,7 @@ async def get_upcoming_activities(
 async def register_payment(
     payment: CreateUserPaymentRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    # _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[PaymentResponseDTO]:
     payment_data = Pagos(
         id_factura=payment.id_factura,
@@ -1023,6 +1023,21 @@ def update_activity(
     )
 
 
+@router.delete("/pagos/{id}", response_model=Response[None])
+async def delete_payment(
+    id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[None]:
+    crud.delete_payment(id)
+    return Response[None](
+        data=None,
+        error=None,
+        message="Pago eliminado de manera exitosa",
+        status_code=HTTPStatus.NO_CONTENT,
+    )
+
+
 @router.delete("/users/{id}", status_code=200, response_model=Response[object])
 async def delete_user(
     id: int,
@@ -1248,6 +1263,22 @@ def crear_contrato(
         raise HTTPException(
             status_code=500, detail=f"Error al crear contrato: {str(e)}"
         )
+
+
+@router.get("/contratos/{contract_id}/factura", response_model=Response[FacturaOut])
+async def list_contract_bill(
+    contract_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[FacturaOut]:
+    bill = crud.get_contract_bill(contract_id)
+    bill_response = FacturaOut.from_orm(bill)
+    return Response[FacturaOut](
+        data=bill_response,
+        message="Factura listada",
+        error=None,
+        status_code=HTTPStatus.OK,
+    )
 
 
 @router.get("/contratos/{id_usuario}", response_model=List[ContratoResponseDTO])

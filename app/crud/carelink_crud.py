@@ -403,6 +403,11 @@ class CareLinkCrud:
         db_user.is_deleted = True
         self.__carelink_session.commit()
 
+    def delete_payment(self, payment_id: int):
+        db_payment = self.get_payment_by_id(payment_id)
+        self.__carelink_session.delete(db_payment)
+        self.__carelink_session.commit()
+
     def delete_contract_by_id(self, contract_id: int):
         db_contract = self._get_contract_by_id(contract_id)
         self.__carelink_session.delete(db_contract)
@@ -521,6 +526,32 @@ class CareLinkCrud:
         self.__carelink_session.add(user_data)
         self.__carelink_session.commit()
         return user_data
+
+    def get_contract_bill(self, contract_id: int) -> Facturas:
+        bill = (
+            self.__carelink_session.query(Facturas)
+            .filter(Facturas.id_contrato == contract_id)
+            .first()
+        )
+
+        if bill is None:
+            raise EntityNotFoundError(
+                "No se encuentran facturas registradas para este contrato"
+            )
+
+        return bill
+
+    def get_payment_by_id(self, payment_id: int) -> Pagos:
+        payment = (
+            self.__carelink_session.query(Pagos)
+            .filter(Pagos.id_pago == payment_id)
+            .first()
+        )
+        if payment is None:
+            raise EntityNotFoundError(
+                f"No existe un pago con identificador {payment_id}"
+            )
+        return payment
 
     def _get_payment_methods(self) -> list[MetodoPago]:
         payment_methods = self.__carelink_session.query(MetodoPago).all()
