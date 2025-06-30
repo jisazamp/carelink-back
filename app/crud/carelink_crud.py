@@ -27,9 +27,11 @@ from app.models.vaccines import VacunasPorUsuario
 from boto3 import client
 from botocore.exceptions import NoCredentialsError
 from datetime import date, datetime
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException, UploadFile, status
 from passlib.context import CryptContext
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional, Tuple
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -64,31 +66,56 @@ class CareLinkCrud:
         return self._get_user_medical_record_by_user_id(id)
 
     def save_user(self, user: User, image: UploadFile | None) -> User:
-        user.is_deleted = False
-        self.__carelink_session.add(user)
-        self.__carelink_session.commit()
-        self.__carelink_session.refresh(user)
-        if image:
-            image_url = self.upload_file_to_s3(
-                image.file,
-                "images-carelink",
-                f"user_photos/{user.id_usuario}/{image.filename}",
+        existing_user = self.__carelink_session.execute(
+            select(User).where(
+                User.email == user.email,
+                User.is_deleted == False,
+                User.id_usuario != user.id_usuario,
             )
-            user.url_imagen = image_url
-        self.__carelink_session.commit()
+        ).scalar_one_or_none()
 
-        return user
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El correo electrónico ya está registrado para otro usuario.",
+            )
+
+        try:
+            user.is_deleted = False
+            self.__carelink_session.add(user)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(user)
+
+            if image:
+                image_url = self.upload_file_to_s3(
+                    image.file,
+                    "images-carelink",
+                    f"user_photos/{user.id_usuario}/{image.filename}",
+                )
+                user.url_imagen = image_url
+                self.__carelink_session.commit()
+
+            return user
+
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Ocurrió un error al guardar el usuario.",
+            )
 
     def save_family_member(self, id: int, kinship, family_member: FamilyMember):
         self._get_user_by_id(id)
         kinship_string = kinship.dict()["parentezco"]
         self.__carelink_session.add(family_member)
         self.__carelink_session.flush()
-        associate_family = FamiliaresYAcudientesPorUsuario(**{
-            "id_usuario": id,
-            "id_acudiente": family_member.id_acudiente,
-            "parentesco": kinship_string,
-        })
+        associate_family = FamiliaresYAcudientesPorUsuario(
+            **{
+                "id_usuario": id,
+                "id_acudiente": family_member.id_acudiente,
+                "parentesco": kinship_string,
+            }
+        )
         self.__carelink_session.add(associate_family)
         self.__carelink_session.commit()
 
