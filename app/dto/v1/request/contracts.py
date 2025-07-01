@@ -30,6 +30,7 @@ class ContratoUpdateDTO(BaseModel):
     fecha_inicio: Optional[date]
     fecha_fin: Optional[date]
     facturar_contrato: Optional[bool]
+    servicios: List[ServicioContratadoCreateDTO]
 
 
 class PagoCreateDTO(BaseModel):
