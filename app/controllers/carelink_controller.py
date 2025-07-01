@@ -1395,18 +1395,78 @@ def actualizar_contrato(
     if not contrato:
         raise HTTPException(status_code=404, detail="Contrato no encontrado")
 
-    for attr, value in data.dict(exclude_unset=True).items():
-        setattr(contrato, attr, value)
-
     try:
+        # 🔴 Eliminar servicios anteriores del contrato (y sus fechas asociadas)
+        servicios_anteriores = (
+            db.query(ServiciosPorContrato)
+            .filter(ServiciosPorContrato.id_contrato == contrato.id_contrato)
+            .all()
+        )
+
+        for servicio_ant in servicios_anteriores:
+            # Eliminar fechas asociadas
+            db.query(FechasServicio).filter(
+                FechasServicio.id_servicio_contratado
+                == servicio_ant.id_servicio_contratado
+            ).delete()
+
+        # Eliminar servicios contratados
+        db.query(ServiciosPorContrato).filter(
+            ServiciosPorContrato.id_contrato == contrato.id_contrato
+        ).delete()
+
+        db.commit()
+
+        # 🟢 Agregar nuevos servicios y fechas desde data.servicios
+        for servicio in data.servicios:
+            servicio_contratado = ServiciosPorContrato(
+                id_contrato=contrato.id_contrato,
+                id_servicio=servicio.id_servicio,
+                fecha=servicio.fecha,
+                descripcion=servicio.descripcion,
+                precio_por_dia=servicio.precio_por_dia,
+            )
+            db.add(servicio_contratado)
+            db.commit()
+            db.refresh(servicio_contratado)
+
+            for f in servicio.fechas_servicio:
+                fecha_servicio = FechasServicio(
+                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
+                    fecha=f.fecha,
+                )
+                db.add(fecha_servicio)
+
+        # ✏️ Actualizar otros atributos del contrato
+        for attr, value in data.dict(exclude={"servicios"}, exclude_unset=True).items():
+            setattr(contrato, attr, value)
+
         db.commit()
         db.refresh(contrato)
+
         return {"message": "Contrato actualizado correctamente"}
+
     except Exception as e:
         db.rollback()
         raise HTTPException(
             status_code=500, detail=f"Error al actualizar contrato: {str(e)}"
         )
+
+
+@router.post("/servicios/{id_servicio}/fechas")
+def crear_fechas_servicio(
+    id_servicio: int,
+    fechas: List[FechaServicioDTO],
+    db: Session = Depends(get_carelink_db),
+):
+    for fecha in fechas:
+        nueva_fecha = FechasServicio(
+            id_servicio_contratado=id_servicio, fecha=fecha.fecha
+        )
+        db.add(nueva_fecha)
+    db.commit()
+
+    return {"message": "Fechas creadas correctamente"}
 
 
 @router.patch("/servicios/{id_servicio_contratado}/fechas")
