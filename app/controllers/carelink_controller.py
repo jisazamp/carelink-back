@@ -91,11 +91,22 @@ from app.dto.v1.request.contracts import (
     PagoCreateDTO,
     PagoResponseDTO,
 )
+from app.dto.v1.request.attendance_schedule import (
+    CronogramaAsistenciaCreateDTO,
+    CronogramaAsistenciaPacienteCreateDTO,
+    CronogramaAsistenciaUpdateDTO,
+    EstadoAsistenciaUpdateDTO,
+)
 from app.dto.v1.response.contracts import (
     ContratoResponseDTO,
     FacturaOut,
     FechaServicioDTO,
     ServicioContratoDTO,
+)
+from app.dto.v1.response.attendance_schedule import (
+    CronogramaAsistenciaResponseDTO,
+    CronogramaAsistenciaPacienteResponseDTO,
+    PacientePorFechaDTO,
 )
 from app.models.vaccines import VacunasPorUsuario
 from app.security.jwt_utilities import (
@@ -109,7 +120,9 @@ from functools import lru_cache
 from http import HTTPStatus
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from datetime import datetime, date
 import json
+from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes
 
 
 token_auth_scheme = HTTPBearer()
@@ -1246,7 +1259,44 @@ def crear_contrato(
                     fecha=f.fecha,
                 )
                 db.add(fecha_servicio)
-
+                # --- Lógica de agendamiento en cronograma solo para Tiquetera ---
+                if servicio.id_servicio == 1:  # Solo Tiquetera
+                    # Verificar que el usuario existe
+                    usuario = db.query(User).filter(User.id_usuario == data.id_usuario).first()
+                    if not usuario:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"Usuario con ID {data.id_usuario} no encontrado"
+                        )
+                    
+                    id_profesional = 1  # TODO: Ajustar según tu lógica de negocio
+                    cronograma = db.query(CronogramaAsistencia).filter_by(
+                        id_profesional=id_profesional,
+                        fecha=f.fecha
+                    ).first()
+                    if not cronograma:
+                        cronograma = CronogramaAsistencia(
+                            id_profesional=id_profesional,
+                            fecha=f.fecha
+                        )
+                        db.add(cronograma)
+                        db.commit()
+                        db.refresh(cronograma)
+                    
+                    # Verificar que no esté ya agendado para esta fecha
+                    agendado_existente = db.query(CronogramaAsistenciaPacientes).filter_by(
+                        id_cronograma=cronograma.id_cronograma,
+                        id_usuario=data.id_usuario
+                    ).first()
+                    
+                    if not agendado_existente:
+                        agendado = CronogramaAsistenciaPacientes(
+                            id_cronograma=cronograma.id_cronograma,
+                            id_usuario=data.id_usuario,
+                            id_contrato=contrato.id_contrato,
+                            estado_asistencia="PENDIENTE"
+                        )
+                        db.add(agendado)
         db.commit()
         contract_response_dto: ContratoResponseDTO = ContratoResponseDTO.from_orm(
             contrato
@@ -1703,3 +1753,211 @@ def delete_contract_by_id(
         message=f"El contrato {contrato_id} se ha eliminado de manera exitosa",
         error=None,
     )
+
+
+# ============================================================================
+# ENDPOINTS DE CRONOGRAMA DE ASISTENCIA
+# ============================================================================
+
+@router.get("/cronograma_asistencia/rango/{fecha_inicio}/{fecha_fin}", response_model=Response[List[CronogramaAsistenciaResponseDTO]])
+def get_cronogramas_por_rango(
+    fecha_inicio: str,
+    fecha_fin: str,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[CronogramaAsistenciaResponseDTO]]:
+    """
+    Obtiene los cronogramas de asistencia en un rango de fechas
+    """
+    try:
+        # Convertir fechas de string a date
+        fecha_inicio_date = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
+        fecha_fin_date = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
+        
+        # Consultar cronogramas en el rango
+        cronogramas = (
+            db.query(CronogramaAsistencia)
+            .filter(
+                CronogramaAsistencia.fecha >= fecha_inicio_date,
+                CronogramaAsistencia.fecha <= fecha_fin_date
+            )
+            .all()
+        )
+        
+        result = []
+        for cronograma in cronogramas:
+            # Obtener pacientes agendados para este cronograma
+            pacientes_agendados = (
+                db.query(CronogramaAsistenciaPacientes, User)
+                .join(User, CronogramaAsistenciaPacientes.id_usuario == User.id_usuario)
+                .filter(CronogramaAsistenciaPacientes.id_cronograma == cronograma.id_cronograma)
+                .all()
+            )
+            
+            pacientes_dto = []
+            for paciente_agendado, usuario in pacientes_agendados:
+                pacientes_dto.append(
+                    PacientePorFechaDTO(
+                        id_cronograma_paciente=paciente_agendado.id_cronograma_paciente,
+                        id_usuario=paciente_agendado.id_usuario,
+                        id_contrato=paciente_agendado.id_contrato,
+                        estado_asistencia=paciente_agendado.estado_asistencia,
+                        nombres=usuario.nombres,
+                        apellidos=usuario.apellidos,
+                        n_documento=usuario.n_documento
+                    )
+                )
+            
+            result.append(
+                CronogramaAsistenciaResponseDTO(
+                    id_cronograma=cronograma.id_cronograma,
+                    id_profesional=cronograma.id_profesional,
+                    fecha=cronograma.fecha,
+                    comentario=cronograma.comentario,
+                    pacientes=pacientes_dto
+                )
+            )
+        
+        return Response[List[CronogramaAsistenciaResponseDTO]](
+            data=result,
+            status_code=HTTPStatus.OK,
+            message="Cronogramas consultados exitosamente",
+            error=None,
+        )
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Formato de fecha inválido: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.get("/cronograma_asistencia/profesional/{id_profesional}", response_model=Response[List[CronogramaAsistenciaResponseDTO]])
+def get_cronogramas_por_profesional(
+    id_profesional: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[CronogramaAsistenciaResponseDTO]]:
+    """
+    Obtiene los cronogramas de asistencia de un profesional específico
+    """
+    try:
+        # Consultar cronogramas del profesional
+        cronogramas = (
+            db.query(CronogramaAsistencia)
+            .filter(CronogramaAsistencia.id_profesional == id_profesional)
+            .all()
+        )
+        
+        result = []
+        for cronograma in cronogramas:
+            # Obtener pacientes agendados para este cronograma
+            pacientes_agendados = (
+                db.query(CronogramaAsistenciaPacientes, User)
+                .join(User, CronogramaAsistenciaPacientes.id_usuario == User.id_usuario)
+                .filter(CronogramaAsistenciaPacientes.id_cronograma == cronograma.id_cronograma)
+                .all()
+            )
+            
+            pacientes_dto = []
+            for paciente_agendado, usuario in pacientes_agendados:
+                pacientes_dto.append(
+                    PacientePorFechaDTO(
+                        id_cronograma_paciente=paciente_agendado.id_cronograma_paciente,
+                        id_usuario=paciente_agendado.id_usuario,
+                        id_contrato=paciente_agendado.id_contrato,
+                        estado_asistencia=paciente_agendado.estado_asistencia,
+                        nombres=usuario.nombres,
+                        apellidos=usuario.apellidos,
+                        n_documento=usuario.n_documento
+                    )
+                )
+            
+            result.append(
+                CronogramaAsistenciaResponseDTO(
+                    id_cronograma=cronograma.id_cronograma,
+                    id_profesional=cronograma.id_profesional,
+                    fecha=cronograma.fecha,
+                    comentario=cronograma.comentario,
+                    pacientes=pacientes_dto
+                )
+            )
+        
+        return Response[List[CronogramaAsistenciaResponseDTO]](
+            data=result,
+            status_code=HTTPStatus.OK,
+            message="Cronogramas del profesional consultados exitosamente",
+            error=None,
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.patch("/cronograma_asistencia/paciente/{id_cronograma_paciente}/estado", response_model=Response[CronogramaAsistenciaPacienteResponseDTO])
+def update_estado_asistencia(
+    id_cronograma_paciente: int,
+    estado_data: EstadoAsistenciaUpdateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
+    """
+    Actualiza el estado de asistencia de un paciente
+    """
+    try:
+        # Buscar el registro del paciente en el cronograma
+        paciente_cronograma = (
+            db.query(CronogramaAsistenciaPacientes)
+            .filter(CronogramaAsistenciaPacientes.id_cronograma_paciente == id_cronograma_paciente)
+            .first()
+        )
+        
+        if not paciente_cronograma:
+            raise HTTPException(
+                status_code=404,
+                detail="Paciente no encontrado en el cronograma"
+            )
+        
+        # Validar estado
+        estados_validos = ["PENDIENTE", "ASISTIÓ", "NO ASISTIÓ"]
+        if estado_data.estado_asistencia not in estados_validos:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Estado inválido. Estados válidos: {', '.join(estados_validos)}"
+            )
+        
+        # Actualizar estado
+        paciente_cronograma.estado_asistencia = estado_data.estado_asistencia
+        db.commit()
+        db.refresh(paciente_cronograma)
+        
+        response_dto = CronogramaAsistenciaPacienteResponseDTO(
+            id_cronograma_paciente=paciente_cronograma.id_cronograma_paciente,
+            id_cronograma=paciente_cronograma.id_cronograma,
+            id_usuario=paciente_cronograma.id_usuario,
+            id_contrato=paciente_cronograma.id_contrato,
+            estado_asistencia=paciente_cronograma.estado_asistencia
+        )
+        
+        return Response[CronogramaAsistenciaPacienteResponseDTO](
+            data=response_dto,
+            status_code=HTTPStatus.OK,
+            message="Estado de asistencia actualizado exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
