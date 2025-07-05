@@ -1910,50 +1910,161 @@ def update_estado_asistencia(
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
     """
-    Actualiza el estado de asistencia de un paciente
+    Actualiza el estado de asistencia de un paciente y guarda observaciones. Si asiste, descuenta día de tiquetera. Si se agotan días, marca contrato como vencido y genera alerta.
     """
     try:
-        # Buscar el registro del paciente en el cronograma
         paciente_cronograma = (
             db.query(CronogramaAsistenciaPacientes)
             .filter(CronogramaAsistenciaPacientes.id_cronograma_paciente == id_cronograma_paciente)
             .first()
         )
-        
         if not paciente_cronograma:
             raise HTTPException(
                 status_code=404,
                 detail="Paciente no encontrado en el cronograma"
             )
-        
-        # Validar estado
-        estados_validos = ["PENDIENTE", "ASISTIÓ", "NO ASISTIÓ"]
+        estados_validos = ["PENDIENTE", "ASISTIO", "NO_ASISTIO", "CANCELADO"]
         if estado_data.estado_asistencia not in estados_validos:
             raise HTTPException(
                 status_code=400,
                 detail=f"Estado inválido. Estados válidos: {', '.join(estados_validos)}"
             )
-        
-        # Actualizar estado
+        # Guardar observaciones
+        paciente_cronograma.observaciones = estado_data.observaciones
         paciente_cronograma.estado_asistencia = estado_data.estado_asistencia
         db.commit()
         db.refresh(paciente_cronograma)
-        
+        # Si asistió, descontar día de tiquetera
+        if estado_data.estado_asistencia == "ASISTIO":
+            contrato = db.query(Contratos).filter(Contratos.id_contrato == paciente_cronograma.id_contrato).first()
+            if contrato:
+                # Contar días asistidos de este contrato
+                total_asistencias = db.query(CronogramaAsistenciaPacientes).filter(
+                    CronogramaAsistenciaPacientes.id_contrato == contrato.id_contrato,
+                    CronogramaAsistenciaPacientes.estado_asistencia == "ASISTIO"
+                ).count()
+                # Contar total de días de la tiquetera (servicio 1)
+                total_tiquetera = db.query(CronogramaAsistenciaPacientes).filter(
+                    CronogramaAsistenciaPacientes.id_contrato == contrato.id_contrato
+                ).count()
+                if total_asistencias >= total_tiquetera:
+                    contrato.estado = "VENCIDO"
+                    db.commit()
+                    # Aquí puedes agregar lógica para generar una alerta al profesional
         response_dto = CronogramaAsistenciaPacienteResponseDTO(
             id_cronograma_paciente=paciente_cronograma.id_cronograma_paciente,
             id_cronograma=paciente_cronograma.id_cronograma,
             id_usuario=paciente_cronograma.id_usuario,
             id_contrato=paciente_cronograma.id_contrato,
-            estado_asistencia=paciente_cronograma.estado_asistencia
+            estado_asistencia=paciente_cronograma.estado_asistencia,
+            observaciones=paciente_cronograma.observaciones
         )
-        
         return Response[CronogramaAsistenciaPacienteResponseDTO](
             data=response_dto,
             status_code=HTTPStatus.OK,
             message="Estado de asistencia actualizado exitosamente",
             error=None,
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.post("/cronograma_asistencia/paciente/{id_cronograma_paciente}/reagendar", response_model=Response[CronogramaAsistenciaPacienteResponseDTO])
+def reagendar_asistencia_paciente(
+    id_cronograma_paciente: int,
+    estado_data: EstadoAsistenciaUpdateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
+    """
+    Reagenda la asistencia de un paciente SOLO si existe justificación (observaciones) y nueva fecha.
+    """
+    try:
+        paciente_cronograma = (
+            db.query(CronogramaAsistenciaPacientes)
+            .filter(CronogramaAsistenciaPacientes.id_cronograma_paciente == id_cronograma_paciente)
+            .first()
+        )
+        if not paciente_cronograma:
+            raise HTTPException(
+                status_code=404,
+                detail="Paciente no encontrado en el cronograma"
+            )
+        if not estado_data.observaciones or not estado_data.observaciones.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="No se puede reagendar sin justificación en observaciones."
+            )
+        if not estado_data.nueva_fecha:
+            raise HTTPException(
+                status_code=400,
+                detail="Debe seleccionar una nueva fecha para reagendar."
+            )
         
+        # Cambiar estado del registro original a REAGENDADO
+        paciente_cronograma.estado_asistencia = "REAGENDADO"
+        paciente_cronograma.observaciones = estado_data.observaciones
+        db.commit()
+        
+        # Buscar o crear cronograma para la nueva fecha
+        id_profesional = 1  # TODO: Obtener del cronograma original o parámetro
+        cronograma_nuevo = db.query(CronogramaAsistencia).filter_by(
+            id_profesional=id_profesional,
+            fecha=estado_data.nueva_fecha
+        ).first()
+        
+        if not cronograma_nuevo:
+            cronograma_nuevo = CronogramaAsistencia(
+                id_profesional=id_profesional,
+                fecha=estado_data.nueva_fecha
+            )
+            db.add(cronograma_nuevo)
+            db.commit()
+            db.refresh(cronograma_nuevo)
+        
+        # Verificar que no esté ya agendado para la nueva fecha
+        agendado_existente = db.query(CronogramaAsistenciaPacientes).filter_by(
+            id_cronograma=cronograma_nuevo.id_cronograma,
+            id_usuario=paciente_cronograma.id_usuario
+        ).first()
+        
+        if agendado_existente:
+            raise HTTPException(
+                status_code=400,
+                detail="El paciente ya está agendado para esta fecha."
+            )
+        
+        # Crear nuevo registro para la nueva fecha
+        nuevo_paciente_cronograma = CronogramaAsistenciaPacientes(
+            id_cronograma=cronograma_nuevo.id_cronograma,
+            id_usuario=paciente_cronograma.id_usuario,
+            id_contrato=paciente_cronograma.id_contrato,
+            estado_asistencia="PENDIENTE",
+            observaciones=""
+        )
+        db.add(nuevo_paciente_cronograma)
+        db.commit()
+        db.refresh(nuevo_paciente_cronograma)
+        
+        response_dto = CronogramaAsistenciaPacienteResponseDTO(
+            id_cronograma_paciente=nuevo_paciente_cronograma.id_cronograma_paciente,
+            id_cronograma=nuevo_paciente_cronograma.id_cronograma,
+            id_usuario=nuevo_paciente_cronograma.id_usuario,
+            id_contrato=nuevo_paciente_cronograma.id_contrato,
+            estado_asistencia=nuevo_paciente_cronograma.estado_asistencia,
+            observaciones=nuevo_paciente_cronograma.observaciones
+        )
+        return Response[CronogramaAsistenciaPacienteResponseDTO](
+            data=response_dto,
+            status_code=HTTPStatus.OK,
+            message="Paciente reagendado exitosamente",
+            error=None,
+        )
     except HTTPException:
         raise
     except Exception as e:

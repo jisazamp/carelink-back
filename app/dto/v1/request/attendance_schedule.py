@@ -12,12 +12,15 @@ class CronogramaAsistenciaPacienteCreateDTO(BaseModel):
     id_usuario: int
     id_contrato: int
     estado_asistencia: str = "PENDIENTE"
+    observaciones: Optional[str] = None
 
 class CronogramaAsistenciaUpdateDTO(BaseModel):
     comentario: Optional[str] = None
 
 class EstadoAsistenciaUpdateDTO(BaseModel):
     estado_asistencia: str
+    observaciones: Optional[str] = None
+    nueva_fecha: Optional[date] = None
 
 class ReagendarPacienteDTO(BaseModel):
     id_cronograma_paciente: int

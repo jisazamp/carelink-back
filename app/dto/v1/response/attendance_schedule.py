@@ -33,6 +33,7 @@ class CronogramaAsistenciaPacienteResponseDTO(BaseModel):
     id_usuario: int
     id_contrato: int
     estado_asistencia: str
+    observaciones: Optional[str] = None
 
     class Config:
         orm_mode = True 

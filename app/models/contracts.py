@@ -15,6 +15,7 @@ class Contratos(Base):
     fecha_inicio = Column(Date)
     fecha_fin = Column(Date)
     facturar_contrato = Column(Boolean)
+    estado = Column(String(20), default="ACTIVO")
     facturas = relationship("Facturas", back_populates="contrato")
 
     class Config:

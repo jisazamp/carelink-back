@@ -29,6 +29,7 @@ class ContratoResponseDTO(BaseModel):
     fecha_inicio: date
     fecha_fin: date
     facturar_contrato: bool
+    estado: str
     servicios: Optional[List[ServicioContratoDTO]]
 
     class Config:
