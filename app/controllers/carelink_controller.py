@@ -1923,6 +1923,14 @@ def update_estado_asistencia(
                 status_code=404,
                 detail="Paciente no encontrado en el cronograma"
             )
+        
+        # 🔴 VALIDACIÓN: Solo se puede cambiar estado de registros "PENDIENTE"
+        if paciente_cronograma.estado_asistencia != "PENDIENTE":
+            raise HTTPException(
+                status_code=400,
+                detail=f"No se puede cambiar el estado de un paciente con estado '{paciente_cronograma.estado_asistencia}'. Solo se puede modificar registros con estado 'PENDIENTE'."
+            )
+        
         estados_validos = ["PENDIENTE", "ASISTIO", "NO_ASISTIO", "CANCELADO"]
         if estado_data.estado_asistencia not in estados_validos:
             raise HTTPException(
@@ -1995,6 +2003,15 @@ def reagendar_asistencia_paciente(
                 status_code=404,
                 detail="Paciente no encontrado en el cronograma"
             )
+        
+        # 🔴 VALIDACIÓN POR REGISTRO INDIVIDUAL Y ESTADO
+        # Solo se puede reagendar si el estado es "PENDIENTE"
+        if paciente_cronograma.estado_asistencia in ["REAGENDADO", "ASISTIO", "NO_ASISTIO", "CANCELADO"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No se puede reagendar un paciente que ya tiene estado '{paciente_cronograma.estado_asistencia}' en esta fecha. Solo se puede reagendar si el estado es 'PENDIENTE'."
+            )
+        
         if not estado_data.observaciones or not estado_data.observaciones.strip():
             raise HTTPException(
                 status_code=400,
@@ -2006,13 +2023,13 @@ def reagendar_asistencia_paciente(
                 detail="Debe seleccionar una nueva fecha para reagendar."
             )
         
-        # Cambiar estado del registro original a REAGENDADO
-        paciente_cronograma.estado_asistencia = "REAGENDADO"
-        paciente_cronograma.observaciones = estado_data.observaciones
-        db.commit()
+        # 🔴 PASO 1: Obtener el id_profesional del cronograma original
+        cronograma_original = db.query(CronogramaAsistencia).filter_by(
+            id_cronograma=paciente_cronograma.id_cronograma
+        ).first()
+        id_profesional = cronograma_original.id_profesional
         
-        # Buscar o crear cronograma para la nueva fecha
-        id_profesional = 1  # TODO: Obtener del cronograma original o parámetro
+        # 🔴 PASO 2: Buscar o crear cronograma para la nueva fecha
         cronograma_nuevo = db.query(CronogramaAsistencia).filter_by(
             id_profesional=id_profesional,
             fecha=estado_data.nueva_fecha
@@ -2027,7 +2044,7 @@ def reagendar_asistencia_paciente(
             db.commit()
             db.refresh(cronograma_nuevo)
         
-        # Verificar que no esté ya agendado para la nueva fecha
+        # 🔴 PASO 3: Verificar que no esté ya agendado para la nueva fecha
         agendado_existente = db.query(CronogramaAsistenciaPacientes).filter_by(
             id_cronograma=cronograma_nuevo.id_cronograma,
             id_usuario=paciente_cronograma.id_usuario
@@ -2039,7 +2056,7 @@ def reagendar_asistencia_paciente(
                 detail="El paciente ya está agendado para esta fecha."
             )
         
-        # Crear nuevo registro para la nueva fecha
+        # 🔴 PASO 4: Crear nuevo registro para la nueva fecha
         nuevo_paciente_cronograma = CronogramaAsistenciaPacientes(
             id_cronograma=cronograma_nuevo.id_cronograma,
             id_usuario=paciente_cronograma.id_usuario,
@@ -2050,6 +2067,11 @@ def reagendar_asistencia_paciente(
         db.add(nuevo_paciente_cronograma)
         db.commit()
         db.refresh(nuevo_paciente_cronograma)
+        
+        # 🔴 PASO 5: SOLO DESPUÉS de crear exitosamente el nuevo registro, cambiar estado del original
+        paciente_cronograma.estado_asistencia = "REAGENDADO"
+        paciente_cronograma.observaciones = estado_data.observaciones
+        db.commit()
         
         response_dto = CronogramaAsistenciaPacienteResponseDTO(
             id_cronograma_paciente=nuevo_paciente_cronograma.id_cronograma_paciente,
