@@ -1910,7 +1910,9 @@ def update_estado_asistencia(
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
     """
-    Actualiza el estado de asistencia de un paciente y guarda observaciones. Si asiste, descuenta día de tiquetera. Si se agotan días, marca contrato como vencido y genera alerta.
+    Actualiza el estado de asistencia de un paciente y guarda observaciones. 
+    Si asiste o no asiste (sin justificación), descuenta día de tiquetera. 
+    Si se agotan días, marca contrato como vencido y genera alerta.
     """
     try:
         paciente_cronograma = (
@@ -1942,20 +1944,25 @@ def update_estado_asistencia(
         paciente_cronograma.estado_asistencia = estado_data.estado_asistencia
         db.commit()
         db.refresh(paciente_cronograma)
-        # Si asistió, descontar día de tiquetera
-        if estado_data.estado_asistencia == "ASISTIO":
+        
+        # 🔴 LÓGICA DE DESCUENTO DE DÍAS DE TIQUETERA
+        # Se descuenta día tanto si ASISTE como si NO ASISTE (sin justificación)
+        if estado_data.estado_asistencia in ["ASISTIO", "NO_ASISTIO"]:
             contrato = db.query(Contratos).filter(Contratos.id_contrato == paciente_cronograma.id_contrato).first()
             if contrato:
-                # Contar días asistidos de este contrato
-                total_asistencias = db.query(CronogramaAsistenciaPacientes).filter(
+                # Contar días consumidos (asistencias + no asistencias)
+                total_dias_consumidos = db.query(CronogramaAsistenciaPacientes).filter(
                     CronogramaAsistenciaPacientes.id_contrato == contrato.id_contrato,
-                    CronogramaAsistenciaPacientes.estado_asistencia == "ASISTIO"
+                    CronogramaAsistenciaPacientes.estado_asistencia.in_(["ASISTIO", "NO_ASISTIO"])
                 ).count()
+                
                 # Contar total de días de la tiquetera (servicio 1)
                 total_tiquetera = db.query(CronogramaAsistenciaPacientes).filter(
                     CronogramaAsistenciaPacientes.id_contrato == contrato.id_contrato
                 ).count()
-                if total_asistencias >= total_tiquetera:
+                
+                # Si se agotaron todos los días, marcar contrato como vencido
+                if total_dias_consumidos >= total_tiquetera:
                     contrato.estado = "VENCIDO"
                     db.commit()
                     # Aquí puedes agregar lógica para generar una alerta al profesional
