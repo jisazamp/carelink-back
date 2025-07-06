@@ -1,4 +1,4 @@
-from app.controllers import carelink_controller
+from app.controllers import carelink_controller, transporte_controller
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,3 +48,4 @@ app.add_middleware(
 )
 
 app.include_router(carelink_controller.router, prefix="/api", tags=["CareLink"])
+app.include_router(transporte_controller.router)

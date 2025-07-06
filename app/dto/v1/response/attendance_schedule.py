@@ -8,9 +8,12 @@ class PacientePorFechaDTO(BaseModel):
     id_usuario: int
     id_contrato: int
     estado_asistencia: str
+    requiere_transporte: bool
     nombres: str
     apellidos: str
     n_documento: str
+    # Información de transporte si existe
+    transporte_info: Optional[dict] = None
 
     class Config:
         orm_mode = True
@@ -33,7 +36,10 @@ class CronogramaAsistenciaPacienteResponseDTO(BaseModel):
     id_usuario: int
     id_contrato: int
     estado_asistencia: str
+    requiere_transporte: bool
     observaciones: Optional[str] = None
+    # Información de transporte si existe
+    transporte_info: Optional[dict] = None
 
     class Config:
         orm_mode = True 

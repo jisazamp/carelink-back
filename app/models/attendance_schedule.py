@@ -1,5 +1,5 @@
 from .base import Base
-from sqlalchemy import Column, Integer, Date, Text, ForeignKey, Enum, String
+from sqlalchemy import Column, Integer, Date, Text, ForeignKey, Enum, String, Boolean
 from sqlalchemy.orm import relationship
 
 class CronogramaAsistencia(Base):
@@ -18,6 +18,8 @@ class CronogramaAsistenciaPacientes(Base):
     id_usuario = Column(Integer, ForeignKey("Usuarios.id_usuario"))
     id_contrato = Column(Integer, ForeignKey("Contratos.id_contrato"))
     estado_asistencia = Column(String(20), default="PENDIENTE")
+    requiere_transporte = Column(Boolean, default=False)
     observaciones = Column(Text, nullable=True)
 
     cronograma = relationship("CronogramaAsistencia", back_populates="pacientes")
+    transporte = relationship("CronogramaTransporte", back_populates="cronograma_paciente", uselist=False)

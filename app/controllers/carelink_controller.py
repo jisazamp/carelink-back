@@ -108,6 +108,18 @@ from app.dto.v1.response.attendance_schedule import (
     CronogramaAsistenciaPacienteResponseDTO,
     PacientePorFechaDTO,
 )
+# Nuevos imports para transporte
+from app.models.transporte import CronogramaTransporte
+from app.dto.v1.request.transport_schedule import (
+    CronogramaTransporteCreateDTO,
+    CronogramaTransporteUpdateDTO,
+    RutaTransporteCreateDTO,
+)
+from app.dto.v1.response.transport_schedule import (
+    CronogramaTransporteResponseDTO,
+    RutaTransporteResponseDTO,
+    RutaDiariaResponseDTO,
+)
 from app.models.vaccines import VacunasPorUsuario
 from app.security.jwt_utilities import (
     decode_access_token,
@@ -120,7 +132,7 @@ from functools import lru_cache
 from http import HTTPStatus
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, time
 import json
 from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes
 
@@ -1241,6 +1253,10 @@ def crear_contrato(
         db.commit()
         db.refresh(contrato)
 
+        # Obtener fechas de tiquetera y transporte
+        fechas_tiquetera = set()
+        fechas_transporte = set()
+        servicios_db = []
         for servicio in data.servicios:
             servicio_contratado = ServiciosPorContrato(
                 id_contrato=contrato.id_contrato,
@@ -1252,26 +1268,98 @@ def crear_contrato(
             db.add(servicio_contratado)
             db.commit()
             db.refresh(servicio_contratado)
-
+            # Guardar fechas del servicio
             for f in servicio.fechas_servicio:
                 fecha_servicio = FechasServicio(
                     id_servicio_contratado=servicio_contratado.id_servicio_contratado,
                     fecha=f.fecha,
                 )
                 db.add(fecha_servicio)
+                db.commit()
+                # Clasificar fechas
+                if servicio.id_servicio == 1:
+                    fechas_tiquetera.add(f.fecha)
+                elif servicio.id_servicio == 2:
+                    fechas_transporte.add(f.fecha)
+            # Para la respuesta
+            fechas_dto = [FechaServicioDTO(fecha=f.fecha) for f in servicio.fechas_servicio]
+            servicios_db.append(
+                ServicioContratoDTO(
+                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
+                    id_servicio=servicio.id_servicio,
+                    fecha=servicio.fecha,
+                    descripcion=servicio.descripcion,
+                    precio_por_dia=servicio.precio_por_dia,
+                    fechas_servicio=fechas_dto,
+                )
+            )
 
-        # ✏️ Actualizar otros atributos del contrato
-        for attr, value in data.dict(exclude={"servicios"}, exclude_unset=True).items():
-            setattr(contrato, attr, value)
+        # Procesar cronogramas de asistencia y transporte
+        id_profesional_default = 1
+        for fecha in fechas_tiquetera:
+            # Crear o buscar cronograma de asistencia
+            cronograma_existente = (
+                db.query(CronogramaAsistencia)
+                .filter(
+                    CronogramaAsistencia.fecha == fecha,
+                    CronogramaAsistencia.id_profesional == id_profesional_default
+                )
+                .first()
+            )
+            if not cronograma_existente:
+                cronograma_asistencia = CronogramaAsistencia(
+                    id_profesional=id_profesional_default,
+                    fecha=fecha,
+                    comentario=f"Generado automáticamente desde contrato {contrato.id_contrato}"
+                )
+                db.add(cronograma_asistencia)
+                db.commit()
+                db.refresh(cronograma_asistencia)
+            else:
+                cronograma_asistencia = cronograma_existente
+            # Determinar si ese día requiere transporte
+            requiere_transporte = fecha in fechas_transporte
+            # Agregar paciente al cronograma
+            paciente_cronograma = CronogramaAsistenciaPacientes(
+                id_cronograma=cronograma_asistencia.id_cronograma,
+                id_usuario=data.id_usuario,
+                id_contrato=contrato.id_contrato,
+                estado_asistencia="PENDIENTE",
+                requiere_transporte=requiere_transporte,
+                observaciones=None
+            )
+            db.add(paciente_cronograma)
+            db.commit()
+            db.refresh(paciente_cronograma)
+            # Si requiere transporte, crear cronograma_transporte
+            if requiere_transporte:
+                cronograma_transporte = CronogramaTransporte(
+                    id_cronograma_paciente=paciente_cronograma.id_cronograma_paciente,
+                    direccion_recogida="Por definir",
+                    direccion_entrega="Por definir",
+                    hora_recogida=time(8, 0),
+                    hora_entrega=time(17, 0),
+                    estado="PENDIENTE",
+                    observaciones="Generado automáticamente desde contrato"
+                )
+                db.add(cronograma_transporte)
+                db.commit()
 
         db.commit()
         db.refresh(contrato)
 
-        contract_response_dto: ContratoResponseDTO = ContratoResponseDTO.from_orm(
-            contrato
-        )
+        # Construir respuesta igual que obtener_contrato
         return Response[ContratoResponseDTO](
-            data=contract_response_dto,
+            data=ContratoResponseDTO(
+                id_contrato=contrato.id_contrato,
+                id_usuario=contrato.id_usuario,
+                tipo_contrato=contrato.tipo_contrato,
+                fecha_inicio=contrato.fecha_inicio,
+                fecha_fin=contrato.fecha_fin,
+                facturar_contrato=contrato.facturar_contrato,
+                estado=contrato.estado,
+                servicios=servicios_db,
+            ),
             message="Contrato creado de manera exitosa",
             status_code=HTTPStatus.CREATED,
             error=None,
@@ -1730,6 +1818,137 @@ def delete_contract_by_id(
 # ENDPOINTS DE CRONOGRAMA DE ASISTENCIA
 # ============================================================================
 
+@router.post("/cronograma_asistencia/crear", response_model=Response[CronogramaAsistenciaResponseDTO])
+def crear_cronograma_asistencia(
+    cronograma_data: CronogramaAsistenciaCreateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[CronogramaAsistenciaResponseDTO]:
+    """
+    Crea un nuevo cronograma de asistencia
+    """
+    try:
+        # Verificar si ya existe un cronograma para esta fecha y profesional
+        cronograma_existente = (
+            db.query(CronogramaAsistencia)
+            .filter(
+                CronogramaAsistencia.fecha == cronograma_data.fecha,
+                CronogramaAsistencia.id_profesional == cronograma_data.id_profesional
+            )
+            .first()
+        )
+        
+        if cronograma_existente:
+            # Si ya existe, retornar el existente
+            return Response[CronogramaAsistenciaResponseDTO](
+                data=CronogramaAsistenciaResponseDTO(
+                    id_cronograma=cronograma_existente.id_cronograma,
+                    id_profesional=cronograma_existente.id_profesional,
+                    fecha=cronograma_existente.fecha,
+                    comentario=cronograma_existente.comentario,
+                    pacientes=[]
+                ),
+                status_code=HTTPStatus.OK,
+                message="Cronograma existente recuperado",
+                error=None,
+            )
+        
+        # Crear nuevo cronograma
+        nuevo_cronograma = CronogramaAsistencia(
+            id_profesional=cronograma_data.id_profesional,
+            fecha=cronograma_data.fecha,
+            comentario=cronograma_data.comentario
+        )
+        
+        db.add(nuevo_cronograma)
+        db.commit()
+        db.refresh(nuevo_cronograma)
+        
+        return Response[CronogramaAsistenciaResponseDTO](
+            data=CronogramaAsistenciaResponseDTO(
+                id_cronograma=nuevo_cronograma.id_cronograma,
+                id_profesional=nuevo_cronograma.id_profesional,
+                fecha=nuevo_cronograma.fecha,
+                comentario=nuevo_cronograma.comentario,
+                pacientes=[]
+            ),
+            status_code=HTTPStatus.CREATED,
+            message="Cronograma creado exitosamente",
+            error=None,
+        )
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al crear cronograma: {str(e)}"
+        )
+
+
+@router.post("/cronograma_asistencia/paciente/agregar", response_model=Response[CronogramaAsistenciaPacienteResponseDTO])
+def agregar_paciente_cronograma(
+    paciente_data: CronogramaAsistenciaPacienteCreateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
+    """
+    Agrega un paciente a un cronograma de asistencia existente
+    """
+    try:
+        # Verificar si el paciente ya está en el cronograma
+        paciente_existente = (
+            db.query(CronogramaAsistenciaPacientes)
+            .filter(
+                CronogramaAsistenciaPacientes.id_cronograma == paciente_data.id_cronograma,
+                CronogramaAsistenciaPacientes.id_usuario == paciente_data.id_usuario
+            )
+            .first()
+        )
+        
+        if paciente_existente:
+            raise HTTPException(
+                status_code=400,
+                detail="El paciente ya está registrado en este cronograma"
+            )
+        
+        # Agregar paciente al cronograma
+        nuevo_paciente = CronogramaAsistenciaPacientes(
+            id_cronograma=paciente_data.id_cronograma,
+            id_usuario=paciente_data.id_usuario,
+            id_contrato=paciente_data.id_contrato,
+            estado_asistencia=paciente_data.estado_asistencia,
+            observaciones=paciente_data.observaciones
+        )
+        
+        db.add(nuevo_paciente)
+        db.commit()
+        db.refresh(nuevo_paciente)
+        
+        return Response[CronogramaAsistenciaPacienteResponseDTO](
+            data=CronogramaAsistenciaPacienteResponseDTO(
+                id_cronograma_paciente=nuevo_paciente.id_cronograma_paciente,
+                id_cronograma=nuevo_paciente.id_cronograma,
+                id_usuario=nuevo_paciente.id_usuario,
+                id_contrato=nuevo_paciente.id_contrato,
+                estado_asistencia=nuevo_paciente.estado_asistencia,
+                requiere_transporte=nuevo_paciente.requiere_transporte,
+                observaciones=nuevo_paciente.observaciones
+            ),
+            status_code=HTTPStatus.CREATED,
+            message="Paciente agregado al cronograma exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al agregar paciente al cronograma: {str(e)}"
+        )
+
+
 @router.get("/cronograma_asistencia/rango/{fecha_inicio}/{fecha_fin}", response_model=Response[List[CronogramaAsistenciaResponseDTO]])
 def get_cronogramas_por_rango(
     fecha_inicio: str,
@@ -1767,15 +1986,33 @@ def get_cronogramas_por_rango(
             
             pacientes_dto = []
             for paciente_agendado, usuario in pacientes_agendados:
+                # Obtener información de transporte si existe
+                transporte_info = None
+                if paciente_agendado.requiere_transporte:
+                    transporte = db.query(CronogramaTransporte).filter(
+                        CronogramaTransporte.id_cronograma_paciente == paciente_agendado.id_cronograma_paciente
+                    ).first()
+                    if transporte:
+                        transporte_info = {
+                            "id_transporte": transporte.id_transporte,
+                            "direccion_recogida": transporte.direccion_recogida,
+                            "direccion_entrega": transporte.direccion_entrega,
+                            "hora_recogida": str(transporte.hora_recogida) if transporte.hora_recogida else None,
+                            "hora_entrega": str(transporte.hora_entrega) if transporte.hora_entrega else None,
+                            "estado": transporte.estado,
+                            "observaciones": transporte.observaciones
+                        }
                 pacientes_dto.append(
                     PacientePorFechaDTO(
                         id_cronograma_paciente=paciente_agendado.id_cronograma_paciente,
                         id_usuario=paciente_agendado.id_usuario,
                         id_contrato=paciente_agendado.id_contrato,
                         estado_asistencia=paciente_agendado.estado_asistencia,
+                        requiere_transporte=paciente_agendado.requiere_transporte,
                         nombres=usuario.nombres,
                         apellidos=usuario.apellidos,
-                        n_documento=usuario.n_documento
+                        n_documento=usuario.n_documento,
+                        transporte_info=transporte_info
                     )
                 )
             
@@ -1837,15 +2074,33 @@ def get_cronogramas_por_profesional(
             
             pacientes_dto = []
             for paciente_agendado, usuario in pacientes_agendados:
+                # Obtener información de transporte si existe
+                transporte_info = None
+                if paciente_agendado.requiere_transporte:
+                    transporte = db.query(CronogramaTransporte).filter(
+                        CronogramaTransporte.id_cronograma_paciente == paciente_agendado.id_cronograma_paciente
+                    ).first()
+                    if transporte:
+                        transporte_info = {
+                            "id_transporte": transporte.id_transporte,
+                            "direccion_recogida": transporte.direccion_recogida,
+                            "direccion_entrega": transporte.direccion_entrega,
+                            "hora_recogida": str(transporte.hora_recogida) if transporte.hora_recogida else None,
+                            "hora_entrega": str(transporte.hora_entrega) if transporte.hora_entrega else None,
+                            "estado": transporte.estado,
+                            "observaciones": transporte.observaciones
+                        }
                 pacientes_dto.append(
                     PacientePorFechaDTO(
                         id_cronograma_paciente=paciente_agendado.id_cronograma_paciente,
                         id_usuario=paciente_agendado.id_usuario,
                         id_contrato=paciente_agendado.id_contrato,
                         estado_asistencia=paciente_agendado.estado_asistencia,
+                        requiere_transporte=paciente_agendado.requiere_transporte,
                         nombres=usuario.nombres,
                         apellidos=usuario.apellidos,
-                        n_documento=usuario.n_documento
+                        n_documento=usuario.n_documento,
+                        transporte_info=transporte_info
                     )
                 )
             
@@ -2068,6 +2323,290 @@ def reagendar_asistencia_paciente(
     except HTTPException:
         raise
     except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+# ============================================================================
+# ENDPOINTS DE CRONOGRAMA DE TRANSPORTE
+# ============================================================================
+
+@router.post("/transporte/crear", response_model=Response[CronogramaTransporteResponseDTO])
+def crear_cronograma_transporte(
+    transporte_data: CronogramaTransporteCreateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[CronogramaTransporteResponseDTO]:
+    """
+    Crea un registro de transporte para un paciente en el cronograma
+    """
+    try:
+        # Verificar que el cronograma_paciente existe
+        cronograma_paciente = db.query(CronogramaAsistenciaPacientes).filter(
+            CronogramaAsistenciaPacientes.id_cronograma_paciente == transporte_data.id_cronograma_paciente
+        ).first()
+        
+        if not cronograma_paciente:
+            raise HTTPException(
+                status_code=404,
+                detail="Paciente no encontrado en el cronograma"
+            )
+        
+        # Verificar que no existe ya un registro de transporte
+        transporte_existente = db.query(CronogramaTransporte).filter(
+            CronogramaTransporte.id_cronograma_paciente == transporte_data.id_cronograma_paciente
+        ).first()
+        
+        if transporte_existente:
+            raise HTTPException(
+                status_code=400,
+                detail="Ya existe un registro de transporte para este paciente en esta fecha"
+            )
+        
+        # Crear el registro de transporte
+        nuevo_transporte = CronogramaTransporte(
+            id_cronograma_paciente=transporte_data.id_cronograma_paciente,
+            direccion_recogida=transporte_data.direccion_recogida,
+            direccion_entrega=transporte_data.direccion_entrega,
+            hora_recogida=transporte_data.hora_recogida,
+            hora_entrega=transporte_data.hora_entrega,
+            observaciones=transporte_data.observaciones
+        )
+        
+        db.add(nuevo_transporte)
+        # ACTUALIZAR requiere_transporte a True
+        cronograma_paciente.requiere_transporte = True
+        db.commit()
+        db.refresh(nuevo_transporte)
+        
+        response_dto = CronogramaTransporteResponseDTO.from_orm(nuevo_transporte)
+        return Response[CronogramaTransporteResponseDTO](
+            data=response_dto,
+            status_code=HTTPStatus.CREATED,
+            message="Cronograma de transporte creado exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.patch("/transporte/{id_transporte}", response_model=Response[CronogramaTransporteResponseDTO])
+def actualizar_cronograma_transporte(
+    id_transporte: int,
+    transporte_data: CronogramaTransporteUpdateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[CronogramaTransporteResponseDTO]:
+    """
+    Actualiza un registro de transporte
+    """
+    try:
+        transporte = db.query(CronogramaTransporte).filter(
+            CronogramaTransporte.id_transporte == id_transporte
+        ).first()
+        
+        if not transporte:
+            raise HTTPException(
+                status_code=404,
+                detail="Registro de transporte no encontrado"
+            )
+        
+        # Actualizar campos
+        for field, value in transporte_data.dict(exclude_unset=True).items():
+            setattr(transporte, field, value)
+        
+        db.commit()
+        db.refresh(transporte)
+        
+        response_dto = CronogramaTransporteResponseDTO.from_orm(transporte)
+        return Response[CronogramaTransporteResponseDTO](
+            data=response_dto,
+            status_code=HTTPStatus.OK,
+            message="Cronograma de transporte actualizado exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.get("/transporte/ruta/{fecha}", response_model=Response[RutaDiariaResponseDTO])
+def obtener_ruta_transporte_diaria(
+    fecha: str,
+    id_profesional: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[RutaDiariaResponseDTO]:
+    """
+    Obtiene la ruta de transporte para una fecha específica
+    """
+    try:
+        fecha_date = datetime.strptime(fecha, "%Y-%m-%d").date()
+        
+        # Obtener todos los pacientes que requieren transporte para esa fecha
+        pacientes_transporte = (
+            db.query(CronogramaAsistenciaPacientes, CronogramaTransporte, User)
+            .join(CronogramaTransporte, CronogramaAsistenciaPacientes.id_cronograma_paciente == CronogramaTransporte.id_cronograma_paciente, isouter=True)
+            .join(User, CronogramaAsistenciaPacientes.id_usuario == User.id_usuario)
+            .join(CronogramaAsistencia, CronogramaAsistenciaPacientes.id_cronograma == CronogramaAsistencia.id_cronograma)
+            .filter(
+                CronogramaAsistencia.fecha == fecha_date,
+                CronogramaAsistencia.id_profesional == id_profesional,
+                CronogramaAsistenciaPacientes.requiere_transporte == True
+            )
+            .all()
+        )
+        
+        rutas = []
+        total_pendientes = 0
+        total_realizados = 0
+        total_cancelados = 0
+        
+        for paciente, transporte, usuario in pacientes_transporte:
+            estado = transporte.estado if transporte else "PENDIENTE"
+            
+            if estado == "PENDIENTE":
+                total_pendientes += 1
+            elif estado == "REALIZADO":
+                total_realizados += 1
+            elif estado == "CANCELADO":
+                total_cancelados += 1
+            
+            rutas.append(
+                RutaTransporteResponseDTO(
+                    id_transporte=transporte.id_transporte if transporte else 0,
+                    id_cronograma_paciente=paciente.id_cronograma_paciente,
+                    id_usuario=usuario.id_usuario,
+                    nombres=usuario.nombres,
+                    apellidos=usuario.apellidos,
+                    n_documento=usuario.n_documento,
+                    direccion_recogida=transporte.direccion_recogida if transporte else None,
+                    direccion_entrega=transporte.direccion_entrega if transporte else None,
+                    hora_recogida=transporte.hora_recogida if transporte else None,
+                    hora_entrega=transporte.hora_entrega if transporte else None,
+                    estado=estado,
+                    observaciones=transporte.observaciones if transporte else None
+                )
+            )
+        
+        # Ordenar rutas por hora de recogida
+        rutas.sort(key=lambda x: x.hora_recogida if x.hora_recogida else time(23, 59))
+        
+        response_dto = RutaDiariaResponseDTO(
+            fecha=fecha,
+            id_profesional=id_profesional,
+            rutas=rutas,
+            total_pacientes=len(rutas),
+            total_pendientes=total_pendientes,
+            total_realizados=total_realizados,
+            total_cancelados=total_cancelados
+        )
+        
+        return Response[RutaDiariaResponseDTO](
+            data=response_dto,
+            status_code=HTTPStatus.OK,
+            message="Ruta de transporte consultada exitosamente",
+            error=None,
+        )
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Formato de fecha inválido: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.get("/transporte/paciente/{id_cronograma_paciente}", response_model=Response[CronogramaTransporteResponseDTO])
+def obtener_transporte_paciente(
+    id_cronograma_paciente: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[CronogramaTransporteResponseDTO]:
+    """
+    Obtiene la información de transporte de un paciente específico
+    """
+    try:
+        transporte = db.query(CronogramaTransporte).filter(
+            CronogramaTransporte.id_cronograma_paciente == id_cronograma_paciente
+        ).first()
+        
+        if not transporte:
+            raise HTTPException(
+                status_code=404,
+                detail="No se encontró información de transporte para este paciente"
+            )
+        
+        response_dto = CronogramaTransporteResponseDTO.from_orm(transporte)
+        return Response[CronogramaTransporteResponseDTO](
+            data=response_dto,
+            status_code=HTTPStatus.OK,
+            message="Información de transporte consultada exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.delete("/transporte/{id_transporte}", response_model=Response[None])
+def eliminar_cronograma_transporte(
+    id_transporte: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[None]:
+    """
+    Elimina un registro de transporte
+    """
+    try:
+        transporte = db.query(CronogramaTransporte).filter(
+            CronogramaTransporte.id_transporte == id_transporte
+        ).first()
+        
+        if not transporte:
+            raise HTTPException(
+                status_code=404,
+                detail="Registro de transporte no encontrado"
+            )
+        
+        db.delete(transporte)
+        db.commit()
+        
+        return Response[None](
+            data=None,
+            status_code=HTTPStatus.NO_CONTENT,
+            message="Cronograma de transporte eliminado exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
         raise HTTPException(
             status_code=500,
             detail=f"Error interno del servidor: {str(e)}"
