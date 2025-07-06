@@ -1322,10 +1322,14 @@ def crear_contrato(
                 if paciente_ya_agendado:
                     # Hacer rollback de todo lo que se haya creado hasta ahora
                     db.rollback()
+                    # Formatear la fecha para el mensaje
+                    fecha_formateada = fecha.strftime("%d/%m/%Y")
                     raise HTTPException(
                         status_code=400,
-                        detail=f"El paciente ya está agendado para la fecha {fecha}. No se puede crear un doble agendamiento. "
-                               f"Paciente ID: {data.id_usuario}, Fecha: {fecha}, Estado actual: {paciente_ya_agendado.estado_asistencia}"
+                        detail=f"El paciente ya está agendado para la fecha {fecha_formateada}. "
+                               f"No se puede crear un doble agendamiento. "
+                               f"Paciente ID: {data.id_usuario}, Estado actual: {paciente_ya_agendado.estado_asistencia}. "
+                               f"Por favor verifique las fechas agendadas y corrija el error."
                     )
         
         # Si llegamos aquí, no hay conflictos de doble agendamiento
@@ -1398,6 +1402,9 @@ def crear_contrato(
             error=None,
         )
 
+    except HTTPException:
+        # Re-lanzar HTTPException sin modificar
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(
