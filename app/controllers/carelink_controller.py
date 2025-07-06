@@ -1295,6 +1295,40 @@ def crear_contrato(
 
         # Procesar cronogramas de asistencia y transporte
         id_profesional_default = 1
+        
+        # 🔴 VALIDACIÓN: Verificar que no haya doble agendamiento antes de procesar
+        for fecha in fechas_tiquetera:
+            # Buscar si ya existe un cronograma para esta fecha
+            cronograma_existente = (
+                db.query(CronogramaAsistencia)
+                .filter(
+                    CronogramaAsistencia.fecha == fecha,
+                    CronogramaAsistencia.id_profesional == id_profesional_default
+                )
+                .first()
+            )
+            
+            if cronograma_existente:
+                # Verificar si el paciente ya está agendado para esta fecha
+                paciente_ya_agendado = (
+                    db.query(CronogramaAsistenciaPacientes)
+                    .filter(
+                        CronogramaAsistenciaPacientes.id_cronograma == cronograma_existente.id_cronograma,
+                        CronogramaAsistenciaPacientes.id_usuario == data.id_usuario
+                    )
+                    .first()
+                )
+                
+                if paciente_ya_agendado:
+                    # Hacer rollback de todo lo que se haya creado hasta ahora
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"El paciente ya está agendado para la fecha {fecha}. No se puede crear un doble agendamiento. "
+                               f"Paciente ID: {data.id_usuario}, Fecha: {fecha}, Estado actual: {paciente_ya_agendado.estado_asistencia}"
+                    )
+        
+        # Si llegamos aquí, no hay conflictos de doble agendamiento
         for fecha in fechas_tiquetera:
             # Crear o buscar cronograma de asistencia
             cronograma_existente = (
@@ -1894,7 +1928,20 @@ def agregar_paciente_cronograma(
     Agrega un paciente a un cronograma de asistencia existente
     """
     try:
-        # Verificar si el paciente ya está en el cronograma
+        # 🔴 VALIDACIÓN: Verificar que el cronograma existe
+        cronograma = (
+            db.query(CronogramaAsistencia)
+            .filter(CronogramaAsistencia.id_cronograma == paciente_data.id_cronograma)
+            .first()
+        )
+        
+        if not cronograma:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontró el cronograma con ID {paciente_data.id_cronograma}"
+            )
+        
+        # 🔴 VALIDACIÓN: Verificar que el paciente ya está en el cronograma
         paciente_existente = (
             db.query(CronogramaAsistenciaPacientes)
             .filter(
@@ -1907,7 +1954,26 @@ def agregar_paciente_cronograma(
         if paciente_existente:
             raise HTTPException(
                 status_code=400,
-                detail="El paciente ya está registrado en este cronograma"
+                detail=f"El paciente ya está registrado en este cronograma para la fecha {cronograma.fecha}. "
+                       f"No se puede crear un doble agendamiento. "
+                       f"Paciente ID: {paciente_data.id_usuario}, "
+                       f"Estado actual: {paciente_existente.estado_asistencia}"
+            )
+        
+        # 🔴 VALIDACIÓN: Verificar que el contrato existe y pertenece al usuario
+        contrato = (
+            db.query(Contratos)
+            .filter(
+                Contratos.id_contrato == paciente_data.id_contrato,
+                Contratos.id_usuario == paciente_data.id_usuario
+            )
+            .first()
+        )
+        
+        if not contrato:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El contrato {paciente_data.id_contrato} no existe o no pertenece al usuario {paciente_data.id_usuario}"
             )
         
         # Agregar paciente al cronograma
