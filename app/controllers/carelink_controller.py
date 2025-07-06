@@ -1259,45 +1259,14 @@ def crear_contrato(
                     fecha=f.fecha,
                 )
                 db.add(fecha_servicio)
-                # --- Lógica de agendamiento en cronograma solo para Tiquetera ---
-                if servicio.id_servicio == 1:  # Solo Tiquetera
-                    # Verificar que el usuario existe
-                    usuario = db.query(User).filter(User.id_usuario == data.id_usuario).first()
-                    if not usuario:
-                        raise HTTPException(
-                            status_code=404,
-                            detail=f"Usuario con ID {data.id_usuario} no encontrado"
-                        )
-                    
-                    id_profesional = 1  # TODO: Ajustar según tu lógica de negocio
-                    cronograma = db.query(CronogramaAsistencia).filter_by(
-                        id_profesional=id_profesional,
-                        fecha=f.fecha
-                    ).first()
-                    if not cronograma:
-                        cronograma = CronogramaAsistencia(
-                            id_profesional=id_profesional,
-                            fecha=f.fecha
-                        )
-                        db.add(cronograma)
-                        db.commit()
-                        db.refresh(cronograma)
-                    
-                    # Verificar que no esté ya agendado para esta fecha
-                    agendado_existente = db.query(CronogramaAsistenciaPacientes).filter_by(
-                        id_cronograma=cronograma.id_cronograma,
-                        id_usuario=data.id_usuario
-                    ).first()
-                    
-                    if not agendado_existente:
-                        agendado = CronogramaAsistenciaPacientes(
-                            id_cronograma=cronograma.id_cronograma,
-                            id_usuario=data.id_usuario,
-                            id_contrato=contrato.id_contrato,
-                            estado_asistencia="PENDIENTE"
-                        )
-                        db.add(agendado)
+
+        # ✏️ Actualizar otros atributos del contrato
+        for attr, value in data.dict(exclude={"servicios"}, exclude_unset=True).items():
+            setattr(contrato, attr, value)
+
         db.commit()
+        db.refresh(contrato)
+
         contract_response_dto: ContratoResponseDTO = ContratoResponseDTO.from_orm(
             contrato
         )
@@ -1379,6 +1348,7 @@ def listar_contratos_por_usuario(
                     fecha_inicio=contrato.fecha_inicio,
                     fecha_fin=contrato.fecha_fin,
                     facturar_contrato=contrato.facturar_contrato,
+                    estado=contrato.estado,  # <-- Se agrega el campo estado
                     servicios=servicios,
                 )
             )
@@ -1430,6 +1400,7 @@ def obtener_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
         fecha_inicio=contrato.fecha_inicio,
         fecha_fin=contrato.fecha_fin,
         facturar_contrato=contrato.facturar_contrato,
+        estado=contrato.estado,  # <-- Se agrega el campo estado
         servicios=servicios,
     )
 
