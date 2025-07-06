@@ -145,10 +145,9 @@ def actualizar_transporte(
 @router.get("/ruta/{fecha}", response_model=RutaDiariaResponseWrapper)
 def obtener_ruta_diaria(
     fecha: str,
-    id_profesional: int = Query(..., description="ID del profesional"),
     db: Session = Depends(get_db)
 ):
-    """Obtener la ruta de transporte para una fecha específica"""
+    """Obtener TODOS los transportes para una fecha específica (sin filtros por profesional)"""
     try:
         # Convertir fecha
         try:
@@ -156,13 +155,12 @@ def obtener_ruta_diaria(
         except ValueError:
             raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
         
-        # Obtener cronograma para la fecha y profesional
+        # Obtener TODOS los cronogramas para la fecha (sin filtrar por profesional)
         cronograma = db.query(CronogramaAsistenciaPacientes).join(
             CronogramaAsistenciaPacientes.cronograma
         ).filter(
             and_(
                 CronogramaAsistenciaPacientes.cronograma.has(fecha=fecha_obj),
-                CronogramaAsistenciaPacientes.cronograma.has(id_profesional=id_profesional),
                 CronogramaAsistenciaPacientes.requiere_transporte == True
             )
         ).all()

@@ -18,10 +18,4 @@ class CronogramaTransporteUpdateDTO(BaseModel):
     hora_recogida: Optional[time] = None
     hora_entrega: Optional[time] = None
     estado: Optional[str] = None
-    observaciones: Optional[str] = None
-
-
-class RutaTransporteCreateDTO(BaseModel):
-    fecha: str
-    id_profesional: int
-    rutas: list[dict]  # Lista de rutas con pacientes y horarios 
+    observaciones: Optional[str] = None 
