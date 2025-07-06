@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from datetime import datetime, time
 
@@ -15,7 +15,13 @@ class CronogramaTransporteResponse(BaseModel):
     fecha_actualizacion: Optional[datetime] = None
 
     class Config:
-        from_attributes = True
+        orm_mode = True
+
+    @validator("hora_recogida", "hora_entrega", pre=True)
+    def time_to_str(cls, v):
+        if isinstance(v, time):
+            return v.strftime("%H:%M:%S")
+        return v
 
 class RutaTransporteResponse(BaseModel):
     id_transporte: int
@@ -31,7 +37,7 @@ class RutaTransporteResponse(BaseModel):
     observaciones: Optional[str] = None
 
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 class RutaDiariaResponse(BaseModel):
     fecha: str
@@ -42,14 +48,20 @@ class RutaDiariaResponse(BaseModel):
     rutas: List[RutaTransporteResponse]
 
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 class TransporteResponse(BaseModel):
     success: bool = True
     message: str = "Operación exitosa"
     data: CronogramaTransporteResponse
 
+    class Config:
+        orm_mode = True
+
 class RutaDiariaResponseWrapper(BaseModel):
     success: bool = True
     message: str = "Ruta obtenida exitosamente"
-    data: RutaDiariaResponse 
+    data: RutaDiariaResponse
+
+    class Config:
+        orm_mode = True 

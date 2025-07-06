@@ -2197,6 +2197,7 @@ def update_estado_asistencia(
             id_usuario=paciente_cronograma.id_usuario,
             id_contrato=paciente_cronograma.id_contrato,
             estado_asistencia=paciente_cronograma.estado_asistencia,
+            requiere_transporte=paciente_cronograma.requiere_transporte,
             observaciones=paciente_cronograma.observaciones
         )
         return Response[CronogramaAsistenciaPacienteResponseDTO](
@@ -2311,6 +2312,7 @@ def reagendar_asistencia_paciente(
             id_usuario=nuevo_paciente_cronograma.id_usuario,
             id_contrato=nuevo_paciente_cronograma.id_contrato,
             estado_asistencia=nuevo_paciente_cronograma.estado_asistencia,
+            requiere_transporte=nuevo_paciente_cronograma.requiere_transporte,
             observaciones=nuevo_paciente_cronograma.observaciones
         )
         return Response[CronogramaAsistenciaPacienteResponseDTO](
