@@ -1886,6 +1886,8 @@ def crear_cronograma_asistencia(
                     id_profesional=cronograma_existente.id_profesional,
                     fecha=cronograma_existente.fecha,
                     comentario=cronograma_existente.comentario,
+                    fecha_creacion=cronograma_existente.fecha_creacion,
+                    fecha_actualizacion=cronograma_existente.fecha_actualizacion,
                     pacientes=[]
                 ),
                 status_code=HTTPStatus.OK,
@@ -1910,6 +1912,8 @@ def crear_cronograma_asistencia(
                 id_profesional=nuevo_cronograma.id_profesional,
                 fecha=nuevo_cronograma.fecha,
                 comentario=nuevo_cronograma.comentario,
+                fecha_creacion=nuevo_cronograma.fecha_creacion,
+                fecha_actualizacion=nuevo_cronograma.fecha_actualizacion,
                 pacientes=[]
             ),
             status_code=HTTPStatus.CREATED,
@@ -2084,7 +2088,9 @@ def get_cronogramas_por_rango(
                         nombres=usuario.nombres,
                         apellidos=usuario.apellidos,
                         n_documento=usuario.n_documento,
-                        transporte_info=transporte_info
+                        transporte_info=transporte_info,
+                        fecha_creacion=paciente_agendado.fecha_creacion,
+                        fecha_actualizacion=paciente_agendado.fecha_actualizacion
                     )
                 )
             
@@ -2094,6 +2100,8 @@ def get_cronogramas_por_rango(
                     id_profesional=cronograma.id_profesional,
                     fecha=cronograma.fecha,
                     comentario=cronograma.comentario,
+                    fecha_creacion=cronograma.fecha_creacion,
+                    fecha_actualizacion=cronograma.fecha_actualizacion,
                     pacientes=pacientes_dto
                 )
             )
@@ -2172,7 +2180,9 @@ def get_cronogramas_por_profesional(
                         nombres=usuario.nombres,
                         apellidos=usuario.apellidos,
                         n_documento=usuario.n_documento,
-                        transporte_info=transporte_info
+                        transporte_info=transporte_info,
+                        fecha_creacion=paciente_agendado.fecha_creacion,
+                        fecha_actualizacion=paciente_agendado.fecha_actualizacion
                     )
                 )
             
@@ -2182,6 +2192,8 @@ def get_cronogramas_por_profesional(
                     id_profesional=cronograma.id_profesional,
                     fecha=cronograma.fecha,
                     comentario=cronograma.comentario,
+                    fecha_creacion=cronograma.fecha_creacion,
+                    fecha_actualizacion=cronograma.fecha_actualizacion,
                     pacientes=pacientes_dto
                 )
             )
@@ -2271,7 +2283,9 @@ def update_estado_asistencia(
             id_contrato=paciente_cronograma.id_contrato,
             estado_asistencia=paciente_cronograma.estado_asistencia,
             requiere_transporte=paciente_cronograma.requiere_transporte,
-            observaciones=paciente_cronograma.observaciones
+            observaciones=paciente_cronograma.observaciones,
+            fecha_creacion=paciente_cronograma.fecha_creacion,
+            fecha_actualizacion=paciente_cronograma.fecha_actualizacion
         )
         return Response[CronogramaAsistenciaPacienteResponseDTO](
             data=response_dto,
@@ -2386,7 +2400,9 @@ def reagendar_asistencia_paciente(
             id_contrato=nuevo_paciente_cronograma.id_contrato,
             estado_asistencia=nuevo_paciente_cronograma.estado_asistencia,
             requiere_transporte=nuevo_paciente_cronograma.requiere_transporte,
-            observaciones=nuevo_paciente_cronograma.observaciones
+            observaciones=nuevo_paciente_cronograma.observaciones,
+            fecha_creacion=nuevo_paciente_cronograma.fecha_creacion,
+            fecha_actualizacion=nuevo_paciente_cronograma.fecha_actualizacion
         )
         return Response[CronogramaAsistenciaPacienteResponseDTO](
             data=response_dto,

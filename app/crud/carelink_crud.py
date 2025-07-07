@@ -4,6 +4,7 @@ from app.dto.v1.response.contracts import ContratoResponseDTO, ServicioContratoD
 from app.exceptions.exceptions_classes import EntityNotFoundError
 from app.models.activities import ActividadesGrupales, TipoActividad
 from app.models.authorized_users import AuthorizedUsers
+from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes, EstadoAsistencia
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.clinical_evolutions import EvolucionesClinicas
 from app.models.contracts import (
@@ -22,6 +23,7 @@ from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.professional import Profesionales
 from app.models.rates import TarifasServicioPorAnio
+from app.models.transporte import CronogramaTransporte, EstadoTransporte
 from app.models.user import User
 from app.models.vaccines import VacunasPorUsuario
 from boto3 import client
@@ -1010,3 +1012,300 @@ class CareLinkCrud:
             self.__s3_client.delete_object(Bucket=bucket_name, Key=object_name)
         except NoCredentialsError:
             raise Exception("AWS credentials not available")
+
+    # ==================== MÉTODOS DE CRONOGRAMA DE ASISTENCIA ====================
+    
+    def create_cronograma_asistencia(self, cronograma_data) -> CronogramaAsistencia:
+        """Crear un nuevo cronograma de asistencia"""
+        try:
+            cronograma = CronogramaAsistencia(**cronograma_data.dict())
+            self.__carelink_session.add(cronograma)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(cronograma)
+            return cronograma
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al crear cronograma de asistencia: {str(e)}"
+            )
+
+    def add_paciente_to_cronograma(self, paciente_data) -> CronogramaAsistenciaPacientes:
+        """Agregar un paciente a un cronograma de asistencia"""
+        try:
+            # Verificar que el cronograma existe
+            cronograma = self._get_cronograma_by_id(paciente_data.id_cronograma)
+            
+            # Verificar que el usuario existe
+            usuario = self._get_user_by_id(paciente_data.id_usuario)
+            
+            # Verificar que no haya doble reserva para el mismo paciente en la misma fecha
+            existing_booking = self.__carelink_session.query(CronogramaAsistenciaPacientes).join(
+                CronogramaAsistencia
+            ).filter(
+                CronogramaAsistenciaPacientes.id_usuario == paciente_data.id_usuario,
+                CronogramaAsistencia.fecha == cronograma.fecha
+            ).first()
+            
+            if existing_booking:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"El paciente ya tiene una cita agendada para la fecha {cronograma.fecha}"
+                )
+            
+            paciente = CronogramaAsistenciaPacientes(**paciente_data.dict())
+            self.__carelink_session.add(paciente)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(paciente)
+            return paciente
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al agregar paciente al cronograma: {str(e)}"
+            )
+
+    def update_estado_asistencia(self, id_cronograma_paciente: int, estado_data) -> CronogramaAsistenciaPacientes:
+        """Actualizar el estado de asistencia de un paciente"""
+        try:
+            paciente = self._get_cronograma_paciente_by_id(id_cronograma_paciente)
+            
+            # Actualizar estado
+            paciente.estado_asistencia = estado_data.estado_asistencia
+            if estado_data.observaciones:
+                paciente.observaciones = estado_data.observaciones
+            
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(paciente)
+            return paciente
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al actualizar estado de asistencia: {str(e)}"
+            )
+
+    def reagendar_paciente(self, id_cronograma_paciente: int, estado_data) -> CronogramaAsistenciaPacientes:
+        """Reagendar un paciente a una nueva fecha"""
+        try:
+            paciente = self._get_cronograma_paciente_by_id(id_cronograma_paciente)
+            
+            # Verificar que el paciente esté en estado PENDIENTE
+            if paciente.estado_asistencia != EstadoAsistencia.PENDIENTE:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Solo se pueden reagendar pacientes con estado PENDIENTE"
+                )
+            
+            # Buscar o crear un cronograma para la nueva fecha
+            nuevo_cronograma = self.__carelink_session.query(CronogramaAsistencia).filter(
+                CronogramaAsistencia.fecha == estado_data.nueva_fecha,
+                CronogramaAsistencia.id_profesional == paciente.cronograma.id_profesional
+            ).first()
+            
+            if not nuevo_cronograma:
+                # Crear nuevo cronograma para la fecha
+                nuevo_cronograma = CronogramaAsistencia(
+                    id_profesional=paciente.cronograma.id_profesional,
+                    fecha=estado_data.nueva_fecha,
+                    comentario=f"Reagendamiento desde {paciente.cronograma.fecha}"
+                )
+                self.__carelink_session.add(nuevo_cronograma)
+                self.__carelink_session.flush()
+            
+            # Crear nuevo registro de paciente en el nuevo cronograma
+            nuevo_paciente = CronogramaAsistenciaPacientes(
+                id_cronograma=nuevo_cronograma.id_cronograma,
+                id_usuario=paciente.id_usuario,
+                id_contrato=paciente.id_contrato,
+                estado_asistencia=EstadoAsistencia.PENDIENTE,
+                requiere_transporte=paciente.requiere_transporte,
+                observaciones=f"Reagendado desde {paciente.cronograma.fecha}. {estado_data.observaciones or ''}"
+            )
+            
+            # Marcar el paciente original como reagendado
+            paciente.estado_asistencia = EstadoAsistencia.REAGENDADO
+            paciente.observaciones = f"Reagendado a {estado_data.nueva_fecha}. {estado_data.observaciones or ''}"
+            
+            self.__carelink_session.add(nuevo_paciente)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(nuevo_paciente)
+            return nuevo_paciente
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al reagendar paciente: {str(e)}"
+            )
+
+    def get_cronogramas_por_rango(self, fecha_inicio: str, fecha_fin: str) -> List[CronogramaAsistencia]:
+        """Obtener cronogramas por rango de fechas"""
+        try:
+            cronogramas = self.__carelink_session.query(CronogramaAsistencia).filter(
+                CronogramaAsistencia.fecha >= fecha_inicio,
+                CronogramaAsistencia.fecha <= fecha_fin
+            ).order_by(CronogramaAsistencia.fecha.asc()).all()
+            
+            return cronogramas
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al obtener cronogramas: {str(e)}"
+            )
+
+    def get_cronogramas_por_profesional(self, id_profesional: int) -> List[CronogramaAsistencia]:
+        """Obtener cronogramas por profesional"""
+        try:
+            # Verificar que el profesional existe
+            self._get_professional_by_id(id_profesional)
+            
+            cronogramas = self.__carelink_session.query(CronogramaAsistencia).filter(
+                CronogramaAsistencia.id_profesional == id_profesional
+            ).order_by(CronogramaAsistencia.fecha.asc()).all()
+            
+            return cronogramas
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al obtener cronogramas del profesional: {str(e)}"
+            )
+
+    def _get_cronograma_by_id(self, id_cronograma: int) -> CronogramaAsistencia:
+        """Obtener cronograma por ID"""
+        cronograma = self.__carelink_session.query(CronogramaAsistencia).filter(
+            CronogramaAsistencia.id_cronograma == id_cronograma
+        ).first()
+        
+        if not cronograma:
+            raise EntityNotFoundError(f"Cronograma con ID {id_cronograma} no encontrado")
+        
+        return cronograma
+
+    def _get_cronograma_paciente_by_id(self, id_cronograma_paciente: int) -> CronogramaAsistenciaPacientes:
+        """Obtener paciente de cronograma por ID"""
+        paciente = self.__carelink_session.query(CronogramaAsistenciaPacientes).filter(
+            CronogramaAsistenciaPacientes.id_cronograma_paciente == id_cronograma_paciente
+        ).first()
+        
+        if not paciente:
+            raise EntityNotFoundError(f"Paciente de cronograma con ID {id_cronograma_paciente} no encontrado")
+        
+        return paciente
+
+    # ==================== MÉTODOS DE TRANSPORTE ====================
+    
+    def create_transporte(self, transporte_data) -> CronogramaTransporte:
+        """Crear un nuevo registro de transporte"""
+        try:
+            # Verificar que el paciente del cronograma existe
+            self._get_cronograma_paciente_by_id(transporte_data.id_cronograma_paciente)
+            
+            transporte = CronogramaTransporte(**transporte_data.dict())
+            self.__carelink_session.add(transporte)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(transporte)
+            return transporte
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al crear transporte: {str(e)}"
+            )
+
+    def update_transporte(self, id_transporte: int, transporte_data) -> CronogramaTransporte:
+        """Actualizar un registro de transporte"""
+        try:
+            transporte = self._get_transporte_by_id(id_transporte)
+            
+            for key, value in transporte_data.dict(exclude_unset=True).items():
+                if hasattr(transporte, key):
+                    setattr(transporte, key, value)
+            
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(transporte)
+            return transporte
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al actualizar transporte: {str(e)}"
+            )
+
+    def delete_transporte(self, id_transporte: int):
+        """Eliminar un registro de transporte"""
+        try:
+            transporte = self._get_transporte_by_id(id_transporte)
+            self.__carelink_session.delete(transporte)
+            self.__carelink_session.commit()
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al eliminar transporte: {str(e)}"
+            )
+
+    def get_ruta_diaria(self, fecha: str) -> List[dict]:
+        """Obtener ruta de transporte para una fecha específica"""
+        try:
+            rutas = self.__carelink_session.query(CronogramaTransporte).join(
+                CronogramaAsistenciaPacientes
+            ).join(
+                CronogramaAsistencia
+            ).join(
+                User
+            ).filter(
+                CronogramaAsistencia.fecha == fecha
+            ).all()
+            
+            return [
+                {
+                    "id_transporte": ruta.id_transporte,
+                    "id_cronograma_paciente": ruta.id_cronograma_paciente,
+                    "nombres": ruta.cronograma_paciente.usuario.nombres,
+                    "apellidos": ruta.cronograma_paciente.usuario.apellidos,
+                    "n_documento": ruta.cronograma_paciente.usuario.n_documento,
+                    "direccion_recogida": ruta.direccion_recogida,
+                    "direccion_entrega": ruta.direccion_entrega,
+                    "hora_recogida": ruta.hora_recogida,
+                    "hora_entrega": ruta.hora_entrega,
+                    "estado": ruta.estado,
+                    "observaciones": ruta.observaciones
+                }
+                for ruta in rutas
+            ]
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al obtener ruta diaria: {str(e)}"
+            )
+
+    def get_transporte_paciente(self, id_cronograma_paciente: int) -> CronogramaTransporte:
+        """Obtener transporte de un paciente específico"""
+        try:
+            # Verificar que el paciente existe
+            self._get_cronograma_paciente_by_id(id_cronograma_paciente)
+            
+            transporte = self.__carelink_session.query(CronogramaTransporte).filter(
+                CronogramaTransporte.id_cronograma_paciente == id_cronograma_paciente
+            ).first()
+            
+            if not transporte:
+                raise EntityNotFoundError(f"No se encontró transporte para el paciente {id_cronograma_paciente}")
+            
+            return transporte
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al obtener transporte del paciente: {str(e)}"
+            )
+
+    def _get_transporte_by_id(self, id_transporte: int) -> CronogramaTransporte:
+        """Obtener transporte por ID"""
+        transporte = self.__carelink_session.query(CronogramaTransporte).filter(
+            CronogramaTransporte.id_transporte == id_transporte
+        ).first()
+        
+        if not transporte:
+            raise EntityNotFoundError(f"Transporte con ID {id_transporte} no encontrado")
+        
+        return transporte
