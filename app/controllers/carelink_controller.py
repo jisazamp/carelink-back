@@ -1807,6 +1807,98 @@ def delete_factura(factura_id: int, db: Session = Depends(get_carelink_db)):
     return {"message": "Factura eliminada correctamente"}
 
 
+@router.patch("/facturas/{factura_id}", response_model=Response[FacturaOut])
+def update_factura(
+    factura_id: int,
+    factura_data: dict,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[FacturaOut]:
+    """
+    Actualiza una factura existente
+    """
+    try:
+        factura = db.query(Facturas).filter(Facturas.id_factura == factura_id).first()
+        if not factura:
+            raise HTTPException(status_code=404, detail="Factura no encontrada")
+
+        # Actualizar campos permitidos
+        if 'fecha_emision' in factura_data:
+            factura.fecha_emision = factura_data['fecha_emision']
+        if 'fecha_vencimiento' in factura_data:
+            factura.fecha_vencimiento = factura_data['fecha_vencimiento']
+        if 'total_factura' in factura_data:
+            factura.total_factura = factura_data['total_factura']
+        if 'subtotal' in factura_data:
+            factura.subtotal = factura_data['subtotal']
+        if 'impuestos' in factura_data:
+            factura.impuestos = factura_data['impuestos']
+        if 'descuentos' in factura_data:
+            factura.descuentos = factura_data['descuentos']
+        if 'estado_factura' in factura_data:
+            factura.estado_factura = factura_data['estado_factura']
+        if 'observaciones' in factura_data:
+            factura.observaciones = factura_data['observaciones']
+
+        db.commit()
+        db.refresh(factura)
+
+        factura_response = FacturaOut(
+            id_factura=factura.id_factura,
+            id_contrato=factura.id_contrato,
+            fecha_emision=factura.fecha_emision,
+            total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
+        )
+
+        return Response[FacturaOut](
+            data=factura_response,
+            status_code=HTTPStatus.OK,
+            message="Factura actualizada exitosamente",
+            error=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al actualizar factura: {str(e)}"
+        )
+
+
+@router.get("/facturas", response_model=Response[List[FacturaOut]])
+def get_all_facturas(
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[FacturaOut]]:
+    """
+    Obtiene todas las facturas del sistema
+    """
+    try:
+        facturas = db.query(Facturas).all()
+        facturas_response = [
+            FacturaOut(
+                id_factura=factura.id_factura,
+                id_contrato=factura.id_contrato,
+                fecha_emision=factura.fecha_emision,
+                total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
+            )
+            for factura in facturas
+        ]
+        
+        return Response[List[FacturaOut]](
+            data=facturas_response,
+            status_code=HTTPStatus.OK,
+            message="Facturas obtenidas exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener facturas: {str(e)}"
+        )
+
+
 def get_facturas_by_contrato(db: Session, contrato_id: int):
     facturas = db.query(Facturas).filter(Facturas.id_contrato == contrato_id).all()
     if not facturas:
