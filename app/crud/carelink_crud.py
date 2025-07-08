@@ -577,11 +577,8 @@ class CareLinkCrud:
                         status_code=400, 
                         detail="Solo se permite un pago total por factura"
                     )
-                if float(payment_data.valor) != float(bill.total_factura):
-                    raise HTTPException(
-                        status_code=400, 
-                        detail="El valor del pago total debe ser igual al total de la factura"
-                    )
+                # Permitir pagos parciales - no validar que sea igual al total
+                # El pago total puede ser menor al total de la factura
 
             # Validar que el valor del pago no exceda el total de la factura
             total_pagado = self.__carelink_session.query(Pagos).filter(
