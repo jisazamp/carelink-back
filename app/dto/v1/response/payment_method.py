@@ -4,7 +4,15 @@ from pydantic import BaseModel
 
 class PaymentMethodResponseDTO(BaseModel):
     id_metodo_pago: int
-    nombre: str | None
+    nombre: str
+
+    class Config:
+        orm_mode = True
+
+
+class PaymentTypeResponseDTO(BaseModel):
+    id_tipo_pago: int
+    nombre: str
 
     class Config:
         orm_mode = True

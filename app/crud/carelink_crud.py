@@ -10,10 +10,12 @@ from app.models.clinical_evolutions import EvolucionesClinicas
 from app.models.contracts import (
     Contratos,
     Facturas,
+    DetalleFactura,
     FechasServicio,
     MetodoPago,
     Pagos,
     ServiciosPorContrato,
+    TipoPago,
 )
 from app.models.family_member import FamilyMember
 from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
@@ -35,6 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional, Tuple
+from sqlalchemy.sql import func
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 INVALID_CHARS = ["#", "@", "$", "%", " ", "&", "|", "(", ")", "-", "+"]
@@ -525,16 +528,77 @@ class CareLinkCrud:
             return user
         return None
 
+    def update_factura_status(self, factura_id: int):
+        factura = self.get_bill_by_id(factura_id)
+        pagos = self.__carelink_session.query(Pagos).filter(Pagos.id_factura == factura_id).all()
+        total_pagado = sum([float(p.valor) for p in pagos])
+        if total_pagado >= float(factura.total_factura):
+            factura.estado_factura = 'PAGADA'
+        else:
+            factura.estado_factura = 'PENDIENTE'
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(factura)
+
     def create_payment(self, payment_data: Pagos) -> Pagos:
         try:
+            # Validar que la factura existe
             bill = self.get_bill_by_id(payment_data.id_factura)
             if not bill:
                 raise EntityNotFoundError("Factura no encontrada")
 
+            # Validar que el método de pago existe
+            payment_method = self.__carelink_session.query(MetodoPago).filter(
+                MetodoPago.id_metodo_pago == payment_data.id_metodo_pago
+            ).first()
+            if not payment_method:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Método de pago con ID {payment_data.id_metodo_pago} no existe"
+                )
+
+            # Validar que el tipo de pago existe
+            payment_type = self.__carelink_session.query(TipoPago).filter(
+                TipoPago.id_tipo_pago == payment_data.id_tipo_pago
+            ).first()
+            if not payment_type:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Tipo de pago con ID {payment_data.id_tipo_pago} no existe"
+                )
+
+            # Validar tipo de pago total: solo un pago permitido
+            tipo_pago = payment_data.id_tipo_pago
+            if tipo_pago == 1:  # 1 = Total
+                pagos_existentes = self.__carelink_session.query(Pagos).filter(
+                    Pagos.id_factura == payment_data.id_factura
+                ).count()
+                if pagos_existentes > 0:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="Solo se permite un pago total por factura"
+                    )
+                if float(payment_data.valor) != float(bill.total_factura):
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="El valor del pago total debe ser igual al total de la factura"
+                    )
+
+            # Validar que el valor del pago no exceda el total de la factura
+            total_pagado = self.__carelink_session.query(Pagos).filter(
+                Pagos.id_factura == payment_data.id_factura
+            ).with_entities(func.sum(Pagos.valor)).scalar() or 0
+            
+            if float(total_pagado) + float(payment_data.valor) > float(bill.total_factura):
+                raise HTTPException(
+                    status_code=400,
+                    detail="El valor del pago excede el total pendiente de la factura"
+                )
+
+            # Crear el pago
             payment = Pagos(
                 id_factura=payment_data.id_factura,
                 id_metodo_pago=payment_data.id_metodo_pago,
-                id_tipo_pago=1,
+                id_tipo_pago=payment_data.id_tipo_pago,
                 fecha_pago=payment_data.fecha_pago,
                 valor=payment_data.valor,
             )
@@ -543,12 +607,20 @@ class CareLinkCrud:
             self.__carelink_session.commit()
             self.__carelink_session.refresh(payment)
 
+            # Actualizar estado de la factura
+            self.update_factura_status(payment.id_factura)
+
             return payment
 
+        except HTTPException:
+            # Re-lanzar HTTPExceptions para mantener el status code
+            self.__carelink_session.rollback()
+            raise
         except Exception as e:
             self.__carelink_session.rollback()
             raise HTTPException(
-                status_code=500, detail=f"Error al crear el pago: {str(e)}"
+                status_code=500, 
+                detail=f"Error al crear el pago: {str(e)}"
             )
 
     def create_user(self, user_data: AuthorizedUsers) -> AuthorizedUsers:
@@ -585,6 +657,10 @@ class CareLinkCrud:
     def _get_payment_methods(self) -> list[MetodoPago]:
         payment_methods = self.__carelink_session.query(MetodoPago).all()
         return payment_methods
+
+    def _get_payment_types(self) -> list[TipoPago]:
+        payment_types = self.__carelink_session.query(TipoPago).all()
+        return payment_types
 
     def get_bill_by_id(self, bill_id: int) -> Facturas:
         bill = (
@@ -647,41 +723,19 @@ class CareLinkCrud:
         self.__carelink_session.add(bill)
         self.__carelink_session.commit()
         self.__carelink_session.refresh(bill)
+        
+        # Generar numero_factura basado en id_factura (relleno de ceros a la izquierda)
+        numero_factura = str(bill.id_factura).zfill(4)
+        bill.numero_factura = numero_factura
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(bill)
+        
         return bill
 
-    def _add_contract_services(
-        self, contract_data: ContratoCreateDTO, contract: Contratos
-    ) -> ServicioContratoDTO | None:
-        servicio_dto = None
-
-        for servicio in contract_data.servicios:
-            servicio_contratado = ServiciosPorContrato(
-                id_contrato=contract.id_contrato,
-                id_servicio=servicio.id_servicio,
-                fecha=servicio.fecha,
-                descripcion=servicio.descripcion,
-                precio_por_dia=servicio.precio_por_dia,
-            )
-            self.__carelink_session.add(servicio_contratado)
-            self.__carelink_session.commit()
-            self.__carelink_session.refresh(servicio_contratado)
-
-            for f in servicio.fechas_servicio:
-                fecha_servicio = FechasServicio(
-                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
-                    fecha=f.fecha,
-                )
-                self.__carelink_session.add(fecha_servicio)
-
-            self.__carelink_session.commit()
-            self.__carelink_session.refresh(servicio_contratado)
-
-            if servicio_dto is None:
-                servicio_dto = ServicioContratoDTO.from_orm(servicio_contratado)
-
-        return servicio_dto
-
-    def create_contract(self, contract_data: ContratoCreateDTO) -> Contratos:
+    def create_contract(self, contract_data: ContratoCreateDTO) -> dict:
+        """
+        Crea un contrato y los servicios asociados, retornando el contrato y los IDs de ServiciosPorContrato generados.
+        """
         try:
             contrato = Contratos(
                 id_usuario=contract_data.id_usuario,
@@ -693,8 +747,34 @@ class CareLinkCrud:
             self.__carelink_session.add(contrato)
             self.__carelink_session.commit()
             self.__carelink_session.refresh(contrato)
-            self._add_contract_services(contract_data, contrato)
-            return contrato
+            # Insertar servicios y recolectar IDs
+            servicios_ids = []
+            for servicio in contract_data.servicios:
+                servicio_contratado = ServiciosPorContrato(
+                    id_contrato=contrato.id_contrato,
+                    id_servicio=servicio.id_servicio,
+                    fecha=servicio.fecha,
+                    descripcion=servicio.descripcion,
+                    precio_por_dia=servicio.precio_por_dia,
+                )
+                self.__carelink_session.add(servicio_contratado)
+                self.__carelink_session.commit()
+                self.__carelink_session.refresh(servicio_contratado)
+                servicios_ids.append({
+                    'id_servicio_contratado': servicio_contratado.id_servicio_contratado,
+                    'id_servicio': servicio_contratado.id_servicio
+                })
+                for f in servicio.fechas_servicio:
+                    fecha_servicio = FechasServicio(
+                        id_servicio_contratado=servicio_contratado.id_servicio_contratado,
+                        fecha=f.fecha,
+                    )
+                    self.__carelink_session.add(fecha_servicio)
+                self.__carelink_session.commit()
+            return {
+                'contrato': contrato,
+                'servicios_por_contrato': servicios_ids
+            }
         except Exception as e:
             self.__carelink_session.rollback()
             raise HTTPException(
@@ -1309,3 +1389,68 @@ class CareLinkCrud:
             raise EntityNotFoundError(f"Transporte con ID {id_transporte} no encontrado")
         
         return transporte
+
+    def create_factura(self, factura_data):
+        # 1. Validar que no exista ya una factura para el contrato
+        existing = self.__carelink_session.query(Facturas).filter(
+            Facturas.id_contrato == factura_data['id_contrato']
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Ya existe una factura para este contrato")
+
+        # 2. Calcular el total de la factura
+        subtotal = factura_data.get('subtotal', 0)
+        impuestos = factura_data.get('impuestos', 0)
+        descuentos = factura_data.get('descuentos', 0)
+        total_factura = subtotal + impuestos - descuentos
+
+        # 3. Crear la factura SIN numero_factura
+        factura = Facturas(
+            id_contrato=factura_data['id_contrato'],
+            fecha_emision=factura_data['fecha_emision'],
+            fecha_vencimiento=factura_data.get('fecha_vencimiento'),
+            subtotal=subtotal,
+            impuestos=impuestos,
+            descuentos=descuentos,
+            total_factura=total_factura,
+            estado_factura='PENDIENTE',
+            observaciones=factura_data.get('observaciones', None)
+        )
+        self.__carelink_session.add(factura)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(factura)
+
+        # 4. Generar numero_factura basado en id_factura (relleno de ceros a la izquierda)
+        numero_factura = str(factura.id_factura).zfill(4)
+        factura.numero_factura = numero_factura
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(factura)
+
+        # 5. Asociar detalles (si existen)
+        for detalle in factura_data.get('detalles', []):
+            detalle_factura = DetalleFactura(
+                id_factura=factura.id_factura,
+                id_servicio_contratado=detalle['id_servicio_contratado'],
+                cantidad=detalle['cantidad'],
+                valor_unitario=detalle['valor_unitario'],
+                subtotal_linea=detalle.get('subtotal_linea', detalle['cantidad']*detalle['valor_unitario']),
+                impuestos_linea=detalle.get('impuestos_linea', 0),
+                descuentos_linea=detalle.get('descuentos_linea', 0),
+                descripcion_servicio=detalle.get('descripcion_servicio', None)
+            )
+            self.__carelink_session.add(detalle_factura)
+
+        # 6. Asociar pagos
+        for pago in factura_data.get('pagos', []):
+            pago_obj = Pagos(
+                id_factura=factura.id_factura,
+                id_metodo_pago=pago['id_metodo_pago'],
+                id_tipo_pago=pago['id_tipo_pago'],
+                fecha_pago=pago['fecha_pago'],
+                valor=pago['valor']
+            )
+            self.__carelink_session.add(pago_obj)
+
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(factura)
+        return factura

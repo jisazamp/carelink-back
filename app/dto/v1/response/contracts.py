@@ -38,6 +38,7 @@ class ContratoResponseDTO(BaseModel):
 
 class FacturaOut(BaseModel):
     id_factura: int
+    numero_factura: str | None
     id_contrato: int | None
     fecha_emision: date
     total_factura: float

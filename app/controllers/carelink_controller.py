@@ -55,6 +55,7 @@ from app.dto.v1.response.medicines_per_user import (
 from app.dto.v1.response.payment_method import (
     PaymentMethodResponseDTO,
     PaymentResponseDTO,
+    PaymentTypeResponseDTO,
 )
 from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
@@ -82,6 +83,7 @@ from app.models.contracts import (
     ServiciosPorContrato,
     FechasServicio,
     TipoPago,
+    EstadoFactura,
 )
 from app.dto.v1.request.contracts import (
     ContratoCreateDTO,
@@ -134,6 +136,7 @@ from typing import List, Optional
 from datetime import datetime, date, time
 import json
 from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes
+from app.exceptions.exceptions_classes import EntityNotFoundError
 
 
 token_auth_scheme = HTTPBearer()
@@ -551,6 +554,22 @@ async def get_payment_methods(
     )
 
 
+@router.get("/tipos_pago", response_model=Response[List[PaymentTypeResponseDTO]])
+async def get_payment_types(
+    crud: CareLinkCrud = Depends(get_crud),
+) -> Response[List[PaymentTypeResponseDTO]]:
+    payment_types = crud._get_payment_types()
+    payment_types_response = [
+        PaymentTypeResponseDTO.from_orm(type_pago) for type_pago in payment_types
+    ]
+    return Response[List[PaymentTypeResponseDTO]](
+        data=payment_types_response,
+        status_code=HTTPStatus.OK,
+        error=None,
+        message="Tipos de pago retornados con éxito",
+    )
+
+
 @router.get(
     "/activities-upcoming",
     status_code=200,
@@ -576,21 +595,61 @@ async def register_payment(
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[PaymentResponseDTO]:
-    payment_data = Pagos(
-        id_factura=payment.id_factura,
-        id_metodo_pago=payment.id_metodo_pago,
-        id_tipo_pago=1,
-        fecha_pago=payment.fecha_pago,
-        valor=payment.valor,
-    )
-    payment_response = crud.create_payment(payment_data)
+    try:
+        # Validar que la factura existe
+        try:
+            bill = crud.get_bill_by_id(payment.id_factura)
+        except EntityNotFoundError:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"La factura con ID {payment.id_factura} no existe"
+            )
 
-    return Response[PaymentResponseDTO](
-        data=PaymentResponseDTO.from_orm(payment_response),
-        error=None,
-        message="Pago creado de manera exitosa",
-        status_code=HTTPStatus.CREATED,
-    )
+        # Validar que el método de pago existe
+        payment_methods = crud._get_payment_methods()
+        if not any(pm.id_metodo_pago == payment.id_metodo_pago for pm in payment_methods):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El método de pago con ID {payment.id_metodo_pago} no existe"
+            )
+
+        # Validar que el tipo de pago existe
+        payment_types = crud._get_payment_types()
+        if not any(pt.id_tipo_pago == payment.id_tipo_pago for pt in payment_types):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El tipo de pago con ID {payment.id_tipo_pago} no existe"
+            )
+
+        # Crear el objeto de pago
+        payment_data = Pagos(
+            id_factura=payment.id_factura,
+            id_metodo_pago=payment.id_metodo_pago,
+            id_tipo_pago=payment.id_tipo_pago,
+            fecha_pago=payment.fecha_pago,
+            valor=payment.valor,
+        )
+
+        # Crear el pago usando el CRUD
+        payment_response = crud.create_payment(payment_data)
+
+        return Response[PaymentResponseDTO](
+            data=PaymentResponseDTO.from_orm(payment_response),
+            error=None,
+            message="Pago creado de manera exitosa",
+            status_code=HTTPStatus.CREATED,
+        )
+
+    except HTTPException:
+        # Re-lanzar HTTPExceptions para mantener el status code correcto
+        raise
+    except Exception as e:
+        # Log del error para debugging
+        print(f"Error inesperado en register_payment: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
 
 
 @router.post("/calcular/factura", response_model=Response[float])
@@ -1236,59 +1295,71 @@ async def delete_activity(
     )
 
 
+@router.get("/tarifas-servicio/{id_servicio}/{anio}")
+def get_tarifa_servicio(
+    id_servicio: int,
+    anio: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user)
+):
+    """Obtener la tarifa de un servicio para un año específico"""
+    try:
+        tarifa = crud._get_service_rate(id_servicio, anio)
+        return Response[dict](
+            data={
+                "id_servicio": tarifa.id_servicio,
+                "anio": tarifa.anio,
+                "precio_por_dia": float(tarifa.precio_por_dia)
+            },
+            message="Tarifa obtenida exitosamente",
+            status_code=HTTPStatus.OK,
+            error=None,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Tarifa no encontrada para el servicio {id_servicio} en el año {anio}"
+        )
+
+
 @router.post("/contratos/", response_model=Response[ContratoResponseDTO])
 def crear_contrato(
-    data: ContratoCreateDTO, db: Session = Depends(get_carelink_db)
+    data: ContratoCreateDTO, 
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user)
 ) -> Response[ContratoResponseDTO]:
     try:
-        contrato = Contratos(
-            id_usuario=data.id_usuario,
-            tipo_contrato=data.tipo_contrato,
-            fecha_inicio=data.fecha_inicio,
-            fecha_fin=data.fecha_fin,
-            facturar_contrato=data.facturar_contrato,
-        )
-        db.add(contrato)
-        db.commit()
-        db.refresh(contrato)
-
-        # Obtener fechas de tiquetera y transporte
+        # Usar la función CRUD actualizada que retorna contrato y servicios_por_contrato
+        result = crud.create_contract(data)
+        contrato = result['contrato']
+        servicios_por_contrato = result['servicios_por_contrato']
+        
+        # Obtener fechas de tiquetera y transporte para cronogramas
         fechas_tiquetera = set()
         fechas_transporte = set()
         servicios_db = []
-        for servicio in data.servicios:
-            servicio_contratado = ServiciosPorContrato(
-                id_contrato=contrato.id_contrato,
-                id_servicio=servicio.id_servicio,
-                fecha=servicio.fecha,
-                descripcion=servicio.descripcion,
-                precio_por_dia=servicio.precio_por_dia,
-            )
-            db.add(servicio_contratado)
-            db.commit()
-            db.refresh(servicio_contratado)
-            # Guardar fechas del servicio
-            for f in servicio.fechas_servicio:
-                fecha_servicio = FechasServicio(
-                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
-                    fecha=f.fecha,
-                )
-                db.add(fecha_servicio)
-                db.commit()
-                # Clasificar fechas
-                if servicio.id_servicio == 1:
+        
+        # Construir servicios_db para la respuesta usando los datos del CRUD
+        for servicio_contratado in servicios_por_contrato:
+            # Buscar el servicio original en data.servicios para obtener fechas_servicio
+            servicio_original = next(s for s in data.servicios if s.id_servicio == servicio_contratado['id_servicio'])
+            
+            # Clasificar fechas para cronogramas
+            for f in servicio_original.fechas_servicio:
+                if servicio_contratado['id_servicio'] == 1:
                     fechas_tiquetera.add(f.fecha)
-                elif servicio.id_servicio == 2:
+                elif servicio_contratado['id_servicio'] == 2:
                     fechas_transporte.add(f.fecha)
+            
             # Para la respuesta
-            fechas_dto = [FechaServicioDTO(fecha=f.fecha) for f in servicio.fechas_servicio]
+            fechas_dto = [FechaServicioDTO(fecha=f.fecha) for f in servicio_original.fechas_servicio]
             servicios_db.append(
                 ServicioContratoDTO(
-                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
-                    id_servicio=servicio.id_servicio,
-                    fecha=servicio.fecha,
-                    descripcion=servicio.descripcion,
-                    precio_por_dia=servicio.precio_por_dia,
+                    id_servicio_contratado=servicio_contratado['id_servicio_contratado'],
+                    id_servicio=servicio_contratado['id_servicio'],
+                    fecha=servicio_original.fecha,
+                    descripcion=servicio_original.descripcion,
+                    precio_por_dia=servicio_original.precio_por_dia,
                     fechas_servicio=fechas_dto,
                 )
             )
@@ -1300,7 +1371,7 @@ def crear_contrato(
         for fecha in fechas_tiquetera:
             # Buscar si ya existe un cronograma para esta fecha
             cronograma_existente = (
-                db.query(CronogramaAsistencia)
+                crud._CareLinkCrud__carelink_session.query(CronogramaAsistencia)
                 .filter(
                     CronogramaAsistencia.fecha == fecha,
                     CronogramaAsistencia.id_profesional == id_profesional_default
@@ -1311,7 +1382,7 @@ def crear_contrato(
             if cronograma_existente:
                 # Verificar si el paciente ya está agendado para esta fecha
                 paciente_ya_agendado = (
-                    db.query(CronogramaAsistenciaPacientes)
+                    crud._CareLinkCrud__carelink_session.query(CronogramaAsistenciaPacientes)
                     .filter(
                         CronogramaAsistenciaPacientes.id_cronograma == cronograma_existente.id_cronograma,
                         CronogramaAsistenciaPacientes.id_usuario == data.id_usuario
@@ -1320,8 +1391,6 @@ def crear_contrato(
                 )
                 
                 if paciente_ya_agendado:
-                    # Hacer rollback de todo lo que se haya creado hasta ahora
-                    db.rollback()
                     # Formatear la fecha para el mensaje
                     fecha_formateada = fecha.strftime("%d/%m/%Y")
                     raise HTTPException(
@@ -1336,7 +1405,7 @@ def crear_contrato(
         for fecha in fechas_tiquetera:
             # Crear o buscar cronograma de asistencia
             cronograma_existente = (
-                db.query(CronogramaAsistencia)
+                crud._CareLinkCrud__carelink_session.query(CronogramaAsistencia)
                 .filter(
                     CronogramaAsistencia.fecha == fecha,
                     CronogramaAsistencia.id_profesional == id_profesional_default
@@ -1349,9 +1418,9 @@ def crear_contrato(
                     fecha=fecha,
                     comentario=f"Generado automáticamente desde contrato {contrato.id_contrato}"
                 )
-                db.add(cronograma_asistencia)
-                db.commit()
-                db.refresh(cronograma_asistencia)
+                crud._CareLinkCrud__carelink_session.add(cronograma_asistencia)
+                crud._CareLinkCrud__carelink_session.commit()
+                crud._CareLinkCrud__carelink_session.refresh(cronograma_asistencia)
             else:
                 cronograma_asistencia = cronograma_existente
             # Determinar si ese día requiere transporte
@@ -1365,9 +1434,9 @@ def crear_contrato(
                 requiere_transporte=requiere_transporte,
                 observaciones=None
             )
-            db.add(paciente_cronograma)
-            db.commit()
-            db.refresh(paciente_cronograma)
+            crud._CareLinkCrud__carelink_session.add(paciente_cronograma)
+            crud._CareLinkCrud__carelink_session.commit()
+            crud._CareLinkCrud__carelink_session.refresh(paciente_cronograma)
             # Si requiere transporte, crear cronograma_transporte
             if requiere_transporte:
                 cronograma_transporte = CronogramaTransporte(
@@ -1379,13 +1448,10 @@ def crear_contrato(
                     estado="PENDIENTE",
                     observaciones="Generado automáticamente desde contrato"
                 )
-                db.add(cronograma_transporte)
-                db.commit()
+                crud._CareLinkCrud__carelink_session.add(cronograma_transporte)
+                crud._CareLinkCrud__carelink_session.commit()
 
-        db.commit()
-        db.refresh(contrato)
-
-        # Construir respuesta igual que obtener_contrato
+        # Construir respuesta con los datos del CRUD
         return Response[ContratoResponseDTO](
             data=ContratoResponseDTO(
                 id_contrato=contrato.id_contrato,
@@ -1406,7 +1472,6 @@ def crear_contrato(
         # Re-lanzar HTTPException sin modificar
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(
             status_code=500, detail=f"Error al crear contrato: {str(e)}"
         )
@@ -1696,254 +1761,24 @@ def eliminar_pago(id_pago: int, db: Session = Depends(get_carelink_db)):
     return {"message": "Pago eliminado correctamente"}
 
 
-@router.post("/facturas/")
-def create_factura(factura_data: FacturaCreate, db: Session = Depends(get_carelink_db)):
-    contrato = (
-        db.query(Contratos)
-        .filter(Contratos.id_contrato == factura_data.id_contrato)
-        .first()
-    )
-    if not contrato:
-        raise HTTPException(status_code=404, detail="Contrato no encontrado")
-
-    factura = Facturas(
-        id_contrato=factura_data.id_contrato,
-        fecha_emision=factura_data.fecha_emision,
-        fecha_vencimiento=factura_data.fecha_vencimiento,
-        total=factura_data.total,
-    )
-    db.add(factura)
-    db.flush()
-
-    for pago_data in factura_data.pagos:
-        if (
-            not db.query(MetodoPago)
-            .filter_by(id_metodo_pago=pago_data.id_metodo_pago)
-            .first()
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Método de pago {pago_data.id_metodo_pago} no existe",
-            )
-        if (
-            not db.query(TipoPago)
-            .filter_by(id_tipo_pago=pago_data.id_tipo_pago)
-            .first()
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Tipo de pago {pago_data.id_tipo_pago} no existe",
-            )
-
-        pago = Pagos(
-            id_factura=factura.id_factura,
-            id_metodo_pago=pago_data.id_metodo_pago,
-            id_tipo_pago=pago_data.id_tipo_pago,
-            fecha_pago=pago_data.fecha_pago,
-            valor=pago_data.valor,
-        )
-        db.add(pago)
-
-    db.commit()
-    return {"id_factura": factura.id_factura}
+# ============================================================================
+# ENDPOINTS DE FACTURACIÓN - IMPLEMENTACIÓN COMPLETA
+# ============================================================================
 
 
-@router.post("/facturas/{factura_id}/pagos/")
-def add_pago_to_factura(
-    factura_id: int, pagos: List[PagoCreate], db: Session = Depends(get_carelink_db)
-):
-    factura = db.query(Facturas).filter(Facturas.id_factura == factura_id).first()
-    if not factura:
-        raise HTTPException(status_code=404, detail="Factura no encontrada")
-
-    total_existente = sum(p.valor for p in factura.pagos)
-    total_nuevo = sum(p.valor for p in pagos)
-    if total_existente + total_nuevo > factura.total_factura:
-        raise HTTPException(
-            status_code=400, detail="Los pagos exceden el total de la factura"
-        )
-
-    for pago_data in pagos:
-        if (
-            not db.query(MetodoPago)
-            .filter_by(id_metodo_pago=pago_data.id_metodo_pago)
-            .first()
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Método de pago {pago_data.id_metodo_pago} no existe",
-            )
-        if (
-            not db.query(TipoPago)
-            .filter_by(id_tipo_pago=pago_data.id_tipo_pago)
-            .first()
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Tipo de pago {pago_data.id_tipo_pago} no existe",
-            )
-
-        pago = Pagos(
-            id_factura=factura_id,
-            id_metodo_pago=pago_data.id_metodo_pago,
-            id_tipo_pago=pago_data.id_tipo_pago,
-            fecha_pago=pago_data.fecha_pago,
-            valor=pago_data.valor,
-        )
-        db.add(pago)
-
-    db.commit()
-    return {"message": "Pagos agregados correctamente"}
 
 
-@router.delete("/facturas/{factura_id}")
-def delete_factura(factura_id: int, db: Session = Depends(get_carelink_db)):
-    factura = db.query(Facturas).filter(Facturas.id_factura == factura_id).first()
-    if not factura:
-        raise HTTPException(status_code=404, detail="Factura no encontrada")
-
-    db.delete(factura)
-    db.commit()
-    return {"message": "Factura eliminada correctamente"}
 
 
-@router.patch("/facturas/{factura_id}", response_model=Response[FacturaOut])
-def update_factura(
-    factura_id: int,
-    factura_data: dict,
-    db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
-) -> Response[FacturaOut]:
-    """
-    Actualiza una factura existente
-    """
-    try:
-        factura = db.query(Facturas).filter(Facturas.id_factura == factura_id).first()
-        if not factura:
-            raise HTTPException(status_code=404, detail="Factura no encontrada")
-
-        # Actualizar campos permitidos
-        if 'fecha_emision' in factura_data:
-            factura.fecha_emision = factura_data['fecha_emision']
-        if 'fecha_vencimiento' in factura_data:
-            factura.fecha_vencimiento = factura_data['fecha_vencimiento']
-        if 'total_factura' in factura_data:
-            factura.total_factura = factura_data['total_factura']
-        if 'subtotal' in factura_data:
-            factura.subtotal = factura_data['subtotal']
-        if 'impuestos' in factura_data:
-            factura.impuestos = factura_data['impuestos']
-        if 'descuentos' in factura_data:
-            factura.descuentos = factura_data['descuentos']
-        if 'estado_factura' in factura_data:
-            factura.estado_factura = factura_data['estado_factura']
-        if 'observaciones' in factura_data:
-            factura.observaciones = factura_data['observaciones']
-
-        db.commit()
-        db.refresh(factura)
-
-        factura_response = FacturaOut(
-            id_factura=factura.id_factura,
-            id_contrato=factura.id_contrato,
-            fecha_emision=factura.fecha_emision,
-            total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
-        )
-
-        return Response[FacturaOut](
-            data=factura_response,
-            status_code=HTTPStatus.OK,
-            message="Factura actualizada exitosamente",
-            error=None,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error al actualizar factura: {str(e)}"
-        )
 
 
-@router.get("/facturas", response_model=Response[List[FacturaOut]])
-def get_all_facturas(
-    db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
-) -> Response[List[FacturaOut]]:
-    """
-    Obtiene todas las facturas del sistema
-    """
-    try:
-        facturas = db.query(Facturas).all()
-        facturas_response = [
-            FacturaOut(
-                id_factura=factura.id_factura,
-                id_contrato=factura.id_contrato,
-                fecha_emision=factura.fecha_emision,
-                total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
-            )
-            for factura in facturas
-        ]
-        
-        return Response[List[FacturaOut]](
-            data=facturas_response,
-            status_code=HTTPStatus.OK,
-            message="Facturas obtenidas exitosamente",
-            error=None,
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error al obtener facturas: {str(e)}"
-        )
 
 
-def get_facturas_by_contrato(db: Session, contrato_id: int):
-    facturas = db.query(Facturas).filter(Facturas.id_contrato == contrato_id).all()
-    if not facturas:
-        raise HTTPException(
-            status_code=404, detail=f"No hay facturas para el contrato {contrato_id}"
-        )
-    return facturas
 
 
-@router.get("/contratos/{contrato_id}/facturas", response_model=list[FacturaOut])
-def read_facturas_by_contrato(contrato_id: int, db: Session = Depends(get_carelink_db)):
-    return get_facturas_by_contrato(db, contrato_id)
 
 
-@router.post("/facturas/{contrato_id}", response_model=Response[FacturaOut])
-def create_contract_bill(
-    contrato_id: int, crud: CareLinkCrud = Depends(get_crud)
-) -> Response[FacturaOut]:
-    bill = crud.create_contract_bill(contrato_id)
-    bill_response = FacturaOut(
-        id_factura=bill.id_factura,
-        id_contrato=bill.id_contrato,
-        fecha_emision=bill.fecha_emision,
-        total_factura=bill.total_factura,
-    )
-    return Response[FacturaOut](
-        data=bill_response,
-        status_code=HTTPStatus.CREATED,
-        message="Factura asociada de manera exitosa",
-        error=None,
-    )
 
-
-@router.delete("/contratos/{contrato_id}", response_model=Response[object])
-def delete_contract_by_id(
-    contrato_id: int,
-    crud: CareLinkCrud = Depends(get_crud),
-):
-    crud.delete_contract_by_id(contrato_id)
-    return Response[object](
-        data={},
-        status_code=HTTPStatus.NO_CONTENT,
-        message=f"El contrato {contrato_id} se ha eliminado de manera exitosa",
-        error=None,
-    )
 
 
 # ============================================================================
@@ -2516,3 +2351,572 @@ def reagendar_asistencia_paciente(
 # ============================================================================
 # Todos los endpoints de transporte han sido movidos al controlador específico
 # para evitar conflictos y mantener una mejor organización del código
+
+# ============================================================================
+# ENDPOINTS DE FACTURACIÓN - IMPLEMENTACIÓN COMPLETA
+# ============================================================================
+
+@router.post("/facturas/", response_model=Response[FacturaOut])
+def create_factura(
+    factura_data: FacturaCreate, 
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user)
+) -> Response[FacturaOut]:
+    """
+    Crea una nueva factura con sus pagos asociados
+    
+    Args:
+        factura_data: Datos de la factura incluyendo pagos
+        db: Sesión de base de datos
+        _: Usuario autenticado
+        
+    Returns:
+        Response con la factura creada
+        
+    Raises:
+        HTTPException: Si el contrato no existe o hay errores de validación
+    """
+    try:
+        # Validar que el contrato existe
+        contrato = db.query(Contratos).filter(
+            Contratos.id_contrato == factura_data.id_contrato
+        ).first()
+        
+        if not contrato:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Contrato con ID {factura_data.id_contrato} no encontrado"
+            )
+        
+        # Validar que el contrato esté activo
+        if contrato.estado != "ACTIVO":
+            raise HTTPException(
+                status_code=400,
+                detail=f"El contrato {contrato.id_contrato} no está activo (estado: {contrato.estado})"
+            )
+        
+        # Crear la factura
+        factura = Facturas(
+            id_contrato=factura_data.id_contrato,
+            fecha_emision=factura_data.fecha_emision,
+            fecha_vencimiento=factura_data.fecha_vencimiento,
+            total_factura=factura_data.total,  # Corregido: usar total_factura
+            subtotal=factura_data.total,  # Por defecto igual al total
+            impuestos=0.00,
+            descuentos=0.00,
+            estado_factura=EstadoFactura.PENDIENTE
+        )
+        
+        db.add(factura)
+        db.flush()  # Para obtener el ID de la factura
+        
+        # Procesar pagos si existen
+        total_pagos = 0
+        for pago_data in factura_data.pagos:
+            # Validar método de pago
+            metodo_pago = db.query(MetodoPago).filter(
+                MetodoPago.id_metodo_pago == pago_data.id_metodo_pago
+            ).first()
+            
+            if not metodo_pago:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Método de pago con ID {pago_data.id_metodo_pago} no existe"
+                )
+            
+            # Validar tipo de pago
+            tipo_pago = db.query(TipoPago).filter(
+                TipoPago.id_tipo_pago == pago_data.id_tipo_pago
+            ).first()
+            
+            if not tipo_pago:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tipo de pago con ID {pago_data.id_tipo_pago} no existe"
+                )
+            
+            # Crear el pago
+            pago = Pagos(
+                id_factura=factura.id_factura,
+                id_metodo_pago=pago_data.id_metodo_pago,
+                id_tipo_pago=pago_data.id_tipo_pago,
+                fecha_pago=pago_data.fecha_pago,
+                valor=pago_data.valor
+            )
+            
+            db.add(pago)
+            total_pagos += float(pago_data.valor)
+        
+        # Validar que los pagos no excedan el total de la factura
+        if total_pagos > float(factura_data.total):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El total de pagos ({total_pagos}) excede el total de la factura ({factura_data.total})"
+            )
+        
+        # Actualizar estado de la factura si los pagos cubren el total
+        if total_pagos >= float(factura_data.total):
+            factura.estado_factura = EstadoFactura.PAGADA
+        
+        db.commit()
+        db.refresh(factura)
+        
+        # Crear respuesta
+        factura_response = FacturaOut(
+            id_factura=factura.id_factura,
+            numero_factura=factura.numero_factura,
+            id_contrato=factura.id_contrato,
+            fecha_emision=factura.fecha_emision,
+            total_factura=float(factura.total_factura)
+        )
+        
+        return Response[FacturaOut](
+            data=factura_response,
+            status_code=HTTPStatus.CREATED,
+            message="Factura creada exitosamente",
+            error=None
+        )
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor al crear factura: {str(e)}"
+        )
+
+
+@router.post("/facturas/{factura_id}/pagos/", response_model=Response[dict])
+def add_pago_to_factura(
+    factura_id: int, 
+    pagos: List[PagoCreate], 
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user)
+) -> Response[dict]:
+    """
+    Agrega uno o varios pagos a una factura existente
+    
+    Args:
+        factura_id: ID de la factura
+        pagos: Lista de pagos a agregar
+        db: Sesión de base de datos
+        _: Usuario autenticado
+        
+    Returns:
+        Response con mensaje de confirmación
+        
+    Raises:
+        HTTPException: Si la factura no existe o hay errores de validación
+    """
+    try:
+        # Validar que la factura existe
+        factura = db.query(Facturas).filter(
+            Facturas.id_factura == factura_id
+        ).first()
+        
+        if not factura:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Factura con ID {factura_id} no encontrada"
+            )
+        
+        # Validar que la factura no esté cancelada o anulada
+        if factura.estado_factura in [EstadoFactura.CANCELADA, EstadoFactura.ANULADA]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No se pueden agregar pagos a una factura con estado {factura.estado_factura.value}"
+            )
+        
+        # Calcular total de pagos existentes
+        total_existente = sum(float(p.valor) for p in factura.pagos)
+        total_nuevo = sum(float(p.valor) for p in pagos)
+        total_factura = float(factura.total_factura)
+        
+        # Validar que los nuevos pagos no excedan el total
+        if total_existente + total_nuevo > total_factura:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Los pagos exceden el total de la factura. "
+                       f"Total factura: {total_factura}, "
+                       f"Pagos existentes: {total_existente}, "
+                       f"Nuevos pagos: {total_nuevo}"
+            )
+        
+        # Procesar cada pago
+        for pago_data in pagos:
+            # Validar método de pago
+            metodo_pago = db.query(MetodoPago).filter(
+                MetodoPago.id_metodo_pago == pago_data.id_metodo_pago
+            ).first()
+            
+            if not metodo_pago:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Método de pago con ID {pago_data.id_metodo_pago} no existe"
+                )
+            
+            # Validar tipo de pago
+            tipo_pago = db.query(TipoPago).filter(
+                TipoPago.id_tipo_pago == pago_data.id_tipo_pago
+            ).first()
+            
+            if not tipo_pago:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tipo de pago con ID {pago_data.id_tipo_pago} no existe"
+                )
+            
+            # Crear el pago
+            pago = Pagos(
+                id_factura=factura_id,
+                id_metodo_pago=pago_data.id_metodo_pago,
+                id_tipo_pago=pago_data.id_tipo_pago,
+                fecha_pago=pago_data.fecha_pago,
+                valor=pago_data.valor
+            )
+            
+            db.add(pago)
+        
+        # Actualizar estado de la factura si los pagos cubren el total
+        if total_existente + total_nuevo >= total_factura:
+            factura.estado_factura = EstadoFactura.PAGADA
+        
+        db.commit()
+        
+        return Response[dict](
+            data={"factura_id": factura_id, "pagos_agregados": len(pagos)},
+            status_code=HTTPStatus.OK,
+            message=f"Se agregaron {len(pagos)} pagos a la factura exitosamente",
+            error=None
+        )
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor al agregar pagos: {str(e)}"
+        )
+
+
+@router.delete("/facturas/{factura_id}", response_model=Response[dict])
+def delete_factura(
+    factura_id: int, 
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user)
+) -> Response[dict]:
+    """
+    Elimina una factura y todos sus pagos asociados
+    
+    Args:
+        factura_id: ID de la factura a eliminar
+        db: Sesión de base de datos
+        _: Usuario autenticado
+        
+    Returns:
+        Response con mensaje de confirmación
+        
+    Raises:
+        HTTPException: Si la factura no existe o no se puede eliminar
+    """
+    try:
+        # Validar que la factura existe
+        factura = db.query(Facturas).filter(
+            Facturas.id_factura == factura_id
+        ).first()
+        
+        if not factura:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Factura con ID {factura_id} no encontrada"
+            )
+        
+        # Validar que la factura no esté pagada (opcional, según política de negocio)
+        if factura.estado_factura == EstadoFactura.PAGADA:
+            raise HTTPException(
+                status_code=400,
+                detail="No se puede eliminar una factura que ya ha sido pagada"
+            )
+        
+        # Eliminar la factura (los pagos se eliminan automáticamente por CASCADE)
+        db.delete(factura)
+        db.commit()
+        
+        return Response[dict](
+            data={"factura_id": factura_id},
+            status_code=HTTPStatus.OK,
+            message="Factura eliminada exitosamente",
+            error=None
+        )
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor al eliminar factura: {str(e)}"
+        )
+
+
+@router.patch("/facturas/{factura_id}", response_model=Response[FacturaOut])
+def update_factura(
+    factura_id: int,
+    factura_data: dict,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[FacturaOut]:
+    """
+    Actualiza una factura existente
+    
+    Args:
+        factura_id: ID de la factura a actualizar
+        factura_data: Datos a actualizar
+        db: Sesión de base de datos
+        _: Usuario autenticado
+        
+    Returns:
+        Response con la factura actualizada
+        
+    Raises:
+        HTTPException: Si la factura no existe o hay errores de validación
+    """
+    try:
+        # Validar que la factura existe
+        factura = db.query(Facturas).filter(
+            Facturas.id_factura == factura_id
+        ).first()
+        
+        if not factura:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Factura con ID {factura_id} no encontrada"
+            )
+        
+        # Validar que la factura no esté pagada (para ciertos campos)
+        campos_restringidos = ['total_factura', 'subtotal', 'impuestos', 'descuentos']
+        if factura.estado_factura == EstadoFactura.PAGADA:
+            for campo in campos_restringidos:
+                if campo in factura_data:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"No se puede modificar el campo '{campo}' en una factura pagada"
+                    )
+        
+        # Actualizar campos permitidos
+        campos_permitidos = {
+            'fecha_emision': 'fecha_emision',
+            'fecha_vencimiento': 'fecha_vencimiento',
+            'total_factura': 'total_factura',
+            'subtotal': 'subtotal',
+            'impuestos': 'impuestos',
+            'descuentos': 'descuentos',
+            'estado_factura': 'estado_factura',
+            'observaciones': 'observaciones'
+        }
+        
+        for campo_request, campo_modelo in campos_permitidos.items():
+            if campo_request in factura_data:
+                valor = factura_data[campo_request]
+                
+                # Validaciones específicas
+                if campo_request == 'estado_factura':
+                    try:
+                        valor = EstadoFactura(valor)
+                    except ValueError:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Estado de factura inválido: {valor}. "
+                                   f"Estados válidos: {[e.value for e in EstadoFactura]}"
+                        )
+                
+                setattr(factura, campo_modelo, valor)
+        
+        db.commit()
+        db.refresh(factura)
+        
+        # Crear respuesta
+        factura_response = FacturaOut(
+            id_factura=factura.id_factura,
+            numero_factura=factura.numero_factura,
+            id_contrato=factura.id_contrato,
+            fecha_emision=factura.fecha_emision,
+            total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
+        )
+        
+        return Response[FacturaOut](
+            data=factura_response,
+            status_code=HTTPStatus.OK,
+            message="Factura actualizada exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor al actualizar factura: {str(e)}"
+        )
+
+
+@router.get("/facturas", response_model=Response[List[FacturaOut]])
+def get_all_facturas(
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[FacturaOut]]:
+    """
+    Obtiene todas las facturas del sistema
+    
+    Args:
+        db: Sesión de base de datos
+        _: Usuario autenticado
+        
+    Returns:
+        Response con lista de facturas
+        
+    Raises:
+        HTTPException: Si hay errores internos
+    """
+    try:
+        facturas = db.query(Facturas).order_by(Facturas.fecha_creacion.desc()).all()
+        
+        facturas_response = [
+            FacturaOut(
+                id_factura=factura.id_factura,
+                numero_factura=factura.numero_factura,
+                id_contrato=factura.id_contrato,
+                fecha_emision=factura.fecha_emision,
+                total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
+            )
+            for factura in facturas
+        ]
+        
+        return Response[List[FacturaOut]](
+            data=facturas_response,
+            status_code=HTTPStatus.OK,
+            message=f"Se encontraron {len(facturas_response)} facturas",
+            error=None,
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor al obtener facturas: {str(e)}"
+        )
+
+
+@router.get("/contratos/{contrato_id}/facturas", response_model=Response[List[FacturaOut]])
+def read_facturas_by_contrato(
+    contrato_id: int, 
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user)
+) -> Response[List[FacturaOut]]:
+    """
+    Obtiene todas las facturas asociadas a un contrato específico
+    
+    Args:
+        contrato_id: ID del contrato
+        db: Sesión de base de datos
+        _: Usuario autenticado
+        
+    Returns:
+        Response con lista de facturas del contrato
+        
+    Raises:
+        HTTPException: Si el contrato no existe o hay errores internos
+    """
+    try:
+        # Validar que el contrato existe
+        contrato = db.query(Contratos).filter(
+            Contratos.id_contrato == contrato_id
+        ).first()
+        
+        if not contrato:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Contrato con ID {contrato_id} no encontrado"
+            )
+        
+        # Obtener facturas del contrato
+        facturas = db.query(Facturas).filter(
+            Facturas.id_contrato == contrato_id
+        ).order_by(Facturas.fecha_creacion.desc()).all()
+        
+        facturas_response = [
+            FacturaOut(
+                id_factura=factura.id_factura,
+                numero_factura=factura.numero_factura,
+                id_contrato=factura.id_contrato,
+                fecha_emision=factura.fecha_emision,
+                total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
+            )
+            for factura in facturas
+        ]
+        
+        return Response[List[FacturaOut]](
+            data=facturas_response,
+            status_code=HTTPStatus.OK,
+            message=f"Se encontraron {len(facturas_response)} facturas para el contrato {contrato_id}",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor al obtener facturas del contrato: {str(e)}"
+        )
+
+
+@router.post("/facturas/{contrato_id}", response_model=Response[FacturaOut])
+def create_contract_bill(
+    contrato_id: int, 
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user)
+) -> Response[FacturaOut]:
+    """
+    Crea una factura automáticamente para un contrato específico usando la lógica de negocio del CRUD
+    
+    Args:
+        contrato_id: ID del contrato
+        crud: Instancia del CRUD
+        _: Usuario autenticado
+        
+    Returns:
+        Response con la factura creada
+        
+    Raises:
+        HTTPException: Si el contrato no existe o hay errores en la creación
+    """
+    try:
+        bill = crud.create_contract_bill(contrato_id)
+        
+        bill_response = FacturaOut(
+            id_factura=bill.id_factura,
+            numero_factura=bill.numero_factura,
+            id_contrato=bill.id_contrato,
+            fecha_emision=bill.fecha_emision,
+            total_factura=float(bill.total_factura) if bill.total_factura else 0.0,
+        )
+        
+        return Response[FacturaOut](
+            data=bill_response,
+            status_code=HTTPStatus.CREATED,
+            message="Factura creada automáticamente para el contrato",
+            error=None,
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al crear factura para el contrato: {str(e)}"
+        )
