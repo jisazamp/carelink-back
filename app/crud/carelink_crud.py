@@ -89,7 +89,7 @@ class CareLinkCrud:
             if image:
                 image_url = self.upload_file_to_s3(
                     image.file,
-                    "images-carelink",
+                    "images-care-link",
                     f"user_photos/{user.id_usuario}/{image.filename}",
                 )
                 user.url_imagen = image_url
@@ -153,7 +153,7 @@ class CareLinkCrud:
             for attachment in attachments:
                 self.upload_file_to_s3(
                     attachment.file,
-                    "images-carelink",
+                    "images-care-link",
                     f"user_attachments/{id}/{attachment.filename}",
                 )
 
@@ -305,18 +305,18 @@ class CareLinkCrud:
         if db_user.url_imagen:
             old_photo_key = db_user.url_imagen.split("/")[-1]
             self.delete_s3_file(
-                "images-carelink", f"user_photos/{user_id}/{old_photo_key}"
+                "images-care-link", f"user_photos/{user_id}/{old_photo_key}"
             )
 
         if photo:
             photo_url = self.upload_file_to_s3(
                 photo.file,
-                "images-carelink",
+                "images-care-link",
                 f"user_photos/{user_id}/{photo.filename}",
             )
             user.url_imagen = photo_url
         elif user.url_imagen is None:
-            self.delete_s3_folder("images-carelink", f"user_photos/{user_id}")
+            self.delete_s3_folder("images-care-link", f"user_photos/{user_id}")
             user.url_imagen = None
 
         updated_user = self._update_user(user, db_user)
