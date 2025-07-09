@@ -271,7 +271,6 @@ class CareLinkCrud:
             .filter_by(id_usuario=user_id, id_acudiente=db_family_member.id_acudiente)
             .first()
         )
-        print(association)
 
         if association:
             association.parentesco = kinship_string
@@ -1439,56 +1438,41 @@ class CareLinkCrud:
 
     def create_factura(self, factura_data):
         # 1. Validar que no exista ya una factura para el contrato
-        existing = self.__carelink_session.query(Facturas).filter(
-            Facturas.id_contrato == factura_data['id_contrato']
-        ).first()
-        if existing:
-            raise HTTPException(status_code=400, detail="Ya existe una factura para este contrato")
-
-        # --- IMPUESTOS Y DESCUENTOS OPCIONALES ---
-        # Si el frontend no envía estos campos, se asume 0 por defecto
-        descuentos = factura_data.get('descuentos', 0) or 0
-        impuestos = factura_data.get('impuestos', 0) or 0
         detalles = factura_data.get('detalles', [])
+        impuestos = factura_data.get('impuestos', 0)
+        descuentos = factura_data.get('descuentos', 0)
         # Si no se reciben detalles, generarlos automáticamente
         if not detalles:
-            # Obtener los servicios contratados para el contrato
             servicios = self.__carelink_session.query(ServiciosPorContrato).filter(
                 ServiciosPorContrato.id_contrato == factura_data['id_contrato']
             ).all()
             for servicio in servicios:
-                # Calcular cantidad de días
                 fechas_servicio = self.__carelink_session.query(FechasServicio).filter_by(
                     id_servicio_contratado=servicio.id_servicio_contratado
                 ).all()
                 cantidad = len(fechas_servicio)
-                # Obtener tarifa
                 tarifa = self.__carelink_session.query(TarifasServicioPorAnio).filter_by(
                     id_servicio=servicio.id_servicio,
                     anio=int(str(factura_data['fecha_emision'])[:4])
                 ).first()
                 valor_unitario = tarifa.precio_por_dia if tarifa else 0
-                # Obtener nombre del servicio
                 nombre_servicio = self.__carelink_session.query(Servicios).filter_by(
                     id_servicio=servicio.id_servicio
                 ).first().nombre
-                # Descuentos e impuestos (globales o por servicio)
                 detalles.append({
                     'id_servicio_contratado': servicio.id_servicio_contratado,
                     'cantidad': cantidad,
                     'valor_unitario': valor_unitario,
                     'subtotal_linea': cantidad * valor_unitario,
-                    'impuestos_linea': impuestos,  # Si quieres distribuirlos por línea, ajusta aquí
-                    'descuentos_linea': descuentos,  # Si quieres distribuirlos por línea, ajusta aquí
+                    'impuestos_linea': impuestos,
+                    'descuentos_linea': descuentos,
                     'descripcion_servicio': nombre_servicio
                 })
-
         # 2. Calcular el total de la factura
         subtotal = sum([d['subtotal_linea'] for d in detalles])
         impuestos_total = sum([d.get('impuestos_linea', 0) for d in detalles])
         descuentos_total = sum([d.get('descuentos_linea', 0) for d in detalles])
         total_factura = subtotal + impuestos_total - descuentos_total
-
         # 3. Crear la factura SIN numero_factura
         factura = Facturas(
             id_contrato=factura_data['id_contrato'],

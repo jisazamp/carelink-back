@@ -2930,30 +2930,54 @@ def create_contract_bill(
 def get_facturacion_completa(db: Session = Depends(get_carelink_db)):
     sql = text('''
         SELECT
+            f.id_factura,
+            f.numero_factura,
+            f.id_contrato,
+            c.tipo_contrato,
+            c.fecha_inicio,
+            c.fecha_fin,
             u.id_usuario,
             u.nombres,
             u.apellidos,
             u.n_documento,
-            c.id_contrato,
-            c.tipo_contrato,
-            c.fecha_inicio,
-            c.fecha_fin,
-            f.id_factura,
-            f.numero_factura,
             f.fecha_emision,
             f.fecha_vencimiento,
             f.total_factura,
+            f.subtotal,
+            f.impuestos,
+            f.descuentos,
             f.estado_factura,
-            p.id_pago,
-            p.id_metodo_pago,
-            p.id_tipo_pago,
-            p.fecha_pago,
-            p.valor
-        FROM Usuarios u
-        LEFT JOIN Contratos c ON c.id_usuario = u.id_usuario
-        LEFT JOIN Facturas f ON f.id_contrato = c.id_contrato
-        LEFT JOIN Pagos p ON p.id_factura = f.id_factura
-        ORDER BY u.id_usuario, c.id_contrato, f.id_factura, p.id_pago
+            f.observaciones,
+            f.fecha_creacion,
+            f.fecha_actualizacion,
+            COUNT(p.id_pago) AS cantidad_pagos,
+            COALESCE(SUM(p.valor), 0) AS total_pagado
+        FROM
+            Facturas f
+            LEFT JOIN Contratos c ON f.id_contrato = c.id_contrato
+            LEFT JOIN Usuarios u ON c.id_usuario = u.id_usuario
+            LEFT JOIN Pagos p ON f.id_factura = p.id_factura
+        GROUP BY
+            f.id_factura,
+            f.numero_factura,
+            f.id_contrato,
+            c.tipo_contrato,
+            c.fecha_inicio,
+            c.fecha_fin,
+            u.id_usuario,
+            u.nombres,
+            u.apellidos,
+            u.n_documento,
+            f.fecha_emision,
+            f.fecha_vencimiento,
+            f.total_factura,
+            f.subtotal,
+            f.impuestos,
+            f.descuentos,
+            f.estado_factura,
+            f.observaciones,
+            f.fecha_creacion,
+            f.fecha_actualizacion
     ''')
     result = db.execute(sql)
     rows = [dict(row) for row in result.mappings()]
