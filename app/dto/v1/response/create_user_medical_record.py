@@ -4,44 +4,44 @@ from pydantic import BaseModel
 
 class CreateUserMedicalRecordResponseDTO(BaseModel):
     id_historiaclinica: int | None
-    Tiene_OtrasAlergias: bool
-    Tienedieta_especial: bool
+    Tiene_OtrasAlergias: bool | None
+    Tienedieta_especial: bool | None
     alcoholismo: str | None
-    alergico_medicamento: bool
-    altura: int
-    apariencia_personal: str
+    alergico_medicamento: bool | None
+    altura: int | None
+    apariencia_personal: str | None
     cafeina: str | None
     cirugias: str | None
-    comunicacion_no_verbal: str
-    comunicacion_verbal: str
+    comunicacion_no_verbal: str | None
+    comunicacion_verbal: str | None
     continencia: str | None
-    cuidado_personal: str
+    cuidado_personal: str | None
     dieta_especial: str | None
     discapacidades: str | None
-    emer_medica: str
-    eps: str
-    estado_de_animo: str
-    fecha_ingreso: date
-    frecuencia_cardiaca: float
-    historial_cirugias: str
-    id_usuario: int
+    emer_medica: str | None
+    eps: str | None
+    estado_de_animo: str | None
+    fecha_ingreso: date | None
+    frecuencia_cardiaca: float | None
+    historial_cirugias: str | None
+    id_usuario: int | None
     limitaciones: str | None
-    maltratado: str
-    maltrato: str
+    maltratado: str | None
+    maltrato: str | None
     medicamentos_alergia: str | None
-    motivo_ingreso: str
-    observ_dietaEspecial: str
-    observ_otrasalergias: str
-    observaciones_iniciales: str
+    motivo_ingreso: str | None
+    observ_dietaEspecial: str | None
+    observ_otrasalergias: str | None
+    observaciones_iniciales: str | None
     otras_alergias: str | None
-    peso: float
-    presion_arterial: float
+    peso: float | None
+    presion_arterial: float | None
     sustanciaspsico: str | None
-    tabaquismo: str
-    telefono_emermedica: str
+    tabaquismo: str | None
+    telefono_emermedica: str | None
     temperatura_corporal: float
-    tipo_alimentacion: str
-    tipo_de_movilidad: str
-    tipo_de_sueno: str
-    tipo_sangre: str
+    tipo_alimentacion: str | None
+    tipo_de_movilidad: str | None
+    tipo_de_sueno: str | None
+    tipo_sangre: str | None
     diagnosticos: str | None
