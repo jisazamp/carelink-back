@@ -645,7 +645,7 @@ async def login_user(
             detail="Usuario o contraseña incorrectos. Revise sus datos e intente de nuevo.",
         )
 
-    access_token = create_access_token(data={"sub": user.id})
+    access_token = create_access_token(data={"sub": str(user.id)})
     return Response[dict](
         data={"access_token": access_token, "token_type": "bearer"},
         status_code=HTTPStatus.OK,
