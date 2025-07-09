@@ -16,6 +16,7 @@ from app.models.contracts import (
     Pagos,
     ServiciosPorContrato,
     TipoPago,
+    Servicios,
 )
 from app.models.family_member import FamilyMember
 from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
@@ -732,6 +733,7 @@ class CareLinkCrud:
         """
         Crea un contrato y los servicios asociados, retornando el contrato y los IDs de ServiciosPorContrato generados.
         """
+        self.actualizar_estados_contratos_finalizados()
         try:
             contrato = Contratos(
                 id_usuario=contract_data.id_usuario,
@@ -815,6 +817,7 @@ class CareLinkCrud:
 
     def get_all_contracts(self) -> List[ContratoResponseDTO]:
         """Obtener todos los contratos del sistema"""
+        self.actualizar_estados_contratos_finalizados()
         try:
             contratos = self.__carelink_session.query(Contratos).all()
             contratos_response = []
@@ -1523,3 +1526,18 @@ class CareLinkCrud:
         self.__carelink_session.commit()
         self.__carelink_session.refresh(factura)
         return factura
+
+    def actualizar_estados_contratos_finalizados(self):
+        """
+        Actualiza el estado de todos los contratos cuya fecha_fin sea menor a hoy y que estén en estado ACTIVO, cambiándolos a FINALIZADO.
+        """
+        from datetime import date
+        contratos = self.__carelink_session.query(Contratos).filter(
+            Contratos.estado == 'ACTIVO',
+            Contratos.fecha_fin != None,
+            Contratos.fecha_fin < date.today()
+        ).all()
+        for contrato in contratos:
+            contrato.estado = 'FINALIZADO'
+        if contratos:
+            self.__carelink_session.commit()
