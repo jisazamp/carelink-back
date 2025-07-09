@@ -41,7 +41,13 @@ class FacturaOut(BaseModel):
     numero_factura: str | None
     id_contrato: int | None
     fecha_emision: date
+    fecha_vencimiento: date | None
+    subtotal: float | None
+    impuestos: float | None
+    descuentos: float | None
     total_factura: float
+    estado_factura: str | None
+    observaciones: str | None
 
     class Config:
         orm_mode = True

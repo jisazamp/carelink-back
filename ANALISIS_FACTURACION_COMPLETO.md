@@ -49,6 +49,7 @@ El sistema de facturación ha sido revisado exhaustivamente y se han identificad
 - ✅ Validación de que el pago no exceda el total pendiente
 - ✅ Validación de existencia de métodos y tipos de pago
 - ✅ Validación de valores positivos
+- ✅ **CORREGIDO**: Permitir pagos parciales (el valor puede ser menor al total de la factura)
 
 ## 🏗️ **ARQUITECTURA DEL SISTEMA**
 
@@ -123,6 +124,35 @@ Frontend → API Endpoint → Controller → CRUD → Database
 - [x] `FechasServicio`: Fechas específicas de servicio
 
 ## 🔧 **CORRECCIONES TÉCNICAS IMPLEMENTADAS**
+
+### **0. CORRECCIÓN CRÍTICA: Pagos Parciales** ✅ RESUELTO
+
+**Problema Identificado:**
+El sistema validaba incorrectamente que el pago total debía ser igual al total de la factura, impidiendo pagos parciales.
+
+**Error Original:**
+
+```python
+if float(payment_data.valor) != float(bill.total_factura):
+    raise HTTPException(
+        status_code=400,
+        detail="El valor del pago total debe ser igual al total de la factura"
+    )
+```
+
+**Corrección Implementada:**
+
+```python
+# Permitir pagos parciales - no validar que sea igual al total
+# El pago total puede ser menor al total de la factura
+```
+
+**Resultado:**
+
+- ✅ Los clientes pueden registrar pagos parciales
+- ✅ Se mantiene la validación de que no exceda el total pendiente
+- ✅ Se permite completar la factura con múltiples pagos
+- ✅ El estado de la factura se actualiza correctamente
 
 ### **1. Endpoint de Pagos (`/api/pagos/registrar`)**
 

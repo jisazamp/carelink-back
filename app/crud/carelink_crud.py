@@ -1,6 +1,6 @@
 from app.dto.v1.request.contracts import ContratoCreateDTO
 from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
-from app.dto.v1.response.contracts import ContratoResponseDTO, ServicioContratoDTO
+from app.dto.v1.response.contracts import ContratoResponseDTO, ServicioContratoDTO, FechaServicioDTO
 from app.exceptions.exceptions_classes import EntityNotFoundError
 from app.models.activities import ActividadesGrupales, TipoActividad
 from app.models.authorized_users import AuthorizedUsers
@@ -814,6 +814,56 @@ class CareLinkCrud:
         )
         return users
 
+    def get_all_contracts(self) -> List[ContratoResponseDTO]:
+        """Obtener todos los contratos del sistema"""
+        try:
+            contratos = self.__carelink_session.query(Contratos).all()
+            contratos_response = []
+            
+            for contrato in contratos:
+                # Obtener servicios del contrato
+                servicios = self.__carelink_session.query(ServiciosPorContrato).filter(
+                    ServiciosPorContrato.id_contrato == contrato.id_contrato
+                ).all()
+                
+                servicios_dto = []
+                for servicio in servicios:
+                    # Obtener fechas de servicio
+                    fechas = self.__carelink_session.query(FechasServicio).filter(
+                        FechasServicio.id_servicio_contratado == servicio.id_servicio_contratado
+                    ).all()
+                    
+                    fechas_dto = [FechaServicioDTO(fecha=fecha.fecha) for fecha in fechas]
+                    
+                    servicio_dto = ServicioContratoDTO(
+                        id_servicio_contratado=servicio.id_servicio_contratado,
+                        id_servicio=servicio.id_servicio,
+                        fecha=servicio.fecha,
+                        descripcion=servicio.descripcion,
+                        precio_por_dia=float(servicio.precio_por_dia),
+                        fechas_servicio=fechas_dto
+                    )
+                    servicios_dto.append(servicio_dto)
+                
+                contrato_dto = ContratoResponseDTO(
+                    id_contrato=contrato.id_contrato,
+                    id_usuario=contrato.id_usuario,
+                    tipo_contrato=contrato.tipo_contrato,
+                    fecha_inicio=contrato.fecha_inicio,
+                    fecha_fin=contrato.fecha_fin,
+                    facturar_contrato=contrato.facturar_contrato,
+                    estado=contrato.estado,
+                    servicios=servicios_dto
+                )
+                contratos_response.append(contrato_dto)
+            
+            return contratos_response
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al obtener contratos: {str(e)}"
+            )
+
     def _get_contract_by_id(self, contract_id: int) -> Contratos:
         contract = (
             self.__carelink_session.query(Contratos)
@@ -1395,11 +1445,49 @@ class CareLinkCrud:
         if existing:
             raise HTTPException(status_code=400, detail="Ya existe una factura para este contrato")
 
+        # --- IMPUESTOS Y DESCUENTOS OPCIONALES ---
+        # Si el frontend no envía estos campos, se asume 0 por defecto
+        descuentos = factura_data.get('descuentos', 0) or 0
+        impuestos = factura_data.get('impuestos', 0) or 0
+        detalles = factura_data.get('detalles', [])
+        # Si no se reciben detalles, generarlos automáticamente
+        if not detalles:
+            # Obtener los servicios contratados para el contrato
+            servicios = self.__carelink_session.query(ServiciosPorContrato).filter(
+                ServiciosPorContrato.id_contrato == factura_data['id_contrato']
+            ).all()
+            for servicio in servicios:
+                # Calcular cantidad de días
+                fechas_servicio = self.__carelink_session.query(FechasServicio).filter_by(
+                    id_servicio_contratado=servicio.id_servicio_contratado
+                ).all()
+                cantidad = len(fechas_servicio)
+                # Obtener tarifa
+                tarifa = self.__carelink_session.query(TarifasServicioPorAnio).filter_by(
+                    id_servicio=servicio.id_servicio,
+                    anio=int(str(factura_data['fecha_emision'])[:4])
+                ).first()
+                valor_unitario = tarifa.precio_por_dia if tarifa else 0
+                # Obtener nombre del servicio
+                nombre_servicio = self.__carelink_session.query(Servicios).filter_by(
+                    id_servicio=servicio.id_servicio
+                ).first().nombre
+                # Descuentos e impuestos (globales o por servicio)
+                detalles.append({
+                    'id_servicio_contratado': servicio.id_servicio_contratado,
+                    'cantidad': cantidad,
+                    'valor_unitario': valor_unitario,
+                    'subtotal_linea': cantidad * valor_unitario,
+                    'impuestos_linea': impuestos,  # Si quieres distribuirlos por línea, ajusta aquí
+                    'descuentos_linea': descuentos,  # Si quieres distribuirlos por línea, ajusta aquí
+                    'descripcion_servicio': nombre_servicio
+                })
+
         # 2. Calcular el total de la factura
-        subtotal = factura_data.get('subtotal', 0)
-        impuestos = factura_data.get('impuestos', 0)
-        descuentos = factura_data.get('descuentos', 0)
-        total_factura = subtotal + impuestos - descuentos
+        subtotal = sum([d['subtotal_linea'] for d in detalles])
+        impuestos_total = sum([d.get('impuestos_linea', 0) for d in detalles])
+        descuentos_total = sum([d.get('descuentos_linea', 0) for d in detalles])
+        total_factura = subtotal + impuestos_total - descuentos_total
 
         # 3. Crear la factura SIN numero_factura
         factura = Facturas(
@@ -1407,8 +1495,8 @@ class CareLinkCrud:
             fecha_emision=factura_data['fecha_emision'],
             fecha_vencimiento=factura_data.get('fecha_vencimiento'),
             subtotal=subtotal,
-            impuestos=impuestos,
-            descuentos=descuentos,
+            impuestos=impuestos_total,
+            descuentos=descuentos_total,
             total_factura=total_factura,
             estado_factura='PENDIENTE',
             observaciones=factura_data.get('observaciones', None)
@@ -1423,8 +1511,8 @@ class CareLinkCrud:
         self.__carelink_session.commit()
         self.__carelink_session.refresh(factura)
 
-        # 5. Asociar detalles (si existen)
-        for detalle in factura_data.get('detalles', []):
+        # 5. Asociar detalles
+        for detalle in detalles:
             detalle_factura = DetalleFactura(
                 id_factura=factura.id_factura,
                 id_servicio_contratado=detalle['id_servicio_contratado'],
