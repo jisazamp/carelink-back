@@ -3,6 +3,8 @@ from decimal import Decimal
 from pydantic import BaseModel, condecimal
 from typing import List, Optional
 
+# Definir el tipo fuera de las clases
+DecimalGt0 = condecimal(gt=0, decimal_places=2)
 
 class FechaServicioCreateDTO(BaseModel):
     fecha: date
@@ -23,6 +25,8 @@ class ContratoCreateDTO(BaseModel):
     fecha_fin: date
     facturar_contrato: bool
     servicios: List[ServicioContratadoCreateDTO]
+    impuestos: Optional[float] = 0.0
+    descuentos: Optional[float] = 0.0
 
 
 class ContratoUpdateDTO(BaseModel):
@@ -38,7 +42,7 @@ class PagoCreateDTO(BaseModel):
     id_metodo_pago: int
     id_tipo_pago: int
     fecha_pago: date
-    valor: condecimal(gt=0, decimal_places=2)
+    valor: DecimalGt0
 
 
 class PagoResponseDTO(BaseModel):
@@ -66,3 +70,21 @@ class FacturaCreate(BaseModel):
     fecha_vencimiento: date
     total: Decimal
     pagos: Optional[List[PagoCreate]] = []
+
+
+class FacturaCreateWithDetails(BaseModel):
+    """
+    DTO para crear facturas con datos completos incluyendo impuestos y descuentos
+    """
+    impuestos: float = 0.0
+    descuentos: float = 0.0
+    observaciones: Optional[str] = ""
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "impuestos": 5000.0,
+                "descuentos": 2000.0,
+                "observaciones": "Factura generada automáticamente desde el contrato"
+            }
+        }

@@ -17,6 +17,7 @@ from app.models.contracts import (
     ServiciosPorContrato,
     TipoPago,
     Servicios,
+    EstadoFactura,
 )
 from app.models.family_member import FamilyMember
 from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
@@ -529,15 +530,46 @@ class CareLinkCrud:
         return None
 
     def update_factura_status(self, factura_id: int):
-        factura = self.get_bill_by_id(factura_id)
-        pagos = self.__carelink_session.query(Pagos).filter(Pagos.id_factura == factura_id).all()
-        total_pagado = sum([float(p.valor) for p in pagos])
-        if total_pagado >= float(factura.total_factura):
-            factura.estado_factura = 'PAGADA'
-        else:
-            factura.estado_factura = 'PENDIENTE'
-        self.__carelink_session.commit()
-        self.__carelink_session.refresh(factura)
+        """
+        Actualiza el estado de la factura según los pagos realizados
+        Si los pagos cubren el total, estado = "PAGADA"
+        Si no, estado = "PENDIENTE"
+        """
+        try:
+            # Obtener la factura
+            factura = self.__carelink_session.query(Facturas).filter(
+                Facturas.id_factura == factura_id
+            ).first()
+            
+            if not factura:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Factura con ID {factura_id} no encontrada"
+                )
+            
+            # Calcular total de pagos
+            total_pagado = self.__carelink_session.query(func.sum(Pagos.valor)).filter(
+                Pagos.id_factura == factura_id
+            ).scalar() or 0
+            
+            # Determinar estado según pagos
+            if total_pagado >= float(factura.total_factura):
+                factura.estado_factura = EstadoFactura.PAGADA
+            else:
+                factura.estado_factura = EstadoFactura.PENDIENTE
+            
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(factura)
+            
+            return factura
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al actualizar estado de factura: {str(e)}"
+            )
 
     def create_payment(self, payment_data: Pagos) -> Pagos:
         try:

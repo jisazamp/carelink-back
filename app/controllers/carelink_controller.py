@@ -89,6 +89,7 @@ from app.dto.v1.request.contracts import (
     ContratoCreateDTO,
     ContratoUpdateDTO,
     FacturaCreate,
+    FacturaCreateWithDetails,
     PagoCreate,
     PagoCreateDTO,
     PagoResponseDTO,
@@ -632,6 +633,9 @@ async def register_payment(
 
         # Crear el pago usando el CRUD
         payment_response = crud.create_payment(payment_data)
+        
+        # Actualizar el estado de la factura según los pagos
+        crud.update_factura_status(payment.id_factura)
 
         return Response[PaymentResponseDTO](
             data=PaymentResponseDTO.from_orm(payment_response),
@@ -656,17 +660,81 @@ async def register_payment(
 async def calculate_partial_bill(
     partial_bill: CalculatePartialBillRequestDTO, crud: CareLinkCrud = Depends(get_crud)
 ) -> Response[float]:
-    result = crud.calculate_partial_bill(
-        service_ids=partial_bill.service_ids,
-        quantities=partial_bill.quantities,
-        year=partial_bill.year,
-    )
-    return Response[float](
-        data=result,
-        message="Factura calculada con éxito",
-        status_code=HTTPStatus.OK,
-        error=None,
-    )
+    try:
+        total = crud.calculate_partial_bill(
+            partial_bill.service_ids, partial_bill.quantities, partial_bill.year
+        )
+        return Response[float](
+            data=total,
+            message="Factura calculada con éxito",
+            status_code=HTTPStatus.OK,
+            error=None,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error al calcular factura: {str(e)}"
+        )
+
+
+@router.post("/calcular/total_factura", response_model=Response[float])
+async def calculate_total_factura(
+    payload: dict, crud: CareLinkCrud = Depends(get_crud)
+) -> Response[float]:
+    """
+    Calcula el total de factura incluyendo impuestos y descuentos
+    
+    Args:
+        payload: Diccionario con subtotal, impuestos y descuentos
+        crud: Instancia del CRUD
+        
+    Returns:
+        Response con el total calculado
+        
+    Raises:
+        HTTPException: Si hay errores en el cálculo
+    """
+    try:
+        subtotal = float(payload.get("subtotal", 0))
+        impuestos = float(payload.get("impuestos", 0))
+        descuentos = float(payload.get("descuentos", 0))
+        
+        # Validar que los valores no sean negativos
+        if subtotal < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="El subtotal no puede ser negativo"
+            )
+        if impuestos < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Los impuestos no pueden ser negativos"
+            )
+        if descuentos < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Los descuentos no pueden ser negativos"
+            )
+        
+        # Calcular total: subtotal + impuestos - descuentos
+        total_factura = subtotal + impuestos - descuentos
+        
+        # Asegurar que el total no sea negativo
+        if total_factura < 0:
+            total_factura = 0
+        
+        return Response[float](
+            data=total_factura,
+            message="Total de factura calculado correctamente",
+            status_code=HTTPStatus.OK,
+            error=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al calcular total de factura: {str(e)}"
+        )
 
 
 @router.post("/users", status_code=201, response_model=Response[UserResponseDTO])
@@ -1389,6 +1457,7 @@ def crear_contrato(
         id_profesional_default = 1
         
         # 🔴 VALIDACIÓN: Verificar que no haya doble agendamiento antes de procesar
+        fechas_conflicto = []
         for fecha in fechas_tiquetera:
             # Buscar si ya existe un cronograma para esta fecha
             cronograma_existente = (
@@ -1412,15 +1481,18 @@ def crear_contrato(
                 )
                 
                 if paciente_ya_agendado:
-                    # Formatear la fecha para el mensaje
                     fecha_formateada = fecha.strftime("%d/%m/%Y")
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"El paciente ya está agendado para la fecha {fecha_formateada}. "
-                               f"No se puede crear un doble agendamiento. "
-                               f"Paciente ID: {data.id_usuario}, Estado actual: {paciente_ya_agendado.estado_asistencia}. "
-                               f"Por favor verifique las fechas agendadas y corrija el error."
-                    )
+                    fechas_conflicto.append(fecha_formateada)
+        
+        # Si hay fechas en conflicto, lanzar error con todas las fechas
+        if fechas_conflicto:
+            fechas_str = ", ".join(fechas_conflicto)
+            raise HTTPException(
+                status_code=400,
+                detail=f"El paciente ya tiene servicios agendados en las siguientes fechas: {fechas_str}. "
+                       f"No se puede crear un doble agendamiento. "
+                       f"Por favor, revise la agenda y corrija las fechas antes de continuar."
+            )
         
         # Si llegamos aquí, no hay conflictos de doble agendamiento
         for fecha in fechas_tiquetera:
@@ -2883,7 +2955,8 @@ def read_facturas_by_contrato(
 
 @router.post("/facturas/{contrato_id}", response_model=Response[FacturaOut])
 def create_contract_bill(
-    contrato_id: int, 
+    contrato_id: int,
+    factura_data: FacturaCreateWithDetails = None,
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user)
 ) -> Response[FacturaOut]:
@@ -2892,6 +2965,7 @@ def create_contract_bill(
     
     Args:
         contrato_id: ID del contrato
+        factura_data: Datos de la factura (impuestos, descuentos, observaciones)
         crud: Instancia del CRUD
         _: Usuario autenticado
         
@@ -2902,14 +2976,58 @@ def create_contract_bill(
         HTTPException: Si el contrato no existe o hay errores en la creación
     """
     try:
-        bill = crud.create_contract_bill(contrato_id)
+        # Obtener el contrato para usar fecha_fin como fecha_vencimiento
+        contrato = crud._get_contract_by_id(contrato_id)
         
+        # Calcular subtotal (suma de servicios contratados)
+        subtotal = crud._calculate_contract_bill_total(contrato_id)
+        
+        # Obtener datos de facturación del payload
+        impuestos = float(factura_data.impuestos) if factura_data else 0
+        descuentos = float(factura_data.descuentos) if factura_data else 0
+        observaciones = factura_data.observaciones if factura_data else ""
+        
+        # Calcular total: subtotal + impuestos - descuentos
+        total_factura = subtotal + impuestos - descuentos
+        if total_factura < 0:
+            total_factura = 0
+        
+        # Crear la factura con todos los campos
+        bill = Facturas(
+            id_contrato=contrato_id,
+            fecha_emision=datetime.now().date(),
+            fecha_vencimiento=contrato.fecha_fin,  # Usar fecha_fin del contrato
+            subtotal=subtotal,
+            impuestos=impuestos,
+            descuentos=descuentos,
+            total_factura=total_factura,
+            estado_factura=EstadoFactura.PENDIENTE,  # Estado inicial
+            observaciones=observaciones
+        )
+        
+        crud._CareLinkCrud__carelink_session.add(bill)
+        crud._CareLinkCrud__carelink_session.commit()
+        crud._CareLinkCrud__carelink_session.refresh(bill)
+        
+        # Generar numero_factura basado en id_factura
+        numero_factura = str(bill.id_factura).zfill(4)
+        bill.numero_factura = numero_factura
+        crud._CareLinkCrud__carelink_session.commit()
+        crud._CareLinkCrud__carelink_session.refresh(bill)
+        
+        # Construir respuesta completa
         bill_response = FacturaOut(
             id_factura=bill.id_factura,
             numero_factura=bill.numero_factura,
             id_contrato=bill.id_contrato,
             fecha_emision=bill.fecha_emision,
+            fecha_vencimiento=bill.fecha_vencimiento,
+            subtotal=float(bill.subtotal) if bill.subtotal is not None else None,
+            impuestos=float(bill.impuestos) if bill.impuestos is not None else None,
+            descuentos=float(bill.descuentos) if bill.descuentos is not None else None,
             total_factura=float(bill.total_factura) if bill.total_factura else 0.0,
+            estado_factura=bill.estado_factura.value if hasattr(bill.estado_factura, 'value') else bill.estado_factura,
+            observaciones=bill.observaciones
         )
         
         return Response[FacturaOut](
@@ -2919,6 +3037,8 @@ def create_contract_bill(
             error=None,
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
