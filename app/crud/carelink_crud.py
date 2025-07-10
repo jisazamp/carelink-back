@@ -1528,16 +1528,49 @@ class CareLinkCrud:
         return factura
 
     def actualizar_estados_contratos_finalizados(self):
-        """
-        Actualiza el estado de todos los contratos cuya fecha_fin sea menor a hoy y que estén en estado ACTIVO, cambiándolos a FINALIZADO.
-        """
-        from datetime import date
-        contratos = self.__carelink_session.query(Contratos).filter(
-            Contratos.estado == 'ACTIVO',
-            Contratos.fecha_fin != None,
-            Contratos.fecha_fin < date.today()
-        ).all()
-        for contrato in contratos:
-            contrato.estado = 'FINALIZADO'
-        if contratos:
+        """Actualiza automáticamente el estado de contratos vencidos"""
+        try:
+            contratos_vencidos = (
+                self.__carelink_session.query(Contratos)
+                .filter(
+                    Contratos.fecha_fin < func.current_date(),
+                    Contratos.estado == "ACTIVO"
+                )
+                .all()
+            )
+            
+            for contrato in contratos_vencidos:
+                contrato.estado = "FINALIZADO"
+            
             self.__carelink_session.commit()
+            return len(contratos_vencidos)
+        except Exception as e:
+            self.__carelink_session.rollback()
+            raise e
+
+    def get_next_invoice_number(self) -> str:
+        """Obtiene el próximo número de factura basado en el último id_contrato"""
+        try:
+            # Obtener el último id_contrato
+            ultimo_contrato = (
+                self.__carelink_session.query(func.max(Contratos.id_contrato))
+                .scalar()
+            )
+            
+            # Si no hay contratos, empezar con 1
+            if ultimo_contrato is None:
+                proximo_id = 1
+            else:
+                proximo_id = ultimo_contrato + 1
+            
+            # Obtener el año actual
+            anio_actual = datetime.now().year
+            
+            # Formatear el número con ceros a la izquierda (5 dígitos)
+            numero_formateado = str(proximo_id).zfill(5)
+            
+            # Retornar el formato completo: FACT-YYYY-XXXXX
+            return f"FACT-{anio_actual}-{numero_formateado}"
+            
+        except Exception as e:
+            raise e

@@ -2982,3 +2982,19 @@ def get_facturacion_completa(db: Session = Depends(get_carelink_db)):
     result = db.execute(sql)
     rows = [dict(row) for row in result.mappings()]
     return {"data": rows}
+
+
+@router.get("/next-invoice-number")
+def get_next_invoice_number(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    """Obtiene el próximo número de factura basado en el último id_contrato"""
+    try:
+        next_number = crud.get_next_invoice_number()
+        return {"data": {"next_invoice_number": next_number}}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener el próximo número de factura: {str(e)}"
+        )
