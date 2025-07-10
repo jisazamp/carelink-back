@@ -1,18 +1,22 @@
 from app.dto.v1.request.contracts import ContratoCreateDTO
 from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
-from app.dto.v1.response.contracts import ContratoResponseDTO, ServicioContratoDTO
+from app.dto.v1.response.contracts import ContratoResponseDTO, ServicioContratoDTO, FechaServicioDTO
 from app.exceptions.exceptions_classes import EntityNotFoundError
 from app.models.activities import ActividadesGrupales, TipoActividad
 from app.models.authorized_users import AuthorizedUsers
+from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes, EstadoAsistencia
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.clinical_evolutions import EvolucionesClinicas
 from app.models.contracts import (
     Contratos,
     Facturas,
+    DetalleFactura,
     FechasServicio,
     MetodoPago,
     Pagos,
     ServiciosPorContrato,
+    TipoPago,
+    Servicios,
 )
 from app.models.family_member import FamilyMember
 from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
@@ -22,6 +26,7 @@ from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
 from app.models.professional import Profesionales
 from app.models.rates import TarifasServicioPorAnio
+from app.models.transporte import CronogramaTransporte, EstadoTransporte
 from app.models.user import User
 from app.models.vaccines import VacunasPorUsuario
 from boto3 import client
@@ -33,6 +38,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional, Tuple
+from sqlalchemy.sql import func
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 INVALID_CHARS = ["#", "@", "$", "%", " ", "&", "|", "(", ")", "-", "+"]
@@ -266,7 +272,6 @@ class CareLinkCrud:
             .filter_by(id_usuario=user_id, id_acudiente=db_family_member.id_acudiente)
             .first()
         )
-        print(association)
 
         if association:
             association.parentesco = kinship_string
@@ -523,16 +528,74 @@ class CareLinkCrud:
             return user
         return None
 
+    def update_factura_status(self, factura_id: int):
+        factura = self.get_bill_by_id(factura_id)
+        pagos = self.__carelink_session.query(Pagos).filter(Pagos.id_factura == factura_id).all()
+        total_pagado = sum([float(p.valor) for p in pagos])
+        if total_pagado >= float(factura.total_factura):
+            factura.estado_factura = 'PAGADA'
+        else:
+            factura.estado_factura = 'PENDIENTE'
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(factura)
+
     def create_payment(self, payment_data: Pagos) -> Pagos:
         try:
+            # Validar que la factura existe
             bill = self.get_bill_by_id(payment_data.id_factura)
             if not bill:
                 raise EntityNotFoundError("Factura no encontrada")
 
+            # Validar que el método de pago existe
+            payment_method = self.__carelink_session.query(MetodoPago).filter(
+                MetodoPago.id_metodo_pago == payment_data.id_metodo_pago
+            ).first()
+            if not payment_method:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Método de pago con ID {payment_data.id_metodo_pago} no existe"
+                )
+
+            # Validar que el tipo de pago existe
+            payment_type = self.__carelink_session.query(TipoPago).filter(
+                TipoPago.id_tipo_pago == payment_data.id_tipo_pago
+            ).first()
+            if not payment_type:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Tipo de pago con ID {payment_data.id_tipo_pago} no existe"
+                )
+
+            # Validar tipo de pago total: solo un pago permitido
+            tipo_pago = payment_data.id_tipo_pago
+            if tipo_pago == 1:  # 1 = Total
+                pagos_existentes = self.__carelink_session.query(Pagos).filter(
+                    Pagos.id_factura == payment_data.id_factura
+                ).count()
+                if pagos_existentes > 0:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="Solo se permite un pago total por factura"
+                    )
+                # Permitir pagos parciales - no validar que sea igual al total
+                # El pago total puede ser menor al total de la factura
+
+            # Validar que el valor del pago no exceda el total de la factura
+            total_pagado = self.__carelink_session.query(Pagos).filter(
+                Pagos.id_factura == payment_data.id_factura
+            ).with_entities(func.sum(Pagos.valor)).scalar() or 0
+            
+            if float(total_pagado) + float(payment_data.valor) > float(bill.total_factura):
+                raise HTTPException(
+                    status_code=400,
+                    detail="El valor del pago excede el total pendiente de la factura"
+                )
+
+            # Crear el pago
             payment = Pagos(
                 id_factura=payment_data.id_factura,
                 id_metodo_pago=payment_data.id_metodo_pago,
-                id_tipo_pago=1,
+                id_tipo_pago=payment_data.id_tipo_pago,
                 fecha_pago=payment_data.fecha_pago,
                 valor=payment_data.valor,
             )
@@ -541,12 +604,20 @@ class CareLinkCrud:
             self.__carelink_session.commit()
             self.__carelink_session.refresh(payment)
 
+            # Actualizar estado de la factura
+            self.update_factura_status(payment.id_factura)
+
             return payment
 
+        except HTTPException:
+            # Re-lanzar HTTPExceptions para mantener el status code
+            self.__carelink_session.rollback()
+            raise
         except Exception as e:
             self.__carelink_session.rollback()
             raise HTTPException(
-                status_code=500, detail=f"Error al crear el pago: {str(e)}"
+                status_code=500, 
+                detail=f"Error al crear el pago: {str(e)}"
             )
 
     def create_user(self, user_data: AuthorizedUsers) -> AuthorizedUsers:
@@ -583,6 +654,10 @@ class CareLinkCrud:
     def _get_payment_methods(self) -> list[MetodoPago]:
         payment_methods = self.__carelink_session.query(MetodoPago).all()
         return payment_methods
+
+    def _get_payment_types(self) -> list[TipoPago]:
+        payment_types = self.__carelink_session.query(TipoPago).all()
+        return payment_types
 
     def get_bill_by_id(self, bill_id: int) -> Facturas:
         bill = (
@@ -645,41 +720,20 @@ class CareLinkCrud:
         self.__carelink_session.add(bill)
         self.__carelink_session.commit()
         self.__carelink_session.refresh(bill)
+        
+        # Generar numero_factura basado en id_factura (relleno de ceros a la izquierda)
+        numero_factura = str(bill.id_factura).zfill(4)
+        bill.numero_factura = numero_factura
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(bill)
+        
         return bill
 
-    def _add_contract_services(
-        self, contract_data: ContratoCreateDTO, contract: Contratos
-    ) -> ServicioContratoDTO | None:
-        servicio_dto = None
-
-        for servicio in contract_data.servicios:
-            servicio_contratado = ServiciosPorContrato(
-                id_contrato=contract.id_contrato,
-                id_servicio=servicio.id_servicio,
-                fecha=servicio.fecha,
-                descripcion=servicio.descripcion,
-                precio_por_dia=servicio.precio_por_dia,
-            )
-            self.__carelink_session.add(servicio_contratado)
-            self.__carelink_session.commit()
-            self.__carelink_session.refresh(servicio_contratado)
-
-            for f in servicio.fechas_servicio:
-                fecha_servicio = FechasServicio(
-                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
-                    fecha=f.fecha,
-                )
-                self.__carelink_session.add(fecha_servicio)
-
-            self.__carelink_session.commit()
-            self.__carelink_session.refresh(servicio_contratado)
-
-            if servicio_dto is None:
-                servicio_dto = ServicioContratoDTO.from_orm(servicio_contratado)
-
-        return servicio_dto
-
-    def create_contract(self, contract_data: ContratoCreateDTO) -> Contratos:
+    def create_contract(self, contract_data: ContratoCreateDTO) -> dict:
+        """
+        Crea un contrato y los servicios asociados, retornando el contrato y los IDs de ServiciosPorContrato generados.
+        """
+        self.actualizar_estados_contratos_finalizados()
         try:
             contrato = Contratos(
                 id_usuario=contract_data.id_usuario,
@@ -691,8 +745,34 @@ class CareLinkCrud:
             self.__carelink_session.add(contrato)
             self.__carelink_session.commit()
             self.__carelink_session.refresh(contrato)
-            self._add_contract_services(contract_data, contrato)
-            return contrato
+            # Insertar servicios y recolectar IDs
+            servicios_ids = []
+            for servicio in contract_data.servicios:
+                servicio_contratado = ServiciosPorContrato(
+                    id_contrato=contrato.id_contrato,
+                    id_servicio=servicio.id_servicio,
+                    fecha=servicio.fecha,
+                    descripcion=servicio.descripcion,
+                    precio_por_dia=servicio.precio_por_dia,
+                )
+                self.__carelink_session.add(servicio_contratado)
+                self.__carelink_session.commit()
+                self.__carelink_session.refresh(servicio_contratado)
+                servicios_ids.append({
+                    'id_servicio_contratado': servicio_contratado.id_servicio_contratado,
+                    'id_servicio': servicio_contratado.id_servicio
+                })
+                for f in servicio.fechas_servicio:
+                    fecha_servicio = FechasServicio(
+                        id_servicio_contratado=servicio_contratado.id_servicio_contratado,
+                        fecha=f.fecha,
+                    )
+                    self.__carelink_session.add(fecha_servicio)
+                self.__carelink_session.commit()
+            return {
+                'contrato': contrato,
+                'servicios_por_contrato': servicios_ids
+            }
         except Exception as e:
             self.__carelink_session.rollback()
             raise HTTPException(
@@ -734,6 +814,57 @@ class CareLinkCrud:
             self.__carelink_session.query(User).filter(User.is_deleted == False).all()
         )
         return users
+
+    def get_all_contracts(self) -> List[ContratoResponseDTO]:
+        """Obtener todos los contratos del sistema"""
+        self.actualizar_estados_contratos_finalizados()
+        try:
+            contratos = self.__carelink_session.query(Contratos).all()
+            contratos_response = []
+            
+            for contrato in contratos:
+                # Obtener servicios del contrato
+                servicios = self.__carelink_session.query(ServiciosPorContrato).filter(
+                    ServiciosPorContrato.id_contrato == contrato.id_contrato
+                ).all()
+                
+                servicios_dto = []
+                for servicio in servicios:
+                    # Obtener fechas de servicio
+                    fechas = self.__carelink_session.query(FechasServicio).filter(
+                        FechasServicio.id_servicio_contratado == servicio.id_servicio_contratado
+                    ).all()
+                    
+                    fechas_dto = [FechaServicioDTO(fecha=fecha.fecha) for fecha in fechas]
+                    
+                    servicio_dto = ServicioContratoDTO(
+                        id_servicio_contratado=servicio.id_servicio_contratado,
+                        id_servicio=servicio.id_servicio,
+                        fecha=servicio.fecha,
+                        descripcion=servicio.descripcion,
+                        precio_por_dia=float(servicio.precio_por_dia),
+                        fechas_servicio=fechas_dto
+                    )
+                    servicios_dto.append(servicio_dto)
+                
+                contrato_dto = ContratoResponseDTO(
+                    id_contrato=contrato.id_contrato,
+                    id_usuario=contrato.id_usuario,
+                    tipo_contrato=contrato.tipo_contrato,
+                    fecha_inicio=contrato.fecha_inicio,
+                    fecha_fin=contrato.fecha_fin,
+                    facturar_contrato=contrato.facturar_contrato,
+                    estado=contrato.estado,
+                    servicios=servicios_dto
+                )
+                contratos_response.append(contrato_dto)
+            
+            return contratos_response
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al obtener contratos: {str(e)}"
+            )
 
     def _get_contract_by_id(self, contract_id: int) -> Contratos:
         contract = (
@@ -1010,3 +1141,403 @@ class CareLinkCrud:
             self.__s3_client.delete_object(Bucket=bucket_name, Key=object_name)
         except NoCredentialsError:
             raise Exception("AWS credentials not available")
+
+    # ==================== MÉTODOS DE CRONOGRAMA DE ASISTENCIA ====================
+    
+    def create_cronograma_asistencia(self, cronograma_data) -> CronogramaAsistencia:
+        """Crear un nuevo cronograma de asistencia"""
+        try:
+            cronograma = CronogramaAsistencia(**cronograma_data.dict())
+            self.__carelink_session.add(cronograma)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(cronograma)
+            return cronograma
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al crear cronograma de asistencia: {str(e)}"
+            )
+
+    def add_paciente_to_cronograma(self, paciente_data) -> CronogramaAsistenciaPacientes:
+        """Agregar un paciente a un cronograma de asistencia"""
+        try:
+            # Verificar que el cronograma existe
+            cronograma = self._get_cronograma_by_id(paciente_data.id_cronograma)
+            
+            # Verificar que el usuario existe
+            usuario = self._get_user_by_id(paciente_data.id_usuario)
+            
+            # Verificar que no haya doble reserva para el mismo paciente en la misma fecha
+            existing_booking = self.__carelink_session.query(CronogramaAsistenciaPacientes).join(
+                CronogramaAsistencia
+            ).filter(
+                CronogramaAsistenciaPacientes.id_usuario == paciente_data.id_usuario,
+                CronogramaAsistencia.fecha == cronograma.fecha
+            ).first()
+            
+            if existing_booking:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"El paciente ya tiene una cita agendada para la fecha {cronograma.fecha}"
+                )
+            
+            paciente = CronogramaAsistenciaPacientes(**paciente_data.dict())
+            self.__carelink_session.add(paciente)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(paciente)
+            return paciente
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al agregar paciente al cronograma: {str(e)}"
+            )
+
+    def update_estado_asistencia(self, id_cronograma_paciente: int, estado_data) -> CronogramaAsistenciaPacientes:
+        """Actualizar el estado de asistencia de un paciente"""
+        try:
+            paciente = self._get_cronograma_paciente_by_id(id_cronograma_paciente)
+            
+            # Actualizar estado
+            paciente.estado_asistencia = estado_data.estado_asistencia
+            if estado_data.observaciones:
+                paciente.observaciones = estado_data.observaciones
+            
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(paciente)
+            return paciente
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al actualizar estado de asistencia: {str(e)}"
+            )
+
+    def reagendar_paciente(self, id_cronograma_paciente: int, estado_data) -> CronogramaAsistenciaPacientes:
+        """Reagendar un paciente a una nueva fecha"""
+        try:
+            paciente = self._get_cronograma_paciente_by_id(id_cronograma_paciente)
+            
+            # Verificar que el paciente esté en estado PENDIENTE
+            if paciente.estado_asistencia != EstadoAsistencia.PENDIENTE:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Solo se pueden reagendar pacientes con estado PENDIENTE"
+                )
+            
+            # Buscar o crear un cronograma para la nueva fecha
+            nuevo_cronograma = self.__carelink_session.query(CronogramaAsistencia).filter(
+                CronogramaAsistencia.fecha == estado_data.nueva_fecha,
+                CronogramaAsistencia.id_profesional == paciente.cronograma.id_profesional
+            ).first()
+            
+            if not nuevo_cronograma:
+                # Crear nuevo cronograma para la fecha
+                nuevo_cronograma = CronogramaAsistencia(
+                    id_profesional=paciente.cronograma.id_profesional,
+                    fecha=estado_data.nueva_fecha,
+                    comentario=f"Reagendamiento desde {paciente.cronograma.fecha}"
+                )
+                self.__carelink_session.add(nuevo_cronograma)
+                self.__carelink_session.flush()
+            
+            # Crear nuevo registro de paciente en el nuevo cronograma
+            nuevo_paciente = CronogramaAsistenciaPacientes(
+                id_cronograma=nuevo_cronograma.id_cronograma,
+                id_usuario=paciente.id_usuario,
+                id_contrato=paciente.id_contrato,
+                estado_asistencia=EstadoAsistencia.PENDIENTE,
+                requiere_transporte=paciente.requiere_transporte,
+                observaciones=f"Reagendado desde {paciente.cronograma.fecha}. {estado_data.observaciones or ''}"
+            )
+            
+            # Marcar el paciente original como reagendado
+            paciente.estado_asistencia = EstadoAsistencia.REAGENDADO
+            paciente.observaciones = f"Reagendado a {estado_data.nueva_fecha}. {estado_data.observaciones or ''}"
+            
+            self.__carelink_session.add(nuevo_paciente)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(nuevo_paciente)
+            return nuevo_paciente
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al reagendar paciente: {str(e)}"
+            )
+
+    def get_cronogramas_por_rango(self, fecha_inicio: str, fecha_fin: str) -> List[CronogramaAsistencia]:
+        """Obtener cronogramas por rango de fechas"""
+        try:
+            cronogramas = self.__carelink_session.query(CronogramaAsistencia).filter(
+                CronogramaAsistencia.fecha >= fecha_inicio,
+                CronogramaAsistencia.fecha <= fecha_fin
+            ).order_by(CronogramaAsistencia.fecha.asc()).all()
+            
+            return cronogramas
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al obtener cronogramas: {str(e)}"
+            )
+
+    def get_cronogramas_por_profesional(self, id_profesional: int) -> List[CronogramaAsistencia]:
+        """Obtener cronogramas por profesional"""
+        try:
+            # Verificar que el profesional existe
+            self._get_professional_by_id(id_profesional)
+            
+            cronogramas = self.__carelink_session.query(CronogramaAsistencia).filter(
+                CronogramaAsistencia.id_profesional == id_profesional
+            ).order_by(CronogramaAsistencia.fecha.asc()).all()
+            
+            return cronogramas
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al obtener cronogramas del profesional: {str(e)}"
+            )
+
+    def _get_cronograma_by_id(self, id_cronograma: int) -> CronogramaAsistencia:
+        """Obtener cronograma por ID"""
+        cronograma = self.__carelink_session.query(CronogramaAsistencia).filter(
+            CronogramaAsistencia.id_cronograma == id_cronograma
+        ).first()
+        
+        if not cronograma:
+            raise EntityNotFoundError(f"Cronograma con ID {id_cronograma} no encontrado")
+        
+        return cronograma
+
+    def _get_cronograma_paciente_by_id(self, id_cronograma_paciente: int) -> CronogramaAsistenciaPacientes:
+        """Obtener paciente de cronograma por ID"""
+        paciente = self.__carelink_session.query(CronogramaAsistenciaPacientes).filter(
+            CronogramaAsistenciaPacientes.id_cronograma_paciente == id_cronograma_paciente
+        ).first()
+        
+        if not paciente:
+            raise EntityNotFoundError(f"Paciente de cronograma con ID {id_cronograma_paciente} no encontrado")
+        
+        return paciente
+
+    # ==================== MÉTODOS DE TRANSPORTE ====================
+    
+    def create_transporte(self, transporte_data) -> CronogramaTransporte:
+        """Crear un nuevo registro de transporte"""
+        try:
+            # Verificar que el paciente del cronograma existe
+            self._get_cronograma_paciente_by_id(transporte_data.id_cronograma_paciente)
+            
+            transporte = CronogramaTransporte(**transporte_data.dict())
+            self.__carelink_session.add(transporte)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(transporte)
+            return transporte
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al crear transporte: {str(e)}"
+            )
+
+    def update_transporte(self, id_transporte: int, transporte_data) -> CronogramaTransporte:
+        """Actualizar un registro de transporte"""
+        try:
+            transporte = self._get_transporte_by_id(id_transporte)
+            
+            for key, value in transporte_data.dict(exclude_unset=True).items():
+                if hasattr(transporte, key):
+                    setattr(transporte, key, value)
+            
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(transporte)
+            return transporte
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al actualizar transporte: {str(e)}"
+            )
+
+    def delete_transporte(self, id_transporte: int):
+        """Eliminar un registro de transporte"""
+        try:
+            transporte = self._get_transporte_by_id(id_transporte)
+            self.__carelink_session.delete(transporte)
+            self.__carelink_session.commit()
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al eliminar transporte: {str(e)}"
+            )
+
+    def get_ruta_diaria(self, fecha: str) -> List[dict]:
+        """Obtener ruta de transporte para una fecha específica"""
+        try:
+            rutas = self.__carelink_session.query(CronogramaTransporte).join(
+                CronogramaAsistenciaPacientes
+            ).join(
+                CronogramaAsistencia
+            ).join(
+                User
+            ).filter(
+                CronogramaAsistencia.fecha == fecha
+            ).all()
+            
+            return [
+                {
+                    "id_transporte": ruta.id_transporte,
+                    "id_cronograma_paciente": ruta.id_cronograma_paciente,
+                    "nombres": ruta.cronograma_paciente.usuario.nombres,
+                    "apellidos": ruta.cronograma_paciente.usuario.apellidos,
+                    "n_documento": ruta.cronograma_paciente.usuario.n_documento,
+                    "direccion_recogida": ruta.direccion_recogida,
+                    "direccion_entrega": ruta.direccion_entrega,
+                    "hora_recogida": ruta.hora_recogida,
+                    "hora_entrega": ruta.hora_entrega,
+                    "estado": ruta.estado,
+                    "observaciones": ruta.observaciones
+                }
+                for ruta in rutas
+            ]
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al obtener ruta diaria: {str(e)}"
+            )
+
+    def get_transporte_paciente(self, id_cronograma_paciente: int) -> CronogramaTransporte:
+        """Obtener transporte de un paciente específico"""
+        try:
+            # Verificar que el paciente existe
+            self._get_cronograma_paciente_by_id(id_cronograma_paciente)
+            
+            transporte = self.__carelink_session.query(CronogramaTransporte).filter(
+                CronogramaTransporte.id_cronograma_paciente == id_cronograma_paciente
+            ).first()
+            
+            if not transporte:
+                raise EntityNotFoundError(f"No se encontró transporte para el paciente {id_cronograma_paciente}")
+            
+            return transporte
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al obtener transporte del paciente: {str(e)}"
+            )
+
+    def _get_transporte_by_id(self, id_transporte: int) -> CronogramaTransporte:
+        """Obtener transporte por ID"""
+        transporte = self.__carelink_session.query(CronogramaTransporte).filter(
+            CronogramaTransporte.id_transporte == id_transporte
+        ).first()
+        
+        if not transporte:
+            raise EntityNotFoundError(f"Transporte con ID {id_transporte} no encontrado")
+        
+        return transporte
+
+    def create_factura(self, factura_data):
+        # 1. Validar que no exista ya una factura para el contrato
+        detalles = factura_data.get('detalles', [])
+        impuestos = factura_data.get('impuestos', 0)
+        descuentos = factura_data.get('descuentos', 0)
+        # Si no se reciben detalles, generarlos automáticamente
+        if not detalles:
+            servicios = self.__carelink_session.query(ServiciosPorContrato).filter(
+                ServiciosPorContrato.id_contrato == factura_data['id_contrato']
+            ).all()
+            for servicio in servicios:
+                fechas_servicio = self.__carelink_session.query(FechasServicio).filter_by(
+                    id_servicio_contratado=servicio.id_servicio_contratado
+                ).all()
+                cantidad = len(fechas_servicio)
+                tarifa = self.__carelink_session.query(TarifasServicioPorAnio).filter_by(
+                    id_servicio=servicio.id_servicio,
+                    anio=int(str(factura_data['fecha_emision'])[:4])
+                ).first()
+                valor_unitario = tarifa.precio_por_dia if tarifa else 0
+                nombre_servicio = self.__carelink_session.query(Servicios).filter_by(
+                    id_servicio=servicio.id_servicio
+                ).first().nombre
+                detalles.append({
+                    'id_servicio_contratado': servicio.id_servicio_contratado,
+                    'cantidad': cantidad,
+                    'valor_unitario': valor_unitario,
+                    'subtotal_linea': cantidad * valor_unitario,
+                    'impuestos_linea': impuestos,
+                    'descuentos_linea': descuentos,
+                    'descripcion_servicio': nombre_servicio
+                })
+        # 2. Calcular el total de la factura
+        subtotal = sum([d['subtotal_linea'] for d in detalles])
+        impuestos_total = sum([d.get('impuestos_linea', 0) for d in detalles])
+        descuentos_total = sum([d.get('descuentos_linea', 0) for d in detalles])
+        total_factura = subtotal + impuestos_total - descuentos_total
+        # 3. Crear la factura SIN numero_factura
+        factura = Facturas(
+            id_contrato=factura_data['id_contrato'],
+            fecha_emision=factura_data['fecha_emision'],
+            fecha_vencimiento=factura_data.get('fecha_vencimiento'),
+            subtotal=subtotal,
+            impuestos=impuestos_total,
+            descuentos=descuentos_total,
+            total_factura=total_factura,
+            estado_factura='PENDIENTE',
+            observaciones=factura_data.get('observaciones', None)
+        )
+        self.__carelink_session.add(factura)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(factura)
+
+        # 4. Generar numero_factura basado en id_factura (relleno de ceros a la izquierda)
+        numero_factura = str(factura.id_factura).zfill(4)
+        factura.numero_factura = numero_factura
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(factura)
+
+        # 5. Asociar detalles
+        for detalle in detalles:
+            detalle_factura = DetalleFactura(
+                id_factura=factura.id_factura,
+                id_servicio_contratado=detalle['id_servicio_contratado'],
+                cantidad=detalle['cantidad'],
+                valor_unitario=detalle['valor_unitario'],
+                subtotal_linea=detalle.get('subtotal_linea', detalle['cantidad']*detalle['valor_unitario']),
+                impuestos_linea=detalle.get('impuestos_linea', 0),
+                descuentos_linea=detalle.get('descuentos_linea', 0),
+                descripcion_servicio=detalle.get('descripcion_servicio', None)
+            )
+            self.__carelink_session.add(detalle_factura)
+
+        # 6. Asociar pagos
+        for pago in factura_data.get('pagos', []):
+            pago_obj = Pagos(
+                id_factura=factura.id_factura,
+                id_metodo_pago=pago['id_metodo_pago'],
+                id_tipo_pago=pago['id_tipo_pago'],
+                fecha_pago=pago['fecha_pago'],
+                valor=pago['valor']
+            )
+            self.__carelink_session.add(pago_obj)
+
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(factura)
+        return factura
+
+    def actualizar_estados_contratos_finalizados(self):
+        """
+        Actualiza el estado de todos los contratos cuya fecha_fin sea menor a hoy y que estén en estado ACTIVO, cambiándolos a FINALIZADO.
+        """
+        from datetime import date
+        contratos = self.__carelink_session.query(Contratos).filter(
+            Contratos.estado == 'ACTIVO',
+            Contratos.fecha_fin != None,
+            Contratos.fecha_fin < date.today()
+        ).all()
+        for contrato in contratos:
+            contrato.estado = 'FINALIZADO'
+        if contratos:
+            self.__carelink_session.commit()

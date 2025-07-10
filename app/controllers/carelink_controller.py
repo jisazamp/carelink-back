@@ -1,5 +1,5 @@
 from botocore.compat import HTTPResponse
-from sqlalchemy import func
+from sqlalchemy import func, text
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
 from app.dto.v1.request.activities import (
@@ -55,6 +55,7 @@ from app.dto.v1.response.medicines_per_user import (
 from app.dto.v1.response.payment_method import (
     PaymentMethodResponseDTO,
     PaymentResponseDTO,
+    PaymentTypeResponseDTO,
 )
 from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
@@ -82,6 +83,7 @@ from app.models.contracts import (
     ServiciosPorContrato,
     FechasServicio,
     TipoPago,
+    EstadoFactura,
 )
 from app.dto.v1.request.contracts import (
     ContratoCreateDTO,
@@ -91,11 +93,33 @@ from app.dto.v1.request.contracts import (
     PagoCreateDTO,
     PagoResponseDTO,
 )
+from app.dto.v1.request.attendance_schedule import (
+    CronogramaAsistenciaCreateDTO,
+    CronogramaAsistenciaPacienteCreateDTO,
+    CronogramaAsistenciaUpdateDTO,
+    EstadoAsistenciaUpdateDTO,
+)
 from app.dto.v1.response.contracts import (
     ContratoResponseDTO,
     FacturaOut,
     FechaServicioDTO,
     ServicioContratoDTO,
+)
+from app.dto.v1.response.attendance_schedule import (
+    CronogramaAsistenciaResponseDTO,
+    CronogramaAsistenciaPacienteResponseDTO,
+    PacientePorFechaDTO,
+)
+# Nuevos imports para transporte
+from app.models.transporte import CronogramaTransporte
+from app.dto.v1.request.transport_schedule import (
+    CronogramaTransporteCreateDTO,
+    CronogramaTransporteUpdateDTO,
+)
+from app.dto.v1.response.transport_schedule import (
+    CronogramaTransporteResponseDTO,
+    RutaTransporteResponseDTO,
+    RutaDiariaResponseDTO,
 )
 from app.models.vaccines import VacunasPorUsuario
 from app.security.jwt_utilities import (
@@ -109,7 +133,10 @@ from functools import lru_cache
 from http import HTTPStatus
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from datetime import datetime, date, time
 import json
+from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes
+from app.exceptions.exceptions_classes import EntityNotFoundError
 
 
 token_auth_scheme = HTTPBearer()
@@ -527,6 +554,22 @@ async def get_payment_methods(
     )
 
 
+@router.get("/tipos_pago", response_model=Response[List[PaymentTypeResponseDTO]])
+async def get_payment_types(
+    crud: CareLinkCrud = Depends(get_crud),
+) -> Response[List[PaymentTypeResponseDTO]]:
+    payment_types = crud._get_payment_types()
+    payment_types_response = [
+        PaymentTypeResponseDTO.from_orm(type_pago) for type_pago in payment_types
+    ]
+    return Response[List[PaymentTypeResponseDTO]](
+        data=payment_types_response,
+        status_code=HTTPStatus.OK,
+        error=None,
+        message="Tipos de pago retornados con éxito",
+    )
+
+
 @router.get(
     "/activities-upcoming",
     status_code=200,
@@ -552,21 +595,61 @@ async def register_payment(
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[PaymentResponseDTO]:
-    payment_data = Pagos(
-        id_factura=payment.id_factura,
-        id_metodo_pago=payment.id_metodo_pago,
-        id_tipo_pago=1,
-        fecha_pago=payment.fecha_pago,
-        valor=payment.valor,
-    )
-    payment_response = crud.create_payment(payment_data)
+    try:
+        # Validar que la factura existe
+        try:
+            bill = crud.get_bill_by_id(payment.id_factura)
+        except EntityNotFoundError:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"La factura con ID {payment.id_factura} no existe"
+            )
 
-    return Response[PaymentResponseDTO](
-        data=PaymentResponseDTO.from_orm(payment_response),
-        error=None,
-        message="Pago creado de manera exitosa",
-        status_code=HTTPStatus.CREATED,
-    )
+        # Validar que el método de pago existe
+        payment_methods = crud._get_payment_methods()
+        if not any(pm.id_metodo_pago == payment.id_metodo_pago for pm in payment_methods):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El método de pago con ID {payment.id_metodo_pago} no existe"
+            )
+
+        # Validar que el tipo de pago existe
+        payment_types = crud._get_payment_types()
+        if not any(pt.id_tipo_pago == payment.id_tipo_pago for pt in payment_types):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El tipo de pago con ID {payment.id_tipo_pago} no existe"
+            )
+
+        # Crear el objeto de pago
+        payment_data = Pagos(
+            id_factura=payment.id_factura,
+            id_metodo_pago=payment.id_metodo_pago,
+            id_tipo_pago=payment.id_tipo_pago,
+            fecha_pago=payment.fecha_pago,
+            valor=payment.valor,
+        )
+
+        # Crear el pago usando el CRUD
+        payment_response = crud.create_payment(payment_data)
+
+        return Response[PaymentResponseDTO](
+            data=PaymentResponseDTO.from_orm(payment_response),
+            error=None,
+            message="Pago creado de manera exitosa",
+            status_code=HTTPStatus.CREATED,
+        )
+
+    except HTTPException:
+        # Re-lanzar HTTPExceptions para mantener el status code correcto
+        raise
+    except Exception as e:
+        # Log del error para debugging
+        print(f"Error inesperado en register_payment: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
 
 
 @router.post("/calcular/factura", response_model=Response[float])
@@ -1212,54 +1295,204 @@ async def delete_activity(
     )
 
 
+@router.get("/tarifas-servicio/{id_servicio}/{anio}")
+def get_tarifa_servicio(
+    id_servicio: int,
+    anio: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user)
+):
+    """Obtener la tarifa de un servicio para un año específico"""
+    try:
+        tarifa = crud._get_service_rate(id_servicio, anio)
+        return Response[dict](
+            data={
+                "id_servicio": tarifa.id_servicio,
+                "anio": tarifa.anio,
+                "precio_por_dia": float(tarifa.precio_por_dia)
+            },
+            message="Tarifa obtenida exitosamente",
+            status_code=HTTPStatus.OK,
+            error=None,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Tarifa no encontrada para el servicio {id_servicio} en el año {anio}"
+        )
+
+
+@router.get("/contratos", response_model=Response[List[ContratoResponseDTO]])
+def listar_todos_contratos(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user)
+) -> Response[List[ContratoResponseDTO]]:
+    """Obtener todos los contratos del sistema"""
+    try:
+        contratos = crud.get_all_contracts()
+        return Response[List[ContratoResponseDTO]](
+            data=contratos,
+            status_code=HTTPStatus.OK,
+            message="Contratos obtenidos exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener contratos: {str(e)}"
+        )
+
+
 @router.post("/contratos/", response_model=Response[ContratoResponseDTO])
 def crear_contrato(
-    data: ContratoCreateDTO, db: Session = Depends(get_carelink_db)
+    data: ContratoCreateDTO, 
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user)
 ) -> Response[ContratoResponseDTO]:
     try:
-        contrato = Contratos(
-            id_usuario=data.id_usuario,
-            tipo_contrato=data.tipo_contrato,
-            fecha_inicio=data.fecha_inicio,
-            fecha_fin=data.fecha_fin,
-            facturar_contrato=data.facturar_contrato,
-        )
-        db.add(contrato)
-        db.commit()
-        db.refresh(contrato)
-
-        for servicio in data.servicios:
-            servicio_contratado = ServiciosPorContrato(
-                id_contrato=contrato.id_contrato,
-                id_servicio=servicio.id_servicio,
-                fecha=servicio.fecha,
-                descripcion=servicio.descripcion,
-                precio_por_dia=servicio.precio_por_dia,
-            )
-            db.add(servicio_contratado)
-            db.commit()
-            db.refresh(servicio_contratado)
-
-            for f in servicio.fechas_servicio:
-                fecha_servicio = FechasServicio(
-                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
-                    fecha=f.fecha,
+        # Usar la función CRUD actualizada que retorna contrato y servicios_por_contrato
+        result = crud.create_contract(data)
+        contrato = result['contrato']
+        servicios_por_contrato = result['servicios_por_contrato']
+        
+        # Obtener fechas de tiquetera y transporte para cronogramas
+        fechas_tiquetera = set()
+        fechas_transporte = set()
+        servicios_db = []
+        
+        # Construir servicios_db para la respuesta usando los datos del CRUD
+        for servicio_contratado in servicios_por_contrato:
+            # Buscar el servicio original en data.servicios para obtener fechas_servicio
+            servicio_original = next(s for s in data.servicios if s.id_servicio == servicio_contratado['id_servicio'])
+            
+            # Clasificar fechas para cronogramas
+            for f in servicio_original.fechas_servicio:
+                if servicio_contratado['id_servicio'] == 1:
+                    fechas_tiquetera.add(f.fecha)
+                elif servicio_contratado['id_servicio'] == 2:
+                    fechas_transporte.add(f.fecha)
+            
+            # Para la respuesta
+            fechas_dto = [FechaServicioDTO(fecha=f.fecha) for f in servicio_original.fechas_servicio]
+            servicios_db.append(
+                ServicioContratoDTO(
+                    id_servicio_contratado=servicio_contratado['id_servicio_contratado'],
+                    id_servicio=servicio_contratado['id_servicio'],
+                    fecha=servicio_original.fecha,
+                    descripcion=servicio_original.descripcion,
+                    precio_por_dia=servicio_original.precio_por_dia,
+                    fechas_servicio=fechas_dto,
                 )
-                db.add(fecha_servicio)
+            )
 
-        db.commit()
-        contract_response_dto: ContratoResponseDTO = ContratoResponseDTO.from_orm(
-            contrato
-        )
+        # Procesar cronogramas de asistencia y transporte
+        id_profesional_default = 1
+        
+        # 🔴 VALIDACIÓN: Verificar que no haya doble agendamiento antes de procesar
+        for fecha in fechas_tiquetera:
+            # Buscar si ya existe un cronograma para esta fecha
+            cronograma_existente = (
+                crud._CareLinkCrud__carelink_session.query(CronogramaAsistencia)
+                .filter(
+                    CronogramaAsistencia.fecha == fecha,
+                    CronogramaAsistencia.id_profesional == id_profesional_default
+                )
+                .first()
+            )
+            
+            if cronograma_existente:
+                # Verificar si el paciente ya está agendado para esta fecha
+                paciente_ya_agendado = (
+                    crud._CareLinkCrud__carelink_session.query(CronogramaAsistenciaPacientes)
+                    .filter(
+                        CronogramaAsistenciaPacientes.id_cronograma == cronograma_existente.id_cronograma,
+                        CronogramaAsistenciaPacientes.id_usuario == data.id_usuario
+                    )
+                    .first()
+                )
+                
+                if paciente_ya_agendado:
+                    # Formatear la fecha para el mensaje
+                    fecha_formateada = fecha.strftime("%d/%m/%Y")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"El paciente ya está agendado para la fecha {fecha_formateada}. "
+                               f"No se puede crear un doble agendamiento. "
+                               f"Paciente ID: {data.id_usuario}, Estado actual: {paciente_ya_agendado.estado_asistencia}. "
+                               f"Por favor verifique las fechas agendadas y corrija el error."
+                    )
+        
+        # Si llegamos aquí, no hay conflictos de doble agendamiento
+        for fecha in fechas_tiquetera:
+            # Crear o buscar cronograma de asistencia
+            cronograma_existente = (
+                crud._CareLinkCrud__carelink_session.query(CronogramaAsistencia)
+                .filter(
+                    CronogramaAsistencia.fecha == fecha,
+                    CronogramaAsistencia.id_profesional == id_profesional_default
+                )
+                .first()
+            )
+            if not cronograma_existente:
+                cronograma_asistencia = CronogramaAsistencia(
+                    id_profesional=id_profesional_default,
+                    fecha=fecha,
+                    comentario=f"Generado automáticamente desde contrato {contrato.id_contrato}"
+                )
+                crud._CareLinkCrud__carelink_session.add(cronograma_asistencia)
+                crud._CareLinkCrud__carelink_session.commit()
+                crud._CareLinkCrud__carelink_session.refresh(cronograma_asistencia)
+            else:
+                cronograma_asistencia = cronograma_existente
+            # Determinar si ese día requiere transporte
+            requiere_transporte = fecha in fechas_transporte
+            # Agregar paciente al cronograma
+            paciente_cronograma = CronogramaAsistenciaPacientes(
+                id_cronograma=cronograma_asistencia.id_cronograma,
+                id_usuario=data.id_usuario,
+                id_contrato=contrato.id_contrato,
+                estado_asistencia="PENDIENTE",
+                requiere_transporte=requiere_transporte,
+                observaciones=None
+            )
+            crud._CareLinkCrud__carelink_session.add(paciente_cronograma)
+            crud._CareLinkCrud__carelink_session.commit()
+            crud._CareLinkCrud__carelink_session.refresh(paciente_cronograma)
+            # Si requiere transporte, crear cronograma_transporte
+            if requiere_transporte:
+                cronograma_transporte = CronogramaTransporte(
+                    id_cronograma_paciente=paciente_cronograma.id_cronograma_paciente,
+                    direccion_recogida="Por definir",
+                    direccion_entrega="Por definir",
+                    hora_recogida=time(8, 0),
+                    hora_entrega=time(17, 0),
+                    estado="PENDIENTE",
+                    observaciones="Generado automáticamente desde contrato"
+                )
+                crud._CareLinkCrud__carelink_session.add(cronograma_transporte)
+                crud._CareLinkCrud__carelink_session.commit()
+
+        # Construir respuesta con los datos del CRUD
         return Response[ContratoResponseDTO](
-            data=contract_response_dto,
+            data=ContratoResponseDTO(
+                id_contrato=contrato.id_contrato,
+                id_usuario=contrato.id_usuario,
+                tipo_contrato=contrato.tipo_contrato,
+                fecha_inicio=contrato.fecha_inicio,
+                fecha_fin=contrato.fecha_fin,
+                facturar_contrato=contrato.facturar_contrato,
+                estado=contrato.estado,
+                servicios=servicios_db,
+            ),
             message="Contrato creado de manera exitosa",
             status_code=HTTPStatus.CREATED,
             error=None,
         )
 
+    except HTTPException:
+        # Re-lanzar HTTPException sin modificar
+        raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(
             status_code=500, detail=f"Error al crear contrato: {str(e)}"
         )
@@ -1329,6 +1562,7 @@ def listar_contratos_por_usuario(
                     fecha_inicio=contrato.fecha_inicio,
                     fecha_fin=contrato.fecha_fin,
                     facturar_contrato=contrato.facturar_contrato,
+                    estado=contrato.estado,  # <-- Se agrega el campo estado
                     servicios=servicios,
                 )
             )
@@ -1380,6 +1614,7 @@ def obtener_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
         fecha_inicio=contrato.fecha_inicio,
         fecha_fin=contrato.fecha_fin,
         facturar_contrato=contrato.facturar_contrato,
+        estado=contrato.estado,  # <-- Se agrega el campo estado
         servicios=servicios,
     )
 
@@ -1547,159 +1782,1203 @@ def eliminar_pago(id_pago: int, db: Session = Depends(get_carelink_db)):
     return {"message": "Pago eliminado correctamente"}
 
 
-@router.post("/facturas/")
-def create_factura(factura_data: FacturaCreate, db: Session = Depends(get_carelink_db)):
-    contrato = (
-        db.query(Contratos)
-        .filter(Contratos.id_contrato == factura_data.id_contrato)
-        .first()
-    )
-    if not contrato:
-        raise HTTPException(status_code=404, detail="Contrato no encontrado")
+# ============================================================================
+# ENDPOINTS DE FACTURACIÓN - IMPLEMENTACIÓN COMPLETA
+# ============================================================================
 
-    factura = Facturas(
-        id_contrato=factura_data.id_contrato,
-        fecha_emision=factura_data.fecha_emision,
-        fecha_vencimiento=factura_data.fecha_vencimiento,
-        total=factura_data.total,
-    )
-    db.add(factura)
-    db.flush()
 
-    for pago_data in factura_data.pagos:
-        if (
-            not db.query(MetodoPago)
-            .filter_by(id_metodo_pago=pago_data.id_metodo_pago)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ============================================================================
+# ENDPOINTS DE CRONOGRAMA DE ASISTENCIA
+# ============================================================================
+
+@router.post("/cronograma_asistencia/crear", response_model=Response[CronogramaAsistenciaResponseDTO])
+def crear_cronograma_asistencia(
+    cronograma_data: CronogramaAsistenciaCreateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[CronogramaAsistenciaResponseDTO]:
+    """
+    Crea un nuevo cronograma de asistencia
+    """
+    try:
+        # Verificar si ya existe un cronograma para esta fecha y profesional
+        cronograma_existente = (
+            db.query(CronogramaAsistencia)
+            .filter(
+                CronogramaAsistencia.fecha == cronograma_data.fecha,
+                CronogramaAsistencia.id_profesional == cronograma_data.id_profesional
+            )
             .first()
-        ):
+        )
+        
+        if cronograma_existente:
+            # Si ya existe, retornar el existente
+            return Response[CronogramaAsistenciaResponseDTO](
+                data=CronogramaAsistenciaResponseDTO(
+                    id_cronograma=cronograma_existente.id_cronograma,
+                    id_profesional=cronograma_existente.id_profesional,
+                    fecha=cronograma_existente.fecha,
+                    comentario=cronograma_existente.comentario,
+                    fecha_creacion=cronograma_existente.fecha_creacion,
+                    fecha_actualizacion=cronograma_existente.fecha_actualizacion,
+                    pacientes=[]
+                ),
+                status_code=HTTPStatus.OK,
+                message="Cronograma existente recuperado",
+                error=None,
+            )
+        
+        # Crear nuevo cronograma
+        nuevo_cronograma = CronogramaAsistencia(
+            id_profesional=cronograma_data.id_profesional,
+            fecha=cronograma_data.fecha,
+            comentario=cronograma_data.comentario
+        )
+        
+        db.add(nuevo_cronograma)
+        db.commit()
+        db.refresh(nuevo_cronograma)
+        
+        return Response[CronogramaAsistenciaResponseDTO](
+            data=CronogramaAsistenciaResponseDTO(
+                id_cronograma=nuevo_cronograma.id_cronograma,
+                id_profesional=nuevo_cronograma.id_profesional,
+                fecha=nuevo_cronograma.fecha,
+                comentario=nuevo_cronograma.comentario,
+                fecha_creacion=nuevo_cronograma.fecha_creacion,
+                fecha_actualizacion=nuevo_cronograma.fecha_actualizacion,
+                pacientes=[]
+            ),
+            status_code=HTTPStatus.CREATED,
+            message="Cronograma creado exitosamente",
+            error=None,
+        )
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al crear cronograma: {str(e)}"
+        )
+
+
+@router.post("/cronograma_asistencia/paciente/agregar", response_model=Response[CronogramaAsistenciaPacienteResponseDTO])
+def agregar_paciente_cronograma(
+    paciente_data: CronogramaAsistenciaPacienteCreateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
+    """
+    Agrega un paciente a un cronograma de asistencia existente
+    """
+    try:
+        # 🔴 VALIDACIÓN: Verificar que el cronograma existe
+        cronograma = (
+            db.query(CronogramaAsistencia)
+            .filter(CronogramaAsistencia.id_cronograma == paciente_data.id_cronograma)
+            .first()
+        )
+        
+        if not cronograma:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontró el cronograma con ID {paciente_data.id_cronograma}"
+            )
+        
+        # 🔴 VALIDACIÓN: Verificar que el paciente ya está en el cronograma
+        paciente_existente = (
+            db.query(CronogramaAsistenciaPacientes)
+            .filter(
+                CronogramaAsistenciaPacientes.id_cronograma == paciente_data.id_cronograma,
+                CronogramaAsistenciaPacientes.id_usuario == paciente_data.id_usuario
+            )
+            .first()
+        )
+        
+        if paciente_existente:
             raise HTTPException(
                 status_code=400,
-                detail=f"Método de pago {pago_data.id_metodo_pago} no existe",
+                detail=f"El paciente ya está registrado en este cronograma para la fecha {cronograma.fecha}. "
+                       f"No se puede crear un doble agendamiento. "
+                       f"Paciente ID: {paciente_data.id_usuario}, "
+                       f"Estado actual: {paciente_existente.estado_asistencia}"
             )
-        if (
-            not db.query(TipoPago)
-            .filter_by(id_tipo_pago=pago_data.id_tipo_pago)
+        
+        # 🔴 VALIDACIÓN: Verificar que el contrato existe y pertenece al usuario
+        contrato = (
+            db.query(Contratos)
+            .filter(
+                Contratos.id_contrato == paciente_data.id_contrato,
+                Contratos.id_usuario == paciente_data.id_usuario
+            )
             .first()
-        ):
+        )
+        
+        if not contrato:
             raise HTTPException(
                 status_code=400,
-                detail=f"Tipo de pago {pago_data.id_tipo_pago} no existe",
+                detail=f"El contrato {paciente_data.id_contrato} no existe o no pertenece al usuario {paciente_data.id_usuario}"
             )
+        
+        # Agregar paciente al cronograma
+        nuevo_paciente = CronogramaAsistenciaPacientes(
+            id_cronograma=paciente_data.id_cronograma,
+            id_usuario=paciente_data.id_usuario,
+            id_contrato=paciente_data.id_contrato,
+            estado_asistencia=paciente_data.estado_asistencia,
+            observaciones=paciente_data.observaciones
+        )
+        
+        db.add(nuevo_paciente)
+        db.commit()
+        db.refresh(nuevo_paciente)
+        
+        return Response[CronogramaAsistenciaPacienteResponseDTO](
+            data=CronogramaAsistenciaPacienteResponseDTO(
+                id_cronograma_paciente=nuevo_paciente.id_cronograma_paciente,
+                id_cronograma=nuevo_paciente.id_cronograma,
+                id_usuario=nuevo_paciente.id_usuario,
+                id_contrato=nuevo_paciente.id_contrato,
+                estado_asistencia=nuevo_paciente.estado_asistencia,
+                requiere_transporte=nuevo_paciente.requiere_transporte,
+                observaciones=nuevo_paciente.observaciones
+            ),
+            status_code=HTTPStatus.CREATED,
+            message="Paciente agregado al cronograma exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al agregar paciente al cronograma: {str(e)}"
+        )
 
-        pago = Pagos(
+
+@router.get("/cronograma_asistencia/rango/{fecha_inicio}/{fecha_fin}", response_model=Response[List[CronogramaAsistenciaResponseDTO]])
+def get_cronogramas_por_rango(
+    fecha_inicio: str,
+    fecha_fin: str,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[CronogramaAsistenciaResponseDTO]]:
+    """
+    Obtiene los cronogramas de asistencia en un rango de fechas
+    """
+    try:
+        # Convertir fechas de string a date
+        fecha_inicio_date = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
+        fecha_fin_date = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
+        
+        # Consultar cronogramas en el rango
+        cronogramas = (
+            db.query(CronogramaAsistencia)
+            .filter(
+                CronogramaAsistencia.fecha >= fecha_inicio_date,
+                CronogramaAsistencia.fecha <= fecha_fin_date
+            )
+            .all()
+        )
+        
+        result = []
+        for cronograma in cronogramas:
+            # Obtener pacientes agendados para este cronograma
+            pacientes_agendados = (
+                db.query(CronogramaAsistenciaPacientes, User)
+                .join(User, CronogramaAsistenciaPacientes.id_usuario == User.id_usuario)
+                .filter(CronogramaAsistenciaPacientes.id_cronograma == cronograma.id_cronograma)
+                .all()
+            )
+            
+            pacientes_dto = []
+            for paciente_agendado, usuario in pacientes_agendados:
+                # Obtener información de transporte si existe
+                transporte_info = None
+                if paciente_agendado.requiere_transporte:
+                    transporte = db.query(CronogramaTransporte).filter(
+                        CronogramaTransporte.id_cronograma_paciente == paciente_agendado.id_cronograma_paciente
+                    ).first()
+                    if transporte:
+                        transporte_info = {
+                            "id_transporte": transporte.id_transporte,
+                            "direccion_recogida": transporte.direccion_recogida,
+                            "direccion_entrega": transporte.direccion_entrega,
+                            "hora_recogida": str(transporte.hora_recogida) if transporte.hora_recogida else None,
+                            "hora_entrega": str(transporte.hora_entrega) if transporte.hora_entrega else None,
+                            "estado": transporte.estado,
+                            "observaciones": transporte.observaciones
+                        }
+                pacientes_dto.append(
+                    PacientePorFechaDTO(
+                        id_cronograma_paciente=paciente_agendado.id_cronograma_paciente,
+                        id_usuario=paciente_agendado.id_usuario,
+                        id_contrato=paciente_agendado.id_contrato,
+                        estado_asistencia=paciente_agendado.estado_asistencia,
+                        requiere_transporte=paciente_agendado.requiere_transporte,
+                        nombres=usuario.nombres,
+                        apellidos=usuario.apellidos,
+                        n_documento=usuario.n_documento,
+                        transporte_info=transporte_info,
+                        fecha_creacion=paciente_agendado.fecha_creacion,
+                        fecha_actualizacion=paciente_agendado.fecha_actualizacion
+                    )
+                )
+            
+            result.append(
+                CronogramaAsistenciaResponseDTO(
+                    id_cronograma=cronograma.id_cronograma,
+                    id_profesional=cronograma.id_profesional,
+                    fecha=cronograma.fecha,
+                    comentario=cronograma.comentario,
+                    fecha_creacion=cronograma.fecha_creacion,
+                    fecha_actualizacion=cronograma.fecha_actualizacion,
+                    pacientes=pacientes_dto
+                )
+            )
+        
+        return Response[List[CronogramaAsistenciaResponseDTO]](
+            data=result,
+            status_code=HTTPStatus.OK,
+            message="Cronogramas consultados exitosamente",
+            error=None,
+        )
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Formato de fecha inválido: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.get("/cronograma_asistencia/profesional/{id_profesional}", response_model=Response[List[CronogramaAsistenciaResponseDTO]])
+def get_cronogramas_por_profesional(
+    id_profesional: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[CronogramaAsistenciaResponseDTO]]:
+    """
+    Obtiene los cronogramas de asistencia de un profesional específico
+    """
+    try:
+        # Consultar cronogramas del profesional
+        cronogramas = (
+            db.query(CronogramaAsistencia)
+            .filter(CronogramaAsistencia.id_profesional == id_profesional)
+            .all()
+        )
+        
+        result = []
+        for cronograma in cronogramas:
+            # Obtener pacientes agendados para este cronograma
+            pacientes_agendados = (
+                db.query(CronogramaAsistenciaPacientes, User)
+                .join(User, CronogramaAsistenciaPacientes.id_usuario == User.id_usuario)
+                .filter(CronogramaAsistenciaPacientes.id_cronograma == cronograma.id_cronograma)
+                .all()
+            )
+            
+            pacientes_dto = []
+            for paciente_agendado, usuario in pacientes_agendados:
+                # Obtener información de transporte si existe
+                transporte_info = None
+                if paciente_agendado.requiere_transporte:
+                    transporte = db.query(CronogramaTransporte).filter(
+                        CronogramaTransporte.id_cronograma_paciente == paciente_agendado.id_cronograma_paciente
+                    ).first()
+                    if transporte:
+                        transporte_info = {
+                            "id_transporte": transporte.id_transporte,
+                            "direccion_recogida": transporte.direccion_recogida,
+                            "direccion_entrega": transporte.direccion_entrega,
+                            "hora_recogida": str(transporte.hora_recogida) if transporte.hora_recogida else None,
+                            "hora_entrega": str(transporte.hora_entrega) if transporte.hora_entrega else None,
+                            "estado": transporte.estado,
+                            "observaciones": transporte.observaciones
+                        }
+                pacientes_dto.append(
+                    PacientePorFechaDTO(
+                        id_cronograma_paciente=paciente_agendado.id_cronograma_paciente,
+                        id_usuario=paciente_agendado.id_usuario,
+                        id_contrato=paciente_agendado.id_contrato,
+                        estado_asistencia=paciente_agendado.estado_asistencia,
+                        requiere_transporte=paciente_agendado.requiere_transporte,
+                        nombres=usuario.nombres,
+                        apellidos=usuario.apellidos,
+                        n_documento=usuario.n_documento,
+                        transporte_info=transporte_info,
+                        fecha_creacion=paciente_agendado.fecha_creacion,
+                        fecha_actualizacion=paciente_agendado.fecha_actualizacion
+                    )
+                )
+            
+            result.append(
+                CronogramaAsistenciaResponseDTO(
+                    id_cronograma=cronograma.id_cronograma,
+                    id_profesional=cronograma.id_profesional,
+                    fecha=cronograma.fecha,
+                    comentario=cronograma.comentario,
+                    fecha_creacion=cronograma.fecha_creacion,
+                    fecha_actualizacion=cronograma.fecha_actualizacion,
+                    pacientes=pacientes_dto
+                )
+            )
+        
+        return Response[List[CronogramaAsistenciaResponseDTO]](
+            data=result,
+            status_code=HTTPStatus.OK,
+            message="Cronogramas del profesional consultados exitosamente",
+            error=None,
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.patch("/cronograma_asistencia/paciente/{id_cronograma_paciente}/estado", response_model=Response[CronogramaAsistenciaPacienteResponseDTO])
+def update_estado_asistencia(
+    id_cronograma_paciente: int,
+    estado_data: EstadoAsistenciaUpdateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
+    """
+    Actualiza el estado de asistencia de un paciente y guarda observaciones. 
+    Si asiste o no asiste (sin justificación), descuenta día de tiquetera. 
+    Si se agotan días, marca contrato como vencido y genera alerta.
+    """
+    try:
+        paciente_cronograma = (
+            db.query(CronogramaAsistenciaPacientes)
+            .filter(CronogramaAsistenciaPacientes.id_cronograma_paciente == id_cronograma_paciente)
+            .first()
+        )
+        if not paciente_cronograma:
+            raise HTTPException(
+                status_code=404,
+                detail="Paciente no encontrado en el cronograma"
+            )
+        
+        # 🔴 VALIDACIÓN: Solo se puede cambiar estado de registros "PENDIENTE"
+        if paciente_cronograma.estado_asistencia != "PENDIENTE":
+            raise HTTPException(
+                status_code=400,
+                detail=f"No se puede cambiar el estado de un paciente con estado '{paciente_cronograma.estado_asistencia}'. Solo se puede modificar registros con estado 'PENDIENTE'."
+            )
+        
+        estados_validos = ["PENDIENTE", "ASISTIO", "NO_ASISTIO", "CANCELADO"]
+        if estado_data.estado_asistencia not in estados_validos:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Estado inválido. Estados válidos: {', '.join(estados_validos)}"
+            )
+        # Guardar observaciones
+        paciente_cronograma.observaciones = estado_data.observaciones
+        paciente_cronograma.estado_asistencia = estado_data.estado_asistencia
+        db.commit()
+        db.refresh(paciente_cronograma)
+        
+        # 🔴 LÓGICA DE DESCUENTO DE DÍAS DE TIQUETERA
+        # Se descuenta día tanto si ASISTE como si NO ASISTE (sin justificación)
+        if estado_data.estado_asistencia in ["ASISTIO", "NO_ASISTIO"]:
+            contrato = db.query(Contratos).filter(Contratos.id_contrato == paciente_cronograma.id_contrato).first()
+            if contrato:
+                # Contar días consumidos (asistencias + no asistencias)
+                total_dias_consumidos = db.query(CronogramaAsistenciaPacientes).filter(
+                    CronogramaAsistenciaPacientes.id_contrato == contrato.id_contrato,
+                    CronogramaAsistenciaPacientes.estado_asistencia.in_(["ASISTIO", "NO_ASISTIO"])
+                ).count()
+                
+                # Contar total de días de la tiquetera (servicio 1)
+                total_tiquetera = db.query(CronogramaAsistenciaPacientes).filter(
+                    CronogramaAsistenciaPacientes.id_contrato == contrato.id_contrato
+                ).count()
+                
+                # Si se agotaron todos los días, marcar contrato como vencido
+                if total_dias_consumidos >= total_tiquetera:
+                    contrato.estado = "VENCIDO"
+                    db.commit()
+                    # Aquí puedes agregar lógica para generar una alerta al profesional
+        response_dto = CronogramaAsistenciaPacienteResponseDTO(
+            id_cronograma_paciente=paciente_cronograma.id_cronograma_paciente,
+            id_cronograma=paciente_cronograma.id_cronograma,
+            id_usuario=paciente_cronograma.id_usuario,
+            id_contrato=paciente_cronograma.id_contrato,
+            estado_asistencia=paciente_cronograma.estado_asistencia,
+            requiere_transporte=paciente_cronograma.requiere_transporte,
+            observaciones=paciente_cronograma.observaciones,
+            fecha_creacion=paciente_cronograma.fecha_creacion,
+            fecha_actualizacion=paciente_cronograma.fecha_actualizacion
+        )
+        return Response[CronogramaAsistenciaPacienteResponseDTO](
+            data=response_dto,
+            status_code=HTTPStatus.OK,
+            message="Estado de asistencia actualizado exitosamente",
+            error=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.post("/cronograma_asistencia/paciente/{id_cronograma_paciente}/reagendar", response_model=Response[CronogramaAsistenciaPacienteResponseDTO])
+def reagendar_asistencia_paciente(
+    id_cronograma_paciente: int,
+    estado_data: EstadoAsistenciaUpdateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
+    """
+    Reagenda la asistencia de un paciente SOLO si existe justificación (observaciones) y nueva fecha.
+    """
+    try:
+        paciente_cronograma = (
+            db.query(CronogramaAsistenciaPacientes)
+            .filter(CronogramaAsistenciaPacientes.id_cronograma_paciente == id_cronograma_paciente)
+            .first()
+        )
+        if not paciente_cronograma:
+            raise HTTPException(
+                status_code=404,
+                detail="Paciente no encontrado en el cronograma"
+            )
+        
+        # 🔴 VALIDACIÓN POR REGISTRO INDIVIDUAL Y ESTADO
+        # Solo se puede reagendar si el estado es "PENDIENTE"
+        if paciente_cronograma.estado_asistencia in ["REAGENDADO", "ASISTIO", "NO_ASISTIO", "CANCELADO"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No se puede reagendar un paciente que ya tiene estado '{paciente_cronograma.estado_asistencia}' en esta fecha. Solo se puede reagendar si el estado es 'PENDIENTE'."
+            )
+        
+        if not estado_data.observaciones or not estado_data.observaciones.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="No se puede reagendar sin justificación en observaciones."
+            )
+        if not estado_data.nueva_fecha:
+            raise HTTPException(
+                status_code=400,
+                detail="Debe seleccionar una nueva fecha para reagendar."
+            )
+        
+        # 🔴 PASO 1: Obtener el id_profesional del cronograma original
+        cronograma_original = db.query(CronogramaAsistencia).filter_by(
+            id_cronograma=paciente_cronograma.id_cronograma
+        ).first()
+        id_profesional = cronograma_original.id_profesional
+        
+        # 🔴 PASO 2: Buscar o crear cronograma para la nueva fecha
+        cronograma_nuevo = db.query(CronogramaAsistencia).filter_by(
+            id_profesional=id_profesional,
+            fecha=estado_data.nueva_fecha
+        ).first()
+        
+        if not cronograma_nuevo:
+            cronograma_nuevo = CronogramaAsistencia(
+                id_profesional=id_profesional,
+                fecha=estado_data.nueva_fecha
+            )
+            db.add(cronograma_nuevo)
+            db.commit()
+            db.refresh(cronograma_nuevo)
+        
+        # 🔴 PASO 3: Verificar que no esté ya agendado para la nueva fecha
+        agendado_existente = db.query(CronogramaAsistenciaPacientes).filter_by(
+            id_cronograma=cronograma_nuevo.id_cronograma,
+            id_usuario=paciente_cronograma.id_usuario
+        ).first()
+        
+        if agendado_existente:
+            raise HTTPException(
+                status_code=400,
+                detail="El paciente ya está agendado para esta fecha."
+            )
+        
+        # 🔴 PASO 4: Crear nuevo registro para la nueva fecha
+        nuevo_paciente_cronograma = CronogramaAsistenciaPacientes(
+            id_cronograma=cronograma_nuevo.id_cronograma,
+            id_usuario=paciente_cronograma.id_usuario,
+            id_contrato=paciente_cronograma.id_contrato,
+            estado_asistencia="PENDIENTE",
+            observaciones=""
+        )
+        db.add(nuevo_paciente_cronograma)
+        db.commit()
+        db.refresh(nuevo_paciente_cronograma)
+        
+        # 🔴 PASO 5: SOLO DESPUÉS de crear exitosamente el nuevo registro, cambiar estado del original
+        paciente_cronograma.estado_asistencia = "REAGENDADO"
+        paciente_cronograma.observaciones = estado_data.observaciones
+        db.commit()
+        
+        response_dto = CronogramaAsistenciaPacienteResponseDTO(
+            id_cronograma_paciente=nuevo_paciente_cronograma.id_cronograma_paciente,
+            id_cronograma=nuevo_paciente_cronograma.id_cronograma,
+            id_usuario=nuevo_paciente_cronograma.id_usuario,
+            id_contrato=nuevo_paciente_cronograma.id_contrato,
+            estado_asistencia=nuevo_paciente_cronograma.estado_asistencia,
+            requiere_transporte=nuevo_paciente_cronograma.requiere_transporte,
+            observaciones=nuevo_paciente_cronograma.observaciones,
+            fecha_creacion=nuevo_paciente_cronograma.fecha_creacion,
+            fecha_actualizacion=nuevo_paciente_cronograma.fecha_actualizacion
+        )
+        return Response[CronogramaAsistenciaPacienteResponseDTO](
+            data=response_dto,
+            status_code=HTTPStatus.OK,
+            message="Paciente reagendado exitosamente",
+            error=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+# ============================================================================
+# ENDPOINTS DE TRANSPORTE MOVIDOS A transporte_controller.py
+# ============================================================================
+# Todos los endpoints de transporte han sido movidos al controlador específico
+# para evitar conflictos y mantener una mejor organización del código
+
+# ============================================================================
+# ENDPOINTS DE FACTURACIÓN - IMPLEMENTACIÓN COMPLETA
+# ============================================================================
+
+@router.post("/facturas/", response_model=Response[FacturaOut])
+def create_factura(
+    factura_data: FacturaCreate, 
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user)
+) -> Response[FacturaOut]:
+    """
+    Crea una nueva factura con sus pagos asociados
+    
+    Args:
+        factura_data: Datos de la factura incluyendo pagos
+        db: Sesión de base de datos
+        _: Usuario autenticado
+        
+    Returns:
+        Response con la factura creada
+        
+    Raises:
+        HTTPException: Si el contrato no existe o hay errores de validación
+    """
+    try:
+        # Validar que el contrato existe
+        contrato = db.query(Contratos).filter(
+            Contratos.id_contrato == factura_data.id_contrato
+        ).first()
+        
+        if not contrato:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Contrato con ID {factura_data.id_contrato} no encontrado"
+            )
+        
+        # Validar que el contrato esté activo
+        if contrato.estado != "ACTIVO":
+            raise HTTPException(
+                status_code=400,
+                detail=f"El contrato {contrato.id_contrato} no está activo (estado: {contrato.estado})"
+            )
+        
+        # Crear la factura
+        factura = Facturas(
+            id_contrato=factura_data.id_contrato,
+            fecha_emision=factura_data.fecha_emision,
+            fecha_vencimiento=factura_data.fecha_vencimiento,
+            total_factura=factura_data.total,  # Corregido: usar total_factura
+            subtotal=factura_data.total,  # Por defecto igual al total
+            impuestos=0.00,
+            descuentos=0.00,
+            estado_factura=EstadoFactura.PENDIENTE
+        )
+        
+        db.add(factura)
+        db.flush()  # Para obtener el ID de la factura
+        
+        # Procesar pagos si existen
+        total_pagos = 0
+        for pago_data in factura_data.pagos:
+            # Validar método de pago
+            metodo_pago = db.query(MetodoPago).filter(
+                MetodoPago.id_metodo_pago == pago_data.id_metodo_pago
+            ).first()
+            
+            if not metodo_pago:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Método de pago con ID {pago_data.id_metodo_pago} no existe"
+                )
+            
+            # Validar tipo de pago
+            tipo_pago = db.query(TipoPago).filter(
+                TipoPago.id_tipo_pago == pago_data.id_tipo_pago
+            ).first()
+            
+            if not tipo_pago:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tipo de pago con ID {pago_data.id_tipo_pago} no existe"
+                )
+            
+            # Crear el pago
+            pago = Pagos(
+                id_factura=factura.id_factura,
+                id_metodo_pago=pago_data.id_metodo_pago,
+                id_tipo_pago=pago_data.id_tipo_pago,
+                fecha_pago=pago_data.fecha_pago,
+                valor=pago_data.valor
+            )
+            
+            db.add(pago)
+            total_pagos += float(pago_data.valor)
+        
+        # Validar que los pagos no excedan el total de la factura
+        if total_pagos > float(factura_data.total):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El total de pagos ({total_pagos}) excede el total de la factura ({factura_data.total})"
+            )
+        
+        # Actualizar estado de la factura si los pagos cubren el total
+        if total_pagos >= float(factura_data.total):
+            factura.estado_factura = EstadoFactura.PAGADA
+        
+        db.commit()
+        db.refresh(factura)
+        
+        # Crear respuesta
+        factura_response = FacturaOut(
             id_factura=factura.id_factura,
-            id_metodo_pago=pago_data.id_metodo_pago,
-            id_tipo_pago=pago_data.id_tipo_pago,
-            fecha_pago=pago_data.fecha_pago,
-            valor=pago_data.valor,
+            numero_factura=factura.numero_factura,
+            id_contrato=factura.id_contrato,
+            fecha_emision=factura.fecha_emision,
+            total_factura=float(factura.total_factura)
         )
-        db.add(pago)
+        
+        return Response[FacturaOut](
+            data=factura_response,
+            status_code=HTTPStatus.CREATED,
+            message="Factura creada exitosamente",
+            error=None
+        )
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor al crear factura: {str(e)}"
+        )
 
-    db.commit()
-    return {"id_factura": factura.id_factura}
 
-
-@router.post("/facturas/{factura_id}/pagos/")
+@router.post("/facturas/{factura_id}/pagos/", response_model=Response[dict])
 def add_pago_to_factura(
-    factura_id: int, pagos: List[PagoCreate], db: Session = Depends(get_carelink_db)
-):
-    factura = db.query(Facturas).filter(Facturas.id_factura == factura_id).first()
-    if not factura:
-        raise HTTPException(status_code=404, detail="Factura no encontrada")
-
-    total_existente = sum(p.valor for p in factura.pagos)
-    total_nuevo = sum(p.valor for p in pagos)
-    if total_existente + total_nuevo > factura.total_factura:
-        raise HTTPException(
-            status_code=400, detail="Los pagos exceden el total de la factura"
-        )
-
-    for pago_data in pagos:
-        if (
-            not db.query(MetodoPago)
-            .filter_by(id_metodo_pago=pago_data.id_metodo_pago)
-            .first()
-        ):
+    factura_id: int, 
+    pagos: List[PagoCreate], 
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user)
+) -> Response[dict]:
+    """
+    Agrega uno o varios pagos a una factura existente
+    
+    Args:
+        factura_id: ID de la factura
+        pagos: Lista de pagos a agregar
+        db: Sesión de base de datos
+        _: Usuario autenticado
+        
+    Returns:
+        Response con mensaje de confirmación
+        
+    Raises:
+        HTTPException: Si la factura no existe o hay errores de validación
+    """
+    try:
+        # Validar que la factura existe
+        factura = db.query(Facturas).filter(
+            Facturas.id_factura == factura_id
+        ).first()
+        
+        if not factura:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Factura con ID {factura_id} no encontrada"
+            )
+        
+        # Validar que la factura no esté cancelada o anulada
+        if factura.estado_factura in [EstadoFactura.CANCELADA, EstadoFactura.ANULADA]:
             raise HTTPException(
                 status_code=400,
-                detail=f"Método de pago {pago_data.id_metodo_pago} no existe",
+                detail=f"No se pueden agregar pagos a una factura con estado {factura.estado_factura.value}"
             )
-        if (
-            not db.query(TipoPago)
-            .filter_by(id_tipo_pago=pago_data.id_tipo_pago)
-            .first()
-        ):
+        
+        # Calcular total de pagos existentes
+        total_existente = sum(float(p.valor) for p in factura.pagos)
+        total_nuevo = sum(float(p.valor) for p in pagos)
+        total_factura = float(factura.total_factura)
+        
+        # Validar que los nuevos pagos no excedan el total
+        if total_existente + total_nuevo > total_factura:
             raise HTTPException(
                 status_code=400,
-                detail=f"Tipo de pago {pago_data.id_tipo_pago} no existe",
+                detail=f"Los pagos exceden el total de la factura. "
+                       f"Total factura: {total_factura}, "
+                       f"Pagos existentes: {total_existente}, "
+                       f"Nuevos pagos: {total_nuevo}"
             )
-
-        pago = Pagos(
-            id_factura=factura_id,
-            id_metodo_pago=pago_data.id_metodo_pago,
-            id_tipo_pago=pago_data.id_tipo_pago,
-            fecha_pago=pago_data.fecha_pago,
-            valor=pago_data.valor,
+        
+        # Procesar cada pago
+        for pago_data in pagos:
+            # Validar método de pago
+            metodo_pago = db.query(MetodoPago).filter(
+                MetodoPago.id_metodo_pago == pago_data.id_metodo_pago
+            ).first()
+            
+            if not metodo_pago:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Método de pago con ID {pago_data.id_metodo_pago} no existe"
+                )
+            
+            # Validar tipo de pago
+            tipo_pago = db.query(TipoPago).filter(
+                TipoPago.id_tipo_pago == pago_data.id_tipo_pago
+            ).first()
+            
+            if not tipo_pago:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tipo de pago con ID {pago_data.id_tipo_pago} no existe"
+                )
+            
+            # Crear el pago
+            pago = Pagos(
+                id_factura=factura_id,
+                id_metodo_pago=pago_data.id_metodo_pago,
+                id_tipo_pago=pago_data.id_tipo_pago,
+                fecha_pago=pago_data.fecha_pago,
+                valor=pago_data.valor
+            )
+            
+            db.add(pago)
+        
+        # Actualizar estado de la factura si los pagos cubren el total
+        if total_existente + total_nuevo >= total_factura:
+            factura.estado_factura = EstadoFactura.PAGADA
+        
+        db.commit()
+        
+        return Response[dict](
+            data={"factura_id": factura_id, "pagos_agregados": len(pagos)},
+            status_code=HTTPStatus.OK,
+            message=f"Se agregaron {len(pagos)} pagos a la factura exitosamente",
+            error=None
         )
-        db.add(pago)
-
-    db.commit()
-    return {"message": "Pagos agregados correctamente"}
-
-
-@router.delete("/facturas/{factura_id}")
-def delete_factura(factura_id: int, db: Session = Depends(get_carelink_db)):
-    factura = db.query(Facturas).filter(Facturas.id_factura == factura_id).first()
-    if not factura:
-        raise HTTPException(status_code=404, detail="Factura no encontrada")
-
-    db.delete(factura)
-    db.commit()
-    return {"message": "Factura eliminada correctamente"}
-
-
-def get_facturas_by_contrato(db: Session, contrato_id: int):
-    facturas = db.query(Facturas).filter(Facturas.id_contrato == contrato_id).all()
-    if not facturas:
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
         raise HTTPException(
-            status_code=404, detail=f"No hay facturas para el contrato {contrato_id}"
+            status_code=500,
+            detail=f"Error interno del servidor al agregar pagos: {str(e)}"
         )
-    return facturas
 
 
-@router.get("/contratos/{contrato_id}/facturas", response_model=list[FacturaOut])
-def read_facturas_by_contrato(contrato_id: int, db: Session = Depends(get_carelink_db)):
-    return get_facturas_by_contrato(db, contrato_id)
+@router.delete("/facturas/{factura_id}", response_model=Response[dict])
+def delete_factura(
+    factura_id: int, 
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user)
+) -> Response[dict]:
+    """
+    Elimina una factura y todos sus pagos asociados
+    
+    Args:
+        factura_id: ID de la factura a eliminar
+        db: Sesión de base de datos
+        _: Usuario autenticado
+        
+    Returns:
+        Response con mensaje de confirmación
+        
+    Raises:
+        HTTPException: Si la factura no existe o no se puede eliminar
+    """
+    try:
+        # Validar que la factura existe
+        factura = db.query(Facturas).filter(
+            Facturas.id_factura == factura_id
+        ).first()
+        
+        if not factura:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Factura con ID {factura_id} no encontrada"
+            )
+        
+        # Validar que la factura no esté pagada (opcional, según política de negocio)
+        if factura.estado_factura == EstadoFactura.PAGADA:
+            raise HTTPException(
+                status_code=400,
+                detail="No se puede eliminar una factura que ya ha sido pagada"
+            )
+        
+        # Eliminar la factura (los pagos se eliminan automáticamente por CASCADE)
+        db.delete(factura)
+        db.commit()
+        
+        return Response[dict](
+            data={"factura_id": factura_id},
+            status_code=HTTPStatus.OK,
+            message="Factura eliminada exitosamente",
+            error=None
+        )
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor al eliminar factura: {str(e)}"
+        )
+
+
+@router.patch("/facturas/{factura_id}", response_model=Response[FacturaOut])
+def update_factura(
+    factura_id: int,
+    factura_data: dict,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[FacturaOut]:
+    """
+    Actualiza una factura existente
+    
+    Args:
+        factura_id: ID de la factura a actualizar
+        factura_data: Datos a actualizar
+        db: Sesión de base de datos
+        _: Usuario autenticado
+        
+    Returns:
+        Response con la factura actualizada
+        
+    Raises:
+        HTTPException: Si la factura no existe o hay errores de validación
+    """
+    try:
+        # Validar que la factura existe
+        factura = db.query(Facturas).filter(
+            Facturas.id_factura == factura_id
+        ).first()
+        
+        if not factura:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Factura con ID {factura_id} no encontrada"
+            )
+        
+        # Validar que la factura no esté pagada (para ciertos campos)
+        campos_restringidos = ['total_factura', 'subtotal', 'impuestos', 'descuentos']
+        if factura.estado_factura == EstadoFactura.PAGADA:
+            for campo in campos_restringidos:
+                if campo in factura_data:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"No se puede modificar el campo '{campo}' en una factura pagada"
+                    )
+        
+        # Actualizar campos permitidos
+        campos_permitidos = {
+            'fecha_emision': 'fecha_emision',
+            'fecha_vencimiento': 'fecha_vencimiento',
+            'total_factura': 'total_factura',
+            'subtotal': 'subtotal',
+            'impuestos': 'impuestos',
+            'descuentos': 'descuentos',
+            'estado_factura': 'estado_factura',
+            'observaciones': 'observaciones'
+        }
+        
+        for campo_request, campo_modelo in campos_permitidos.items():
+            if campo_request in factura_data:
+                valor = factura_data[campo_request]
+                
+                # Validaciones específicas
+                if campo_request == 'estado_factura':
+                    try:
+                        valor = EstadoFactura(valor)
+                    except ValueError:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Estado de factura inválido: {valor}. "
+                                   f"Estados válidos: {[e.value for e in EstadoFactura]}"
+                        )
+                
+                setattr(factura, campo_modelo, valor)
+        
+        db.commit()
+        db.refresh(factura)
+        
+        # Crear respuesta
+        factura_response = FacturaOut(
+            id_factura=factura.id_factura,
+            numero_factura=factura.numero_factura,
+            id_contrato=factura.id_contrato,
+            fecha_emision=factura.fecha_emision,
+            total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
+        )
+        
+        return Response[FacturaOut](
+            data=factura_response,
+            status_code=HTTPStatus.OK,
+            message="Factura actualizada exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor al actualizar factura: {str(e)}"
+        )
+
+
+@router.get("/facturas", response_model=Response[List[FacturaOut]])
+def get_all_facturas(
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[FacturaOut]]:
+    facturas = db.query(Facturas).all()
+    facturas_out = []
+    for factura in facturas:
+        facturas_out.append(FacturaOut(
+            id_factura=factura.id_factura,
+            numero_factura=factura.numero_factura,
+            id_contrato=factura.id_contrato,
+            fecha_emision=factura.fecha_emision,
+            fecha_vencimiento=factura.fecha_vencimiento,
+            subtotal=float(factura.subtotal) if factura.subtotal is not None else None,
+            impuestos=float(factura.impuestos) if factura.impuestos is not None else None,
+            descuentos=float(factura.descuentos) if factura.descuentos is not None else None,
+            total_factura=float(factura.total_factura) if factura.total_factura is not None else None,
+            estado_factura=factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura,
+            observaciones=factura.observaciones
+        ))
+    return Response[List[FacturaOut]](
+        data=facturas_out,
+        status_code=200,
+        message=f"Se encontraron {len(facturas_out)} facturas",
+        error=None
+    )
+
+
+@router.get("/contratos/{contrato_id}/facturas", response_model=Response[List[FacturaOut]])
+def read_facturas_by_contrato(
+    contrato_id: int, 
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user)
+) -> Response[List[FacturaOut]]:
+    """
+    Obtiene todas las facturas asociadas a un contrato específico
+    
+    Args:
+        contrato_id: ID del contrato
+        db: Sesión de base de datos
+        _: Usuario autenticado
+        
+    Returns:
+        Response con lista de facturas del contrato
+        
+    Raises:
+        HTTPException: Si el contrato no existe o hay errores internos
+    """
+    try:
+        # Validar que el contrato existe
+        contrato = db.query(Contratos).filter(
+            Contratos.id_contrato == contrato_id
+        ).first()
+        
+        if not contrato:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Contrato con ID {contrato_id} no encontrado"
+            )
+        
+        # Obtener facturas del contrato
+        facturas = db.query(Facturas).filter(
+            Facturas.id_contrato == contrato_id
+        ).order_by(Facturas.fecha_creacion.desc()).all()
+        
+        facturas_response = [
+            FacturaOut(
+                id_factura=factura.id_factura,
+                numero_factura=factura.numero_factura,
+                id_contrato=factura.id_contrato,
+                fecha_emision=factura.fecha_emision,
+                total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
+            )
+            for factura in facturas
+        ]
+        
+        return Response[List[FacturaOut]](
+            data=facturas_response,
+            status_code=HTTPStatus.OK,
+            message=f"Se encontraron {len(facturas_response)} facturas para el contrato {contrato_id}",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor al obtener facturas del contrato: {str(e)}"
+        )
 
 
 @router.post("/facturas/{contrato_id}", response_model=Response[FacturaOut])
 def create_contract_bill(
-    contrato_id: int, crud: CareLinkCrud = Depends(get_crud)
-) -> Response[FacturaOut]:
-    bill = crud.create_contract_bill(contrato_id)
-    bill_response = FacturaOut(
-        id_factura=bill.id_factura,
-        id_contrato=bill.id_contrato,
-        fecha_emision=bill.fecha_emision,
-        total_factura=bill.total_factura,
-    )
-    return Response[FacturaOut](
-        data=bill_response,
-        status_code=HTTPStatus.CREATED,
-        message="Factura asociada de manera exitosa",
-        error=None,
-    )
-
-
-@router.delete("/contratos/{contrato_id}", response_model=Response[object])
-def delete_contract_by_id(
-    contrato_id: int,
+    contrato_id: int, 
     crud: CareLinkCrud = Depends(get_crud),
-):
-    crud.delete_contract_by_id(contrato_id)
-    return Response[object](
-        data={},
-        status_code=HTTPStatus.NO_CONTENT,
-        message=f"El contrato {contrato_id} se ha eliminado de manera exitosa",
-        error=None,
-    )
+    _: AuthorizedUsers = Depends(get_current_user)
+) -> Response[FacturaOut]:
+    """
+    Crea una factura automáticamente para un contrato específico usando la lógica de negocio del CRUD
+    
+    Args:
+        contrato_id: ID del contrato
+        crud: Instancia del CRUD
+        _: Usuario autenticado
+        
+    Returns:
+        Response con la factura creada
+        
+    Raises:
+        HTTPException: Si el contrato no existe o hay errores en la creación
+    """
+    try:
+        bill = crud.create_contract_bill(contrato_id)
+        
+        bill_response = FacturaOut(
+            id_factura=bill.id_factura,
+            numero_factura=bill.numero_factura,
+            id_contrato=bill.id_contrato,
+            fecha_emision=bill.fecha_emision,
+            total_factura=float(bill.total_factura) if bill.total_factura else 0.0,
+        )
+        
+        return Response[FacturaOut](
+            data=bill_response,
+            status_code=HTTPStatus.CREATED,
+            message="Factura creada automáticamente para el contrato",
+            error=None,
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al crear factura para el contrato: {str(e)}"
+        )
+
+
+@router.get("/facturacion/completa")
+def get_facturacion_completa(db: Session = Depends(get_carelink_db)):
+    sql = text('''
+        SELECT
+            f.id_factura,
+            f.numero_factura,
+            f.id_contrato,
+            c.tipo_contrato,
+            c.fecha_inicio,
+            c.fecha_fin,
+            u.id_usuario,
+            u.nombres,
+            u.apellidos,
+            u.n_documento,
+            f.fecha_emision,
+            f.fecha_vencimiento,
+            f.total_factura,
+            f.subtotal,
+            f.impuestos,
+            f.descuentos,
+            f.estado_factura,
+            f.observaciones,
+            f.fecha_creacion,
+            f.fecha_actualizacion,
+            COUNT(p.id_pago) AS cantidad_pagos,
+            COALESCE(SUM(p.valor), 0) AS total_pagado
+        FROM
+            Facturas f
+            LEFT JOIN Contratos c ON f.id_contrato = c.id_contrato
+            LEFT JOIN Usuarios u ON c.id_usuario = u.id_usuario
+            LEFT JOIN Pagos p ON f.id_factura = p.id_factura
+        GROUP BY
+            f.id_factura,
+            f.numero_factura,
+            f.id_contrato,
+            c.tipo_contrato,
+            c.fecha_inicio,
+            c.fecha_fin,
+            u.id_usuario,
+            u.nombres,
+            u.apellidos,
+            u.n_documento,
+            f.fecha_emision,
+            f.fecha_vencimiento,
+            f.total_factura,
+            f.subtotal,
+            f.impuestos,
+            f.descuentos,
+            f.estado_factura,
+            f.observaciones,
+            f.fecha_creacion,
+            f.fecha_actualizacion
+    ''')
+    result = db.execute(sql)
+    rows = [dict(row) for row in result.mappings()]
+    return {"data": rows}
