@@ -1637,6 +1637,356 @@ class CareLinkCrud:
                 detail=f"Error al actualizar tarifas de servicios: {str(e)}"
             )
 
+    def get_complete_factura_data_for_pdf(self, factura_id: int) -> dict:
+        """
+        Obtiene todos los datos necesarios para generar el PDF de la factura
+        """
+        try:
+            # 1. Obtener la factura
+            factura = self._get_factura_by_id(factura_id)
+            if not factura:
+                return None
+            
+            # 2. Obtener el contrato asociado
+            contrato = self._get_contract_by_id(factura.id_contrato)
+            
+            # 3. Obtener el usuario asociado al contrato
+            usuario = self._get_user_by_id(contrato.id_usuario)
+            
+            # 4. Obtener los servicios incluidos en la factura
+            servicios = self._get_contract_services(factura.id_contrato)
+            
+            # 5. Obtener los pagos asociados a la factura
+            pagos = self._get_pagos_by_factura(factura_id)
+            
+            # 6. Obtener el cronograma de días agendados
+            cronograma = self._get_cronograma_by_contrato_and_user(
+                contrato.id_contrato, 
+                usuario.id_usuario
+            )
+            
+            # 7. Calcular totales
+            total_pagado = sum(pago.valor for pago in pagos)
+            saldo_pendiente = factura.total_factura - total_pagado
+            
+            return {
+                "factura": factura,
+                "contrato": contrato,
+                "usuario": usuario,
+                "servicios": servicios,
+                "pagos": pagos,
+                "cronograma": cronograma,
+                "total_pagado": total_pagado,
+                "saldo_pendiente": saldo_pendiente
+            }
+            
+        except Exception as e:
+            print(f"Error obteniendo datos de factura {factura_id}: {str(e)}")
+            return None
+
+    def generate_factura_pdf(self, factura_data: dict) -> bytes:
+        """
+        Genera el PDF de la factura con toda la información
+        """
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+        from io import BytesIO
+        from datetime import datetime
+        
+        # Crear el buffer para el PDF
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        story = []
+        
+        # Estilos
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            spaceAfter=30,
+            alignment=TA_CENTER
+        )
+        subtitle_style = ParagraphStyle(
+            'CustomSubtitle',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=20
+        )
+        normal_style = styles['Normal']
+        
+        # Encabezado
+        story.append(Paragraph("CARE LINK - SISTEMA DE GESTIÓN", title_style))
+        story.append(Paragraph("FACTURA", title_style))
+        story.append(Spacer(1, 20))
+        
+        # Datos de la factura
+        factura = factura_data["factura"]
+        story.append(Paragraph("INFORMACIÓN DE LA FACTURA", subtitle_style))
+        
+        factura_info = [
+            ["Número de Factura:", factura.numero_factura or f"F-{factura.id_factura}"],
+            ["Fecha de Emisión:", factura.fecha_emision.strftime("%d/%m/%Y")],
+            ["Fecha de Vencimiento:", factura.fecha_vencimiento.strftime("%d/%m/%Y") if factura.fecha_vencimiento else "N/A"],
+            ["Estado:", factura.estado_factura or "PENDIENTE"],
+            ["Subtotal:", f"$ {factura.subtotal:,.0f}"],
+            ["Impuestos:", f"$ {factura.impuestos:,.0f}"],
+            ["Descuentos:", f"$ {factura.descuentos:,.0f}"],
+            ["Total:", f"$ {factura.total_factura:,.0f}"],
+        ]
+        
+        factura_table = Table(factura_info, colWidths=[2*inch, 3*inch])
+        factura_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(factura_table)
+        story.append(Spacer(1, 20))
+        
+        # Datos del usuario
+        usuario = factura_data["usuario"]
+        story.append(Paragraph("DATOS DEL CLIENTE", subtitle_style))
+        
+        usuario_info = [
+            ["Nombre Completo:", f"{usuario.nombres} {usuario.apellidos}"],
+            ["Documento:", usuario.n_documento or "N/A"],
+            ["Dirección:", usuario.direccion or "N/A"],
+            ["Teléfono:", usuario.telefono or "N/A"],
+            ["Email:", usuario.email or "N/A"],
+        ]
+        
+        usuario_table = Table(usuario_info, colWidths=[2*inch, 3*inch])
+        usuario_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(usuario_table)
+        story.append(Spacer(1, 20))
+        
+        # Datos del contrato
+        contrato = factura_data["contrato"]
+        story.append(Paragraph("DATOS DEL CONTRATO", subtitle_style))
+        
+        contrato_info = [
+            ["ID Contrato:", str(contrato.id_contrato)],
+            ["Tipo de Contrato:", contrato.tipo_contrato],
+            ["Fecha de Inicio:", contrato.fecha_inicio.strftime("%d/%m/%Y")],
+            ["Fecha de Fin:", contrato.fecha_fin.strftime("%d/%m/%Y")],
+        ]
+        
+        contrato_table = Table(contrato_info, colWidths=[2*inch, 3*inch])
+        contrato_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(contrato_table)
+        story.append(Spacer(1, 20))
+        
+        # Servicios incluidos
+        servicios = factura_data["servicios"]
+        story.append(Paragraph("SERVICIOS INCLUIDOS", subtitle_style))
+        
+        if servicios:
+            servicios_data = [["Servicio", "Descripción", "Precio/Día", "Días", "Total"]]
+            for servicio in servicios:
+                # Obtener las fechas de servicio usando el método correcto
+                fechas_servicio = self._get_service_dates(servicio)
+                dias_servicio = len(fechas_servicio)
+                total_servicio = float(servicio.precio_por_dia) * dias_servicio
+                servicios_data.append([
+                    f"Servicio #{servicio.id_servicio_contratado}",
+                    servicio.descripcion,
+                    f"$ {servicio.precio_por_dia:,.0f}",
+                    str(dias_servicio),
+                    f"$ {total_servicio:,.0f}"
+                ])
+            
+            servicios_table = Table(servicios_data, colWidths=[1*inch, 2*inch, 1*inch, 0.5*inch, 1*inch])
+            servicios_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ]))
+            story.append(servicios_table)
+        else:
+            story.append(Paragraph("No hay servicios registrados", normal_style))
+        
+        story.append(Spacer(1, 20))
+        
+        # Pagos realizados
+        pagos = factura_data["pagos"]
+        story.append(Paragraph("PAGOS REALIZADOS", subtitle_style))
+        
+        if pagos:
+            pagos_data = [["Fecha", "Método", "Tipo", "Valor"]]
+            for pago in pagos:
+                metodo_pago = self._get_payment_method_name(pago.id_metodo_pago)
+                tipo_pago = self._get_payment_type_name(pago.id_tipo_pago)
+                pagos_data.append([
+                    pago.fecha_pago.strftime("%d/%m/%Y"),
+                    metodo_pago,
+                    tipo_pago,
+                    f"$ {pago.valor:,.0f}"
+                ])
+            
+            pagos_table = Table(pagos_data, colWidths=[1.5*inch, 1.5*inch, 1*inch, 1*inch])
+            pagos_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ]))
+            story.append(pagos_table)
+        else:
+            story.append(Paragraph("No hay pagos registrados", normal_style))
+        
+        story.append(Spacer(1, 20))
+        
+        # Cronograma de días agendados
+        cronograma = factura_data["cronograma"]
+        story.append(Paragraph("CRONOGRAMA DE DÍAS AGENDADOS", subtitle_style))
+        
+        if cronograma:
+            cronograma_data = [["Fecha", "Estado", "Transporte", "Observaciones"]]
+            for cron in cronograma:
+                for paciente in cron.pacientes:
+                    transporte_info = "Sí" if paciente.requiere_transporte else "No"
+                    if paciente.transporte and paciente.transporte.estado:
+                        transporte_info += f" ({paciente.transporte.estado})"
+                    
+                    cronograma_data.append([
+                        cron.fecha.strftime("%d/%m/%Y"),
+                        paciente.estado_asistencia,
+                        transporte_info,
+                        paciente.observaciones or "N/A"
+                    ])
+            
+            cronograma_table = Table(cronograma_data, colWidths=[1.5*inch, 1*inch, 1.5*inch, 2*inch])
+            cronograma_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ]))
+            story.append(cronograma_table)
+        else:
+            story.append(Paragraph("No hay cronograma registrado", normal_style))
+        
+        story.append(Spacer(1, 20))
+        
+        # Resumen de pagos
+        story.append(Paragraph("RESUMEN DE PAGOS", subtitle_style))
+        
+        total_pagado = factura_data["total_pagado"]
+        saldo_pendiente = factura_data["saldo_pendiente"]
+        
+        resumen_data = [
+            ["Total Factura:", f"$ {factura.total_factura:,.0f}"],
+            ["Total Pagado:", f"$ {total_pagado:,.0f}"],
+            ["Saldo Pendiente:", f"$ {saldo_pendiente:,.0f}"],
+        ]
+        
+        resumen_table = Table(resumen_data, colWidths=[2*inch, 2*inch])
+        resumen_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        story.append(resumen_table)
+        
+        # Observaciones
+        if factura.observaciones:
+            story.append(Spacer(1, 20))
+            story.append(Paragraph("OBSERVACIONES", subtitle_style))
+            story.append(Paragraph(factura.observaciones, normal_style))
+        
+        # Pie de página
+        story.append(Spacer(1, 30))
+        story.append(Paragraph(
+            f"Documento generado el {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
+            ParagraphStyle('Footer', parent=normal_style, fontSize=8, alignment=TA_CENTER)
+        ))
+        
+        # Generar el PDF
+        doc.build(story)
+        pdf_bytes = buffer.getvalue()
+        buffer.close()
+        
+        return pdf_bytes
+
+    def _get_payment_method_name(self, id_metodo_pago: int) -> str:
+        """Obtiene el nombre del método de pago"""
+        try:
+            metodo = self.__carelink_session.query(MetodoPago).filter(
+                MetodoPago.id_metodo_pago == id_metodo_pago
+            ).first()
+            return metodo.nombre if metodo else f"Método #{id_metodo_pago}"
+        except:
+            return f"Método #{id_metodo_pago}"
+
+    def _get_payment_type_name(self, id_tipo_pago: int) -> str:
+        """Obtiene el nombre del tipo de pago"""
+        try:
+            tipo = self.__carelink_session.query(TipoPago).filter(
+                TipoPago.id_tipo_pago == id_tipo_pago
+            ).first()
+            return tipo.nombre if tipo else f"Tipo #{id_tipo_pago}"
+        except:
+            return f"Tipo #{id_tipo_pago}"
+
+    def _get_factura_by_id(self, factura_id: int):
+        """Obtiene una factura por ID"""
+        try:
+            return self.__carelink_session.query(Facturas).filter(
+                Facturas.id_factura == factura_id
+            ).first()
+        except:
+            return None
+
+    def _get_pagos_by_factura(self, factura_id: int):
+        """Obtiene los pagos de una factura"""
+        try:
+            return self.__carelink_session.query(Pagos).filter(
+                Pagos.id_factura == factura_id
+            ).all()
+        except:
+            return []
+
+    def _get_cronograma_by_contrato_and_user(self, contrato_id: int, usuario_id: int):
+        """Obtiene el cronograma de un contrato y usuario específicos"""
+        try:
+            from app.models.attendance_schedule import CronogramaAsistencia
+            return self.__carelink_session.query(CronogramaAsistencia).join(
+                CronogramaAsistencia.pacientes
+            ).filter(
+                CronogramaAsistenciaPacientes.id_contrato == contrato_id,
+                CronogramaAsistenciaPacientes.id_usuario == usuario_id
+            ).all()
+        except:
+            return []
+
 def get_bill_payments_total(db, id_factura: int) -> float:
     """
     Retorna el total de pagos asociados a una factura

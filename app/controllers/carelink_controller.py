@@ -1,4 +1,3 @@
-from botocore.compat import HTTPResponse
 from sqlalchemy import func, text
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
@@ -3319,3 +3318,43 @@ def get_bill_payments_total_endpoint(id_factura: int, db: Session = Depends(get_
     from app.crud.carelink_crud import get_bill_payments_total
     total = get_bill_payments_total(db, id_factura)
     return BillPaymentsTotalResponseDTO(id_factura=id_factura, total_pagado=total)
+
+
+@router.get("/facturas/{id_factura}/pdf")
+async def generate_factura_pdf(
+    id_factura: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    """
+    Genera un PDF de la factura con toda la información relacionada
+    """
+    try:
+        # Obtener todos los datos necesarios
+        factura_data = crud.get_complete_factura_data_for_pdf(id_factura)
+        
+        if not factura_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Factura con ID {id_factura} no encontrada"
+            )
+        
+        # Generar el PDF
+        pdf_bytes = crud.generate_factura_pdf(factura_data)
+        
+        # Devolver el PDF como archivo descargable
+        from fastapi.responses import Response
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=factura_{id_factura}.pdf"
+            }
+        )
+        
+    except Exception as e:
+        print(f"Error generando PDF de factura {id_factura}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generando PDF: {str(e)}"
+        )

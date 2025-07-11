@@ -1,10 +1,7 @@
 from datetime import date
 from decimal import Decimal
-from pydantic import BaseModel, condecimal
+from pydantic import BaseModel, Field
 from typing import List, Optional
-
-# Definir el tipo fuera de las clases
-DecimalGt0 = condecimal(gt=0, decimal_places=2)
 
 class FechaServicioCreateDTO(BaseModel):
     fecha: date
@@ -42,7 +39,7 @@ class PagoCreateDTO(BaseModel):
     id_metodo_pago: int
     id_tipo_pago: int
     fecha_pago: date
-    valor: DecimalGt0
+    valor: Decimal = Field(..., gt=0, decimal_places=2)
 
 
 class PagoResponseDTO(BaseModel):
