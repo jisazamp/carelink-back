@@ -1719,11 +1719,20 @@ class CareLinkCrud:
         )
         normal_style = styles['Normal']
         
-        # Encabezado
-        story.append(Paragraph("CARE LINK - SISTEMA DE GESTIÓN", title_style))
-        story.append(Paragraph("FACTURA", title_style))
-        story.append(Spacer(1, 20))
+        # --- CABECERA CON LOGO Y DATOS PRINCIPALES ---
+        import os
+        from reportlab.platypus import Image
+        logo_path = os.path.join(os.path.dirname(__file__), '../static/psicoabuelosPDF.jpeg')
+        if os.path.exists(logo_path):
+            img = Image(logo_path, width=180, height=60)
+            img.hAlign = 'LEFT'
+            story.append(img)
+            story.append(Spacer(1, 10))
         
+        # Título con número de factura y contrato
+        story.append(Paragraph(f"<b>Factura N° {factura_data.get('numero_factura', '')}</b>   |   <b>Contrato N° {factura_data.get('id_contrato', '')}</b>", ParagraphStyle('Title', parent=title_style, fontSize=18, textColor=colors.HexColor('#4B0082'))))
+        story.append(Spacer(1, 20))
+
         # Datos de la factura
         factura = factura_data["factura"]
         story.append(Paragraph("INFORMACIÓN DE LA FACTURA", subtitle_style))
@@ -1807,7 +1816,7 @@ class CareLinkCrud:
                 dias_servicio = len(fechas_servicio)
                 total_servicio = float(servicio.precio_por_dia) * dias_servicio
                 servicios_data.append([
-                    f"Servicio #{servicio.id_servicio_contratado}",
+                    servicio.servicio.nombre if hasattr(servicio, 'servicio') and servicio.servicio else f"Servicio #{servicio.id_servicio_contratado}",
                     servicio.descripcion,
                     f"$ {servicio.precio_por_dia:,.0f}",
                     str(dias_servicio),
@@ -1860,38 +1869,35 @@ class CareLinkCrud:
         
         story.append(Spacer(1, 20))
         
-        # Cronograma de días agendados
-        cronograma = factura_data["cronograma"]
-        story.append(Paragraph("CRONOGRAMA DE DÍAS AGENDADOS", subtitle_style))
-        
+        # --- CRONOGRAMA SIMPLIFICADO ---
+        cronograma = factura_data.get("cronograma", [])
+        story.append(Paragraph("CRONOGRAMA DE SERVICIOS", subtitle_style))
         if cronograma:
-            cronograma_data = [["Fecha", "Estado", "Transporte", "Observaciones"]]
-            for cron in cronograma:
-                for paciente in cron.pacientes:
-                    transporte_info = "Sí" if paciente.requiere_transporte else "No"
-                    if paciente.transporte and paciente.transporte.estado:
-                        transporte_info += f" ({paciente.transporte.estado})"
-                    
-                    cronograma_data.append([
-                        cron.fecha.strftime("%d/%m/%Y"),
-                        paciente.estado_asistencia,
-                        transporte_info,
-                        paciente.observaciones or "N/A"
-                    ])
-            
-            cronograma_table = Table(cronograma_data, colWidths=[1.5*inch, 1*inch, 1.5*inch, 2*inch])
+            cronograma_data = [["Fecha", "Transporte"]]
+            for item in cronograma:
+                # Corregir acceso: usar atributos en vez de .get()
+                fecha = getattr(item, 'fecha', None) if not isinstance(item, dict) else item.get('fecha')
+                transporte = getattr(item, 'transporte', None) if not isinstance(item, dict) else item.get('transporte')
+                if transporte is True or (isinstance(transporte, str) and transporte.lower().startswith("sí")):
+                    transporte_str = "Sí - PENDIENTE"
+                else:
+                    transporte_str = "No"
+                cronograma_data.append([
+                    fecha,
+                    transporte_str
+                ])
+            cronograma_table = Table(cronograma_data, colWidths=[1.5*inch, 1.5*inch])
             cronograma_table.setStyle(TableStyle([
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
                 ('GRID', (0, 0), (-1, -1), 1, colors.black),
                 ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ]))
             story.append(cronograma_table)
         else:
             story.append(Paragraph("No hay cronograma registrado", normal_style))
-        
         story.append(Spacer(1, 20))
         
         # Resumen de pagos
