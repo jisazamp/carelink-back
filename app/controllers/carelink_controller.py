@@ -18,6 +18,8 @@ from app.dto.v1.request.family_member_create_request_dto import (
 )
 from app.dto.v1.request.medical_report import ReporteClinicoCreate, ReporteClinicoUpdate
 from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
+from app.dto.v1.request.rates import TarifasServicioUpdateRequestDTO
+from app.dto.v1.response.rates import TarifasServicioResponseDTO, TarifaServicioResponseDTO
 from app.dto.v1.request.user_create_request_dto import AuthorizedUserCreateRequestDTO
 from app.dto.v1.request.user_medical_record_create_request_dto import (
     CreateUserAssociatedCaresRequestDTO,
@@ -56,6 +58,7 @@ from app.dto.v1.response.payment_method import (
     PaymentMethodResponseDTO,
     PaymentResponseDTO,
     PaymentTypeResponseDTO,
+    BillPaymentsTotalResponseDTO,
 )
 from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
@@ -84,6 +87,7 @@ from app.models.contracts import (
     FechasServicio,
     TipoPago,
     EstadoFactura,
+    Servicios,
 )
 from app.dto.v1.request.contracts import (
     ContratoCreateDTO,
@@ -137,6 +141,7 @@ from typing import List, Optional
 from datetime import datetime, date, time
 import json
 from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes
+from app.models.rates import TarifasServicioPorAnio
 from app.exceptions.exceptions_classes import EntityNotFoundError
 
 
@@ -2868,6 +2873,20 @@ def get_all_facturas(
     facturas = db.query(Facturas).all()
     facturas_out = []
     for factura in facturas:
+        # Obtener pagos de la factura
+        pagos = db.query(Pagos).filter(Pagos.id_factura == factura.id_factura).all()
+        pagos_response = [
+            PaymentResponseDTO(
+                id_pago=pago.id_pago,
+                id_factura=pago.id_factura,
+                id_metodo_pago=pago.id_metodo_pago,
+                id_tipo_pago=pago.id_tipo_pago,
+                fecha_pago=pago.fecha_pago,
+                valor=float(pago.valor) if pago.valor else 0.0
+            )
+            for pago in pagos
+        ]
+        
         facturas_out.append(FacturaOut(
             id_factura=factura.id_factura,
             numero_factura=factura.numero_factura,
@@ -2879,7 +2898,8 @@ def get_all_facturas(
             descuentos=float(factura.descuentos) if factura.descuentos is not None else None,
             total_factura=float(factura.total_factura) if factura.total_factura is not None else None,
             estado_factura=factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura,
-            observaciones=factura.observaciones
+            observaciones=factura.observaciones,
+            pagos=pagos_response
         ))
     return Response[List[FacturaOut]](
         data=facturas_out,
@@ -2932,7 +2952,24 @@ def read_facturas_by_contrato(
                 numero_factura=factura.numero_factura,
                 id_contrato=factura.id_contrato,
                 fecha_emision=factura.fecha_emision,
+                fecha_vencimiento=factura.fecha_vencimiento,
+                subtotal=float(factura.subtotal) if factura.subtotal is not None else None,
+                impuestos=float(factura.impuestos) if factura.impuestos is not None else None,
+                descuentos=float(factura.descuentos) if factura.descuentos is not None else None,
                 total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
+                estado_factura=factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura,
+                observaciones=factura.observaciones,
+                pagos=[
+                    PaymentResponseDTO(
+                        id_pago=pago.id_pago,
+                        id_factura=pago.id_factura,
+                        id_metodo_pago=pago.id_metodo_pago,
+                        id_tipo_pago=pago.id_tipo_pago,
+                        fecha_pago=pago.fecha_pago,
+                        valor=float(pago.valor) if pago.valor else 0.0
+                    )
+                    for pago in db.query(Pagos).filter(Pagos.id_factura == factura.id_factura).all()
+                ]
             )
             for factura in facturas
         ]
@@ -3102,3 +3139,183 @@ def get_facturacion_completa(db: Session = Depends(get_carelink_db)):
     result = db.execute(sql)
     rows = [dict(row) for row in result.mappings()]
     return {"data": rows}
+
+
+@router.get("/tarifas-servicios", response_model=Response[TarifasServicioResponseDTO])
+async def get_all_service_rates(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[TarifasServicioResponseDTO]:
+    """
+    Obtener todas las tarifas de servicios por año con información del servicio
+    """
+    try:
+        tarifas = crud.get_all_service_rates()
+        
+        tarifas_response = []
+        for tarifa in tarifas:
+            # Obtener nombre del servicio
+            servicio = crud._CareLinkCrud__carelink_session.query(Servicios).filter(
+                Servicios.id_servicio == tarifa.id_servicio
+            ).first()
+            
+            nombre_servicio = servicio.nombre if servicio else "Servicio no encontrado"
+            
+            tarifas_response.append(
+                TarifaServicioResponseDTO(
+                    id=tarifa.id,
+                    id_servicio=tarifa.id_servicio,
+                    anio=tarifa.anio.year if hasattr(tarifa.anio, 'year') else tarifa.anio,
+                    precio_por_dia=tarifa.precio_por_dia,
+                    nombre_servicio=nombre_servicio
+                )
+            )
+        
+        response_data = TarifasServicioResponseDTO(TarifasServicioPorAnio=tarifas_response)
+        
+        return Response[TarifasServicioResponseDTO](
+            data=response_data,
+            status_code=HTTPStatus.OK,
+            message=f"Se obtuvieron {len(tarifas_response)} tarifas de servicios",
+            error=None,
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener tarifas de servicios: {str(e)}"
+        )
+
+
+@router.patch("/tarifas-servicios", response_model=Response[TarifasServicioResponseDTO])
+async def update_service_rates(
+    tarifas_data: TarifasServicioUpdateRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[TarifasServicioResponseDTO]:
+    """
+    Actualizar múltiples tarifas de servicios por año
+    """
+    try:
+        # Convertir DTOs a diccionarios para el CRUD
+        tarifas_dict = [
+            {
+                'id': tarifa.id,
+                'id_servicio': tarifa.id_servicio,
+                'anio': tarifa.anio,
+                'precio_por_dia': float(tarifa.precio_por_dia)
+            }
+            for tarifa in tarifas_data.TarifasServicioPorAnio
+        ]
+        
+        # Actualizar tarifas
+        updated_tarifas = crud.update_service_rates(tarifas_dict)
+        
+        # Construir respuesta
+        tarifas_response = []
+        for tarifa in updated_tarifas:
+            # Obtener nombre del servicio
+            servicio = crud._CareLinkCrud__carelink_session.query(Servicios).filter(
+                Servicios.id_servicio == tarifa.id_servicio
+            ).first()
+            
+            nombre_servicio = servicio.nombre if servicio else "Servicio no encontrado"
+            
+            tarifas_response.append(
+                TarifaServicioResponseDTO(
+                    id=tarifa.id,
+                    id_servicio=tarifa.id_servicio,
+                    anio=tarifa.anio.year if hasattr(tarifa.anio, 'year') else tarifa.anio,
+                    precio_por_dia=tarifa.precio_por_dia,
+                    nombre_servicio=nombre_servicio
+                )
+            )
+        
+        response_data = TarifasServicioResponseDTO(TarifasServicioPorAnio=tarifas_response)
+        
+        return Response[TarifasServicioResponseDTO](
+            data=response_data,
+            status_code=HTTPStatus.OK,
+            message=f"Se actualizaron {len(tarifas_response)} tarifas de servicios exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al actualizar tarifas de servicios: {str(e)}"
+        )
+
+
+@router.get("/facturas/estadisticas")
+def get_facturas_estadisticas(
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    """
+    Obtiene estadísticas calculadas de facturación
+    """
+    try:
+        # Obtener todas las facturas con sus pagos
+        facturas = db.query(Facturas).all()
+        
+        total_facturas = len(facturas)
+        total_valor = 0
+        valor_pendiente = 0
+        pagadas = 0
+        pendientes = 0
+        vencidas = 0
+        canceladas = 0
+        anuladas = 0
+        
+        for factura in facturas:
+            total_factura = float(factura.total_factura) if factura.total_factura else 0
+            total_valor += total_factura
+            
+            # Calcular total pagado
+            pagos = db.query(Pagos).filter(Pagos.id_factura == factura.id_factura).all()
+            total_pagado = sum(float(pago.valor) for pago in pagos if pago.valor)
+            valor_pendiente += max(0, total_factura - total_pagado)
+            
+            # Contar por estado
+            estado = factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura
+            if estado == 'PAGADA':
+                pagadas += 1
+            elif estado == 'PENDIENTE':
+                pendientes += 1
+            elif estado == 'VENCIDA':
+                vencidas += 1
+            elif estado == 'CANCELADA':
+                canceladas += 1
+            elif estado == 'ANULADA':
+                anuladas += 1
+        
+        return {
+            "total": total_facturas,
+            "pagadas": pagadas,
+            "pendientes": pendientes,
+            "vencidas": vencidas,
+            "canceladas": canceladas,
+            "anuladas": anuladas,
+            "totalValor": total_valor,
+            "valorPendiente": valor_pendiente,
+            "valorPagado": total_valor - valor_pendiente
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al calcular estadísticas de facturación: {str(e)}"
+        )
+
+
+@router.get("/facturas/{id_factura}/pagos/total", response_model=BillPaymentsTotalResponseDTO)
+def get_bill_payments_total_endpoint(id_factura: int, db: Session = Depends(get_carelink_db), _: AuthorizedUsers = Depends(get_current_user)):
+    """
+    Retorna el total de pagos asociados a una factura
+    """
+    from app.crud.carelink_crud import get_bill_payments_total
+    total = get_bill_payments_total(db, id_factura)
+    return BillPaymentsTotalResponseDTO(id_factura=id_factura, total_pagado=total)

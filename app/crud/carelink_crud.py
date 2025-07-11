@@ -1573,3 +1573,75 @@ class CareLinkCrud:
             contrato.estado = 'FINALIZADO'
         if contratos:
             self.__carelink_session.commit()
+
+    def get_all_service_rates(self) -> List[TarifasServicioPorAnio]:
+        """Obtener todas las tarifas de servicios por año"""
+        try:
+            tarifas = self.__carelink_session.query(TarifasServicioPorAnio).join(
+                Servicios, TarifasServicioPorAnio.id_servicio == Servicios.id_servicio
+            ).all()
+            return tarifas
+        except SQLAlchemyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al obtener tarifas de servicios: {str(e)}"
+            )
+
+    def update_service_rates(self, tarifas_data: List[dict]) -> List[TarifasServicioPorAnio]:
+        """Actualizar múltiples tarifas de servicios por año"""
+        try:
+            updated_tarifas = []
+            
+            for tarifa_data in tarifas_data:
+                # Buscar la tarifa existente
+                tarifa = self.__carelink_session.query(TarifasServicioPorAnio).filter(
+                    TarifasServicioPorAnio.id == tarifa_data['id']
+                ).first()
+                
+                if not tarifa:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Tarifa con ID {tarifa_data['id']} no encontrada"
+                    )
+                
+                # Verificar que el servicio existe
+                servicio = self.__carelink_session.query(Servicios).filter(
+                    Servicios.id_servicio == tarifa_data['id_servicio']
+                ).first()
+                
+                if not servicio:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Servicio con ID {tarifa_data['id_servicio']} no encontrado"
+                    )
+                
+                # Actualizar los campos
+                tarifa.id_servicio = tarifa_data['id_servicio']
+                tarifa.anio = tarifa_data['anio']
+                tarifa.precio_por_dia = float(tarifa_data['precio_por_dia'])
+                
+                updated_tarifas.append(tarifa)
+            
+            self.__carelink_session.commit()
+            
+            # Refrescar todas las tarifas actualizadas
+            for tarifa in updated_tarifas:
+                self.__carelink_session.refresh(tarifa)
+            
+            return updated_tarifas
+            
+        except SQLAlchemyError as e:
+            self.__carelink_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al actualizar tarifas de servicios: {str(e)}"
+            )
+
+def get_bill_payments_total(db, id_factura: int) -> float:
+    """
+    Retorna el total de pagos asociados a una factura
+    """
+    from app.models.contracts import Pagos
+    pagos = db.query(Pagos).filter(Pagos.id_factura == id_factura).all()
+    total = sum(float(pago.valor) for pago in pagos)
+    return total

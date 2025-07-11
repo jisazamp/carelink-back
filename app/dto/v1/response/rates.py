@@ -1,12 +1,21 @@
 from pydantic import BaseModel
-from datetime import date
+from decimal import Decimal
+from typing import List
 
 
-class ServiceRatesResponseDTO(BaseModel):
+class TarifaServicioResponseDTO(BaseModel):
     id: int
     id_servicio: int
-    anio: date
-    precio_por_dia: float
+    anio: int
+    precio_por_dia: Decimal
+    nombre_servicio: str = None
+
+    class Config:
+        orm_mode = True
+
+
+class TarifasServicioResponseDTO(BaseModel):
+    TarifasServicioPorAnio: List[TarifaServicioResponseDTO]
 
     class Config:
         orm_mode = True

@@ -28,3 +28,11 @@ class PaymentResponseDTO(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class BillPaymentsTotalResponseDTO(BaseModel):
+    id_factura: int
+    total_pagado: float
+
+    class Config:
+        orm_mode = True
