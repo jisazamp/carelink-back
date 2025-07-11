@@ -1,6 +1,7 @@
 from datetime import date
 from pydantic import BaseModel
 from typing import List, Optional
+from .payment_method import PaymentResponseDTO
 
 
 class FechaServicioDTO(BaseModel):
@@ -48,6 +49,7 @@ class FacturaOut(BaseModel):
     total_factura: float
     estado_factura: str | None
     observaciones: str | None
+    pagos: Optional[List[PaymentResponseDTO]] = []
 
     class Config:
         orm_mode = True

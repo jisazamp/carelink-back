@@ -20,8 +20,8 @@ def test_partial_payment():
     # 1. Login para obtener token
     print("\n1. Obteniendo token de autenticación...")
     login_data = {
-        "email": "admin@carelink.com",
-        "password": "admin123"
+        "email": "davidrestrepovera@gmail.com",
+        "password": "Banano1243"
     }
     
     try:
