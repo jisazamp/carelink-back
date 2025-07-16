@@ -3358,3 +3358,37 @@ async def generate_factura_pdf(
             status_code=500,
             detail=f"Error generando PDF: {str(e)}"
         )
+
+@router.delete("/contratos/{id_contrato}", status_code=204)
+def eliminar_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
+    """
+    Elimina un contrato y desasocia las facturas (pone id_contrato en NULL).
+    - Elimina cronogramas asociados con estado 'PENDIENTE'.
+    - Desasocia (pone id_contrato en NULL) los demás cronogramas.
+    """
+    try:
+        contrato = db.query(Contratos).filter(Contratos.id_contrato == id_contrato).first()
+        if not contrato:
+            raise HTTPException(status_code=404, detail="Contrato no encontrado")
+        # Desasociar facturas
+        db.query(Facturas).filter(Facturas.id_contrato == id_contrato).update({"id_contrato": None})
+        # Eliminar cronogramas PENDIENTE
+        db.query(CronogramaAsistenciaPacientes).filter(
+            CronogramaAsistenciaPacientes.id_contrato == id_contrato,
+            CronogramaAsistenciaPacientes.estado_asistencia == "PENDIENTE"
+        ).delete()
+        # Desasociar los demás cronogramas
+        db.query(CronogramaAsistenciaPacientes).filter(
+            CronogramaAsistenciaPacientes.id_contrato == id_contrato,
+            CronogramaAsistenciaPacientes.estado_asistencia != "PENDIENTE"
+        ).update({"id_contrato": None})
+        # Eliminar el contrato
+        db.delete(contrato)
+        db.commit()
+        return {"ok": True, "message": "Contrato eliminado, facturas desasociadas y cronogramas gestionados"}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar contrato: {str(e)}")

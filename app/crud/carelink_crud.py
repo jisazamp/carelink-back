@@ -1729,8 +1729,10 @@ class CareLinkCrud:
             story.append(img)
             story.append(Spacer(1, 10))
         
-        # Título con número de factura y contrato
-        story.append(Paragraph(f"<b>Factura N° {factura_data.get('numero_factura', '')}</b>   |   <b>Contrato N° {factura_data.get('id_contrato', '')}</b>", ParagraphStyle('Title', parent=title_style, fontSize=18, textColor=colors.HexColor('#4B0082'))))
+        # Título con número de factura y contrato (usando los atributos correctos)
+        numero_factura = factura_data.get('numero_factura', '') or factura_data.get('id_factura', '')
+        numero_contrato = factura_data.get('id_contrato', '')
+        story.append(Paragraph(f"<b>Factura N° {numero_factura}</b>   |   <b>Contrato N° {numero_contrato}</b>", ParagraphStyle('Title', parent=title_style, fontSize=18, textColor=colors.HexColor('#4B0082'))))
         story.append(Spacer(1, 20))
 
         # Datos de la factura
