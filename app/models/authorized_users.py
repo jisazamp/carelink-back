@@ -10,6 +10,7 @@ class AuthorizedUsers(Base):
     first_name = Column(String)
     last_name = Column(String)
     password = Column(String)
+    role = Column(String)
 
     class Config:
         orm_mode = True
