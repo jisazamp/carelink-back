@@ -772,23 +772,24 @@ async def create_users(
 
     saved_user = crud.save_user(user_to_save, photo)
     
-    # Si el usuario requiere visitas domiciliarias, marcar para visitas domiciliarias
-    home_visit_info = None
+    # Si el usuario requiere visitas domiciliarias, crear el registro correspondiente
+    home_visit_response = None
     if saved_user.visitas_domiciliarias:
         user_dict = user_data.dict()
-        home_visit_info = crud.create_home_visit(saved_user.id_usuario, user_dict)
+        home_visit = crud.create_home_visit(saved_user.id_usuario, user_dict)
+        home_visit_response = HomeVisitResponseDTO(**home_visit.__dict__)
     
     user_response = UserResponseDTO(**saved_user.__dict__)
     
-    # Preparar la respuesta con información adicional si se marcó para visitas domiciliarias
+    # Preparar la respuesta con información adicional si se creó visita domiciliaria
     response_data = {
         "user": user_response,
-        "home_visit_info": home_visit_info
+        "home_visit": home_visit_response
     }
     
     message = "Usuario creado de manera exitosa"
-    if home_visit_info:
-        message += " marcado para visitas domiciliarias"
+    if home_visit_response:
+        message += " con visita domiciliaria programada"
 
     return Response[dict](
         data=response_data,

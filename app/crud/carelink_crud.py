@@ -112,20 +112,33 @@ class CareLinkCrud:
                 detail="Ocurrió un error al guardar el usuario.",
             )
 
-    def create_home_visit(self, user_id: int, user_data: dict) -> dict:
+    def create_home_visit(self, user_id: int, user_data: dict) -> VisitasDomiciliarias:
         """
-        Marca al usuario como que requiere visitas domiciliarias.
-        Las visitas se crearán cuando se asigne un contrato.
+        Crea una visita domiciliaria para un usuario cuando visitas_domiciliarias es True
         """
-        # Por ahora, solo retornamos información de que el usuario requiere visitas
-        # La visita domiciliaria se creará cuando se asigne un contrato
-        return {
-            "message": "Usuario marcado para visitas domiciliarias",
-            "user_id": user_id,
-            "direccion": user_data.get("direccion", ""),
-            "telefono": user_data.get("telefono", ""),
-            "requires_home_visit": True
+        from datetime import datetime, date, time
+
+        # Crear visita domiciliaria con datos básicos
+        visita_data = {
+            "id_usuario": user_id,
+            "id_contrato": None,  # Se asignará cuando se cree el contrato
+            "fecha_visita": date.today(),
+            "hora_visita": time(8, 0),  # Hora por defecto 8:00 AM
+            "estado_visita": "PENDIENTE",
+            "direccion_visita": user_data.get("direccion", ""),
+            "telefono_visita": user_data.get("telefono", ""),
+            "valor_dia": 0.00,
+            "observaciones": f"Visita domiciliaria creada automáticamente para usuario {user_id}",
+            "fecha_creacion": datetime.utcnow(),
+            "fecha_actualizacion": datetime.utcnow()
         }
+
+        visita = VisitasDomiciliarias(**visita_data)
+        self.__carelink_session.add(visita)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(visita)
+
+        return visita
 
     def save_family_member(self, id: int, kinship, family_member: FamilyMember):
         self._get_user_by_id(id)
