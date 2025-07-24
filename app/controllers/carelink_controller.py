@@ -62,6 +62,7 @@ from app.dto.v1.response.payment_method import (
 from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO
+from app.dto.v1.response.home_visit import HomeVisitResponseDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.dto.v1.response.vaccines_per_user import (
     VaccinesPerUserResponseDTO,
@@ -741,13 +742,27 @@ async def calculate_total_factura(
         )
 
 
-@router.post("/users", status_code=201, response_model=Response[UserResponseDTO])
+@router.post("/users", status_code=201, response_model=Response[dict])
 async def create_users(
     user: str = Form(...),
     photo: Optional[UploadFile] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
-) -> Response[UserResponseDTO]:
+) -> Response[dict]:
+    """
+    Crea un nuevo usuario en el sistema.
+    
+    Si el campo 'visitas_domiciliarias' es True, también crea automáticamente
+    un registro en la tabla VisitasDomiciliarias con los datos del usuario.
+    
+    Args:
+        user: Datos del usuario en formato JSON
+        photo: Archivo de imagen opcional para la foto del usuario
+        
+    Returns:
+        Response con los datos del usuario creado y opcionalmente
+        los datos de la visita domiciliaria si fue creada.
+    """
     try:
         user_data = UserCreateRequestDTO.parse_raw(user)
     except Exception as e:
@@ -756,12 +771,29 @@ async def create_users(
     user_to_save = User(**user_data.dict())
 
     saved_user = crud.save_user(user_to_save, photo)
+    
+    # Si el usuario requiere visitas domiciliarias, marcar para visitas domiciliarias
+    home_visit_info = None
+    if saved_user.visitas_domiciliarias:
+        user_dict = user_data.dict()
+        home_visit_info = crud.create_home_visit(saved_user.id_usuario, user_dict)
+    
     user_response = UserResponseDTO(**saved_user.__dict__)
+    
+    # Preparar la respuesta con información adicional si se marcó para visitas domiciliarias
+    response_data = {
+        "user": user_response,
+        "home_visit_info": home_visit_info
+    }
+    
+    message = "Usuario creado de manera exitosa"
+    if home_visit_info:
+        message += " marcado para visitas domiciliarias"
 
-    return Response[UserResponseDTO](
-        data=user_response,
+    return Response[dict](
+        data=response_data,
         status_code=HTTPStatus.CREATED,
-        message="Usuario creado de manera exitosa",
+        message=message,
         error=None,
     )
 
@@ -849,8 +881,8 @@ async def create_user_record(
 
     return Response[object](
         data={},
+        status_code=HTTPStatus.CREATED,
         message="Historia clínica registrada de manera exitosa",
-        status_code=201,
         error=None,
     )
 
@@ -1172,8 +1204,8 @@ def update_activity(
     result = crud.update_activity(id, activity_to_update)
     return Response[ActivitiesResponse](
         data=ActivitiesResponse(**result.__dict__),
-        status_code=HTTPStatus.OK,
         message="Actividad actualizada de manera exitosa",
+        status_code=HTTPStatus.OK,
         error=None,
     )
 
@@ -1187,9 +1219,9 @@ async def delete_payment(
     crud.delete_payment(id)
     return Response[None](
         data=None,
-        error=None,
+        status_code=HTTPStatus.OK,
         message="Pago eliminado de manera exitosa",
-        status_code=HTTPStatus.NO_CONTENT,
+        error=None,
     )
 
 
@@ -1202,7 +1234,7 @@ async def delete_user(
     crud.delete_user(id)
     return Response[object](
         data={},
-        status_code=HTTPStatus.NO_CONTENT,
+        status_code=HTTPStatus.OK,
         message="Usuario eliminado de manera exitosa",
         error=None,
     )
@@ -1217,7 +1249,7 @@ async def delete_family_member(
     crud.delete_family_member(id)
     return Response[object](
         data={},
-        status_code=HTTPStatus.NO_CONTENT,
+        status_code=HTTPStatus.OK,
         message="Acudiente eliminado de manera exitosa",
         error=None,
     )
@@ -1232,7 +1264,7 @@ async def delete_record(
     crud.delete_user_medical_record(id)
     return Response[object](
         data={},
-        status_code=HTTPStatus.NO_CONTENT,
+        status_code=HTTPStatus.OK,
         message="Historia clínica eliminada de manera exitosa",
         error=None,
     )
@@ -1252,7 +1284,7 @@ async def delete_vaccine(
     crud.delete_user_vaccine_by_record_id(id, vaccine_id)
     return Response[object](
         data={},
-        status_code=HTTPStatus.NO_CONTENT,
+        status_code=HTTPStatus.OK,
         message="Vacuna eliminada de manera exitosa",
         error=None,
     )
@@ -1272,7 +1304,7 @@ async def delete_medicine(
     crud.delete_user_medicines_by_record_id(id, medicine_id)
     return Response[object](
         data={},
-        status_code=HTTPStatus.NO_CONTENT,
+        status_code=HTTPStatus.OK,
         message="Medicamento eliminado de manera exitosa",
         error=None,
     )
@@ -1292,7 +1324,7 @@ async def delete_care(
     crud.delete_user_care_by_record_id(id, care_id)
     return Response[object](
         data={},
-        status_code=HTTPStatus.NO_CONTENT,
+        status_code=HTTPStatus.OK,
         message="Cuidado eliminado de manera exitosa",
         error=None,
     )
@@ -1312,7 +1344,7 @@ async def delete_intervention(
     crud.delete_user_intervention_by_record_id(id, intervention_id)
     return Response[object](
         data={},
-        status_code=HTTPStatus.NO_CONTENT,
+        status_code=HTTPStatus.OK,
         message="Intervención eliminada de manera exitosa",
         error=None,
     )
@@ -1327,8 +1359,8 @@ async def delete_evolution(
     crud.delete_clinical_evolution(id)
     return Response[object](
         data={},
-        status_code=HTTPStatus.NO_CONTENT,
-        message="Reporte de evolución clínica eliminado con éxito",
+        status_code=HTTPStatus.OK,
+        message="Evolución clínica eliminada de manera exitosa",
         error=None,
     )
 
@@ -1342,8 +1374,8 @@ async def delete_report(
     crud.delete_medical_report(id)
     return Response[object](
         data={},
-        status_code=HTTPStatus.NO_CONTENT,
-        message="Reporte clínico eliminado con éxito",
+        status_code=HTTPStatus.OK,
+        message="Reporte clínico eliminado de manera exitosa",
         error=None,
     )
 
@@ -1361,7 +1393,7 @@ async def delete_activity(
     crud.delete_activity(id)
     return Response[object](
         data={},
-        status_code=HTTPStatus.NO_CONTENT,
+        status_code=HTTPStatus.OK,
         message="Actividad eliminada de manera exitosa",
         error=None,
     )

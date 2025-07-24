@@ -14,6 +14,7 @@ from .contracts import (
     EstadoFactura
 )
 from .transporte import CronogramaTransporte, EstadoTransporte
+from .home_visit import VisitasDomiciliarias, VisitasDomiciliariasPorProfesional
 from .attendance_schedule import (
     CronogramaAsistencia,
     CronogramaAsistenciaPacientes,

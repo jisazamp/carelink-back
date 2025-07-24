@@ -1,5 +1,6 @@
 from .base import Base
 from sqlalchemy import Boolean, Column, Integer, String, Date, DateTime
+from sqlalchemy.orm import relationship
 
 
 class User(Base):
@@ -34,6 +35,9 @@ class User(Base):
     profesion = Column(String)
     tipo_usuario = Column(String)
     visitas_domiciliarias = Column(Boolean, default=False)
+
+    # Relaciones
+    visitas_domiciliarias_list = relationship("VisitasDomiciliarias", back_populates="usuario")
 
     class Config:
         orm_mode = True
