@@ -185,7 +185,7 @@ async def list_users(
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[List[UserResponseDTO]]:
-    users = crud.list_users()
+    users = crud.list_users_without_home_visits()
     users_list = []
     for user in users:
         users_list.append(user.__dict__)
@@ -193,6 +193,23 @@ async def list_users(
         data=users_list,
         status_code=HTTPStatus.OK,
         message="Usuarios consultados con éxito",
+        error=None,
+    )
+
+
+@router.get("/users/home-visits", response_model=Response[List[UserResponseDTO]])
+async def list_users_with_home_visits(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[UserResponseDTO]]:
+    users = crud.list_users_with_home_visits()
+    users_list = []
+    for user in users:
+        users_list.append(user.__dict__)
+    return Response[List[UserResponseDTO]](
+        data=users_list,
+        status_code=HTTPStatus.OK,
+        message="Usuarios con visitas domiciliarias consultados con éxito",
         error=None,
     )
 

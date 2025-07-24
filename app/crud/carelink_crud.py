@@ -60,6 +60,12 @@ class CareLinkCrud:
     def list_users(self) -> List[User]:
         return self._get_users()
 
+    def list_users_with_home_visits(self) -> List[User]:
+        return self._get_users_with_home_visits()
+
+    def list_users_without_home_visits(self) -> List[User]:
+        return self._get_users_without_home_visits()
+
     def list_user_by_user_id(self, user_id: int) -> User:
         return self._get_user_by_id(user_id)
 
@@ -642,6 +648,22 @@ class CareLinkCrud:
     def _get_users(self) -> List[User]:
         return self.__carelink_session.execute(
             select(User).where(User.is_deleted == False)
+        ).scalars().all()
+
+    def _get_users_with_home_visits(self) -> List[User]:
+        return self.__carelink_session.execute(
+            select(User).where(
+                User.is_deleted == False,
+                User.visitas_domiciliarias == True
+            )
+        ).scalars().all()
+
+    def _get_users_without_home_visits(self) -> List[User]:
+        return self.__carelink_session.execute(
+            select(User).where(
+                User.is_deleted == False,
+                User.visitas_domiciliarias == False
+            )
         ).scalars().all()
 
     def get_all_contracts(self) -> List[ContratoResponseDTO]:
