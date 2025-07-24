@@ -33,6 +33,7 @@ class User(Base):
     is_deleted = Column(Boolean)
     profesion = Column(String)
     tipo_usuario = Column(String)
+    visitas_domiciliarias = Column(Boolean, default=False)
 
     class Config:
         orm_mode = True
