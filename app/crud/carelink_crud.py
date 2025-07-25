@@ -912,6 +912,12 @@ class CareLinkCrud:
                 detail="Credenciales de AWS no configuradas",
             )
 
+    def get_all_service_rates(self):
+        """
+        Devuelve todas las tarifas de servicios por año.
+        """
+        return self.__carelink_session.query(TarifasServicioPorAnio).all()
+
 def get_bill_payments_total(db, id_factura: int) -> float:
     """
     Retorna el total de pagos asociados a una factura
