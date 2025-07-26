@@ -795,10 +795,40 @@ async def create_users(
     if saved_user.visitas_domiciliarias:
         user_dict = user_data.dict()
         home_visit = crud.create_home_visit(saved_user.id_usuario, user_dict)
-        home_visit_response = VisitaDomiciliariaResponseDTO(**home_visit.__dict__)
+        home_visit_response = VisitaDomiciliariaResponseDTO.from_orm(home_visit)
         
-    # Usar from_orm en lugar de __dict__ para mejor compatibilidad con SQLAlchemy
-    user_response = UserResponseDTO.from_orm(saved_user)
+    # Crear manualmente el diccionario con los campos necesarios
+    user_dict = {
+        "id_usuario": saved_user.id_usuario,
+        "apellidos": saved_user.apellidos,
+        "direccion": saved_user.direccion,
+        "email": saved_user.email,
+        "escribe": saved_user.escribe,
+        "estado": saved_user.estado,
+        "estado_civil": saved_user.estado_civil,
+        "fecha_nacimiento": saved_user.fecha_nacimiento,
+        "fecha_registro": saved_user.fecha_registro,
+        "genero": saved_user.genero,
+        "grado_escolaridad": saved_user.grado_escolaridad,
+        "ha_estado_en_otro_centro": saved_user.ha_estado_en_otro_centro,
+        "lee": saved_user.lee,
+        "lugar_nacimiento": saved_user.lugar_nacimiento,
+        "lugar_procedencia": saved_user.lugar_procedencia,
+        "n_documento": saved_user.n_documento,
+        "nombres": saved_user.nombres,
+        "nucleo_familiar": saved_user.nucleo_familiar,
+        "ocupacion_quedesempeño": saved_user.ocupacion_quedesempeño,
+        "origen_otrocentro": saved_user.origen_otrocentro,
+        "proteccion_exequial": saved_user.proteccion_exequial,
+        "regimen_seguridad_social": saved_user.regimen_seguridad_social,
+        "telefono": saved_user.telefono,
+        "tipo_afiliacion": saved_user.tipo_afiliacion,
+        "url_imagen": saved_user.url_imagen,
+        "profesion": saved_user.profesion,
+        "tipo_usuario": saved_user.tipo_usuario,
+        "visitas_domiciliarias": saved_user.visitas_domiciliarias
+    }
+    user_response = UserResponseDTO(**user_dict)
     
     # Preparar la respuesta con información adicional si se creó visita domiciliaria
     response_data = {

@@ -35,6 +35,7 @@ class VisitaDomiciliariaUpdateDTO(BaseModel):
     telefono_visita: Optional[str] = None
     valor_dia: Optional[Decimal] = None
     observaciones: Optional[str] = None
+    id_profesional_asignado: Optional[int] = None
 
     @validator('valor_dia')
     def validate_valor_dia(cls, v):

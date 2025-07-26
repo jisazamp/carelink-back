@@ -144,6 +144,29 @@ class CareLinkCrud:
         self.__carelink_session.commit()
         self.__carelink_session.refresh(visita)
 
+        # Intentar asignar un profesional por defecto si hay profesionales disponibles
+        try:
+            profesionales = self._get_professionals()
+            if profesionales:
+                # Tomar el primer profesional activo disponible
+                profesional_activo = next(
+                    (p for p in profesionales if p.estado == "Activo"), 
+                    profesionales[0]
+                )
+                
+                # Crear la asignación del profesional
+                asignacion = VisitasDomiciliariasPorProfesional(
+                    id_visitadomiciliaria=visita.id_visitadomiciliaria,
+                    id_profesional=profesional_activo.id_profesional,
+                    estado_asignacion="ACTIVA",
+                    fecha_asignacion=datetime.utcnow()
+                )
+                self.__carelink_session.add(asignacion)
+                self.__carelink_session.commit()
+        except Exception as e:
+            # Si hay algún error al asignar el profesional, no fallar la creación de la visita
+            print(f"⚠️ No se pudo asignar profesional por defecto: {e}")
+
         return visita
 
     def save_family_member(self, id: int, kinship, family_member: FamilyMember):
@@ -976,6 +999,9 @@ class CareLinkCrud:
         
         visita = self.get_home_visit_by_id(visita_id)
         
+        # Extraer id_profesional_asignado si existe
+        id_profesional_asignado = update_data.pop("id_profesional_asignado", None)
+        
         update_data["fecha_actualizacion"] = datetime.utcnow()
         
         for key, value in update_data.items():
@@ -984,6 +1010,23 @@ class CareLinkCrud:
         
         self.__carelink_session.commit()
         self.__carelink_session.refresh(visita)
+        
+        # Manejar la asignación del profesional
+        if id_profesional_asignado is not None:
+            # Primero, eliminar asignaciones existentes para esta visita
+            self.__carelink_session.query(VisitasDomiciliariasPorProfesional).filter(
+                VisitasDomiciliariasPorProfesional.id_visitadomiciliaria == visita_id
+            ).delete()
+            
+            # Crear nueva asignación
+            asignacion = VisitasDomiciliariasPorProfesional(
+                id_visitadomiciliaria=visita_id,
+                id_profesional=id_profesional_asignado,
+                estado_asignacion="ACTIVA",
+                fecha_asignacion=datetime.utcnow()
+            )
+            self.__carelink_session.add(asignacion)
+            self.__carelink_session.commit()
         
         return visita
 
