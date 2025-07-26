@@ -125,16 +125,17 @@ class CareLinkCrud:
         from datetime import datetime, date, time
 
         # Crear visita domiciliaria con datos básicos
+        # fecha_visita y hora_visita se dejan como NULL para que el usuario las complete
         visita_data = {
             "id_usuario": user_id,
             "id_contrato": None,  # Se asignará cuando se cree el contrato
-            "fecha_visita": date.today(),
-            "hora_visita": time(8, 0),  # Hora por defecto 8:00 AM
+            "fecha_visita": None,  # NULL - debe ser completado por el usuario
+            "hora_visita": None,   # NULL - debe ser completado por el usuario
             "estado_visita": "PENDIENTE",
             "direccion_visita": user_data.get("direccion", ""),
             "telefono_visita": user_data.get("telefono", ""),
             "valor_dia": 0.00,
-            "observaciones": f"Visita domiciliaria creada automáticamente para usuario {user_id}",
+            "observaciones": f"Visita domiciliaria creada automáticamente para usuario {user_id} - Pendiente de programación",
             "fecha_creacion": datetime.utcnow(),
             "fecha_actualizacion": datetime.utcnow()
         }
@@ -1002,13 +1003,15 @@ class CareLinkCrud:
         # Extraer id_profesional_asignado si existe
         id_profesional_asignado = update_data.pop("id_profesional_asignado", None)
         
-        # Verificar si se está cambiando la fecha de visita
+        # Verificar si se está cambiando la fecha o hora de visita
         fecha_original = visita.fecha_visita
+        hora_original = visita.hora_visita
         nueva_fecha = update_data.get("fecha_visita")
+        nueva_hora = update_data.get("hora_visita")
         
-        # Si se está cambiando la fecha, actualizar el estado a REPROGRAMADA
+        # Si se está cambiando la fecha o la hora, actualizar el estado a REPROGRAMADA
         # (sin importar el estado actual: PENDIENTE, REALIZADA, etc.)
-        if nueva_fecha and nueva_fecha != fecha_original:
+        if (nueva_fecha and nueva_fecha != fecha_original) or (nueva_hora and nueva_hora != hora_original):
             update_data["estado_visita"] = "REPROGRAMADA"
         
         update_data["fecha_actualizacion"] = datetime.utcnow()
@@ -1148,26 +1151,80 @@ class CareLinkCrud:
         
         now = datetime.now()
         
-        # Buscar visitas que están pendientes o reprogramadas
+        # Buscar visitas que están pendientes (las reprogramadas se manejan por separado)
         pending_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
-            VisitasDomiciliarias.estado_visita.in_(['PENDIENTE', 'REPROGRAMADA'])
+            VisitasDomiciliarias.estado_visita == 'PENDIENTE'
         ).all()
+        
+        print(f"🔍 Encontradas {len(pending_visits)} visitas pendientes")
         
         expired_visits = []
         
         for visita in pending_visits:
-            # Crear datetime combinando fecha y hora de la visita
-            visita_datetime = datetime.combine(visita.fecha_visita, visita.hora_visita)
-            
-            # Si la fecha y hora de la visita ya pasó, marcarla como vencida
-            if visita_datetime <= now:
-                visita.estado_visita = "REALIZADA"
-                visita.fecha_actualizacion = now
-                expired_visits.append(visita)
+            # Solo procesar visitas que tengan fecha y hora programadas
+            if visita.fecha_visita and visita.hora_visita:
+                # Crear datetime combinando fecha y hora de la visita
+                visita_datetime = datetime.combine(visita.fecha_visita, visita.hora_visita)
+                
+                print(f"🔍 Revisando visita pendiente {visita.id_visitadomiciliaria}: {visita.fecha_visita} {visita.hora_visita} (datetime: {visita_datetime}) vs ahora: {now}")
+                
+                # Si la fecha y hora de la visita ya pasó, marcarla como vencida
+                if visita_datetime < now:  # Cambiado de <= a < para ser más preciso
+                    print(f"⏰ Visita pendiente {visita.id_visitadomiciliaria} vencida - marcando como REALIZADA")
+                    visita.estado_visita = "REALIZADA"
+                    visita.fecha_actualizacion = now
+                    expired_visits.append(visita)
+                else:
+                    print(f"⏳ Visita pendiente {visita.id_visitadomiciliaria} aún no vencida - manteniendo PENDIENTE")
+            else:
+                print(f"📝 Visita pendiente {visita.id_visitadomiciliaria} sin fecha/hora programada - saltando")
         
         if expired_visits:
             self.__carelink_session.commit()
-            print(f"✅ Se actualizaron {len(expired_visits)} visitas vencidas a estado REALIZADA")
+            print(f"✅ Se actualizaron {len(expired_visits)} visitas pendientes vencidas a estado REALIZADA")
+        else:
+            print("ℹ️ No se encontraron visitas pendientes vencidas para actualizar")
+        
+        # Procesar visitas reprogramadas por separado
+        self._update_reprogrammed_visits_status()
+
+    def _update_reprogrammed_visits_status(self):
+        """Actualizar automáticamente el estado de las visitas reprogramadas vencidas a REALIZADA"""
+        from datetime import datetime
+        
+        now = datetime.now()
+        
+        # Buscar visitas reprogramadas
+        reprogrammed_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+            VisitasDomiciliarias.estado_visita == 'REPROGRAMADA'
+        ).all()
+        
+        print(f"🔍 Encontradas {len(reprogrammed_visits)} visitas reprogramadas")
+        
+        expired_reprogrammed_visits = []
+        
+        for visita in reprogrammed_visits:
+            # Solo procesar visitas que tengan fecha y hora programadas
+            if visita.fecha_visita and visita.hora_visita:
+                # Crear datetime combinando fecha y hora de la visita
+                visita_datetime = datetime.combine(visita.fecha_visita, visita.hora_visita)
+                
+                # Si la fecha y hora de la visita reprogramada ya pasó, marcarla como vencida
+                if visita_datetime < now:  # Cambiado de <= a < para ser más preciso
+                    print(f"⏰ Visita reprogramada {visita.id_visitadomiciliaria} vencida - marcando como REALIZADA")
+                    visita.estado_visita = "REALIZADA"
+                    visita.fecha_actualizacion = now
+                    expired_reprogrammed_visits.append(visita)
+                else:
+                    print(f"⏳ Visita reprogramada {visita.id_visitadomiciliaria} aún no vencida - manteniendo REPROGRAMADA")
+            else:
+                print(f"📝 Visita reprogramada {visita.id_visitadomiciliaria} sin fecha/hora programada - saltando")
+        
+        if expired_reprogrammed_visits:
+            self.__carelink_session.commit()
+            print(f"✅ Se actualizaron {len(expired_reprogrammed_visits)} visitas reprogramadas vencidas a estado REALIZADA")
+        else:
+            print("ℹ️ No se encontraron visitas reprogramadas vencidas para actualizar")
 
     def get_scheduled_home_visits_with_professionals(self) -> List[dict]:
         """Obtener solo las visitas domiciliarias programadas (futuras) con información del profesional asignado"""
@@ -1177,16 +1234,40 @@ class CareLinkCrud:
         # Primero, actualizar automáticamente el estado de las visitas vencidas
         self._update_expired_visits_status()
         
-        # Obtener solo visitas con fecha futura o igual a hoy
+        # Obtener solo visitas con fecha y hora futuras
+        from datetime import datetime
+        
+        now = datetime.now()
+        
         visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
             joinedload(VisitasDomiciliarias.usuario)
-        ).filter(
-            VisitasDomiciliarias.fecha_visita >= date.today(),
-            VisitasDomiciliarias.estado_visita.in_(["PENDIENTE", "REPROGRAMADA"])
         ).order_by(VisitasDomiciliarias.fecha_visita.asc()).all()
         
-        result = []
+        # Filtrar visitas que realmente están en el futuro (considerando fecha y hora)
+        result_visitas = []
+        print(f"🔍 Total de visitas encontradas: {len(visitas)}")
+        
         for visita in visitas:
+            print(f"🔍 Revisando visita {visita.id_visitadomiciliaria}: estado={visita.estado_visita}, fecha={visita.fecha_visita}, hora={visita.hora_visita}")
+            
+            if visita.fecha_visita and visita.hora_visita:
+                visita_datetime = datetime.combine(visita.fecha_visita, visita.hora_visita)
+                print(f"🔍 Visita {visita.id_visitadomiciliaria}: datetime={visita_datetime}, ahora={now}, es_futura={visita_datetime > now}")
+                
+                if visita_datetime > now:
+                    result_visitas.append(visita)
+                    print(f"✅ Visita {visita.id_visitadomiciliaria} agregada (futura)")
+                else:
+                    print(f"❌ Visita {visita.id_visitadomiciliaria} no agregada (pasada)")
+            else:
+                # Si no tiene fecha/hora programada, incluirla (pendiente de programación)
+                result_visitas.append(visita)
+                print(f"✅ Visita {visita.id_visitadomiciliaria} agregada (pendiente de programación)")
+        
+        print(f"🔍 Total de visitas filtradas: {len(result_visitas)}")
+        
+        result = []
+        for visita in result_visitas:
             visita_dict = {
                 "id_visitadomiciliaria": visita.id_visitadomiciliaria,
                 "id_contrato": visita.id_contrato,

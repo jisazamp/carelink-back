@@ -8,8 +8,8 @@ class VisitaDomiciliariaResponseDTO(BaseModel):
     id_visitadomiciliaria: int
     id_contrato: Optional[int] = None
     id_usuario: Optional[int] = None
-    fecha_visita: date
-    hora_visita: time
+    fecha_visita: Optional[date] = None
+    hora_visita: Optional[time] = None
     estado_visita: str
     direccion_visita: str
     telefono_visita: Optional[str] = None
@@ -26,8 +26,8 @@ class VisitaDomiciliariaConProfesionalResponseDTO(BaseModel):
     id_visitadomiciliaria: int
     id_contrato: Optional[int] = None
     id_usuario: Optional[int] = None
-    fecha_visita: date
-    hora_visita: time
+    fecha_visita: Optional[date] = None
+    hora_visita: Optional[time] = None
     estado_visita: str
     direccion_visita: str
     telefono_visita: Optional[str] = None

@@ -11,8 +11,8 @@ class VisitasDomiciliarias(Base):
     id_visitadomiciliaria = Column(Integer, primary_key=True, autoincrement=True)
     id_contrato = Column(Integer, ForeignKey("Contratos.id_contrato"), nullable=True)
     id_usuario = Column(Integer, ForeignKey("Usuarios.id_usuario"), nullable=True)
-    fecha_visita = Column(Date, nullable=False)
-    hora_visita = Column(Time, nullable=False)
+    fecha_visita = Column(Date, nullable=True)
+    hora_visita = Column(Time, nullable=True)
     estado_visita = Column(
         Enum("PENDIENTE", "REALIZADA", "CANCELADA", "REPROGRAMADA", name="estado_visita_enum"),
         nullable=False,

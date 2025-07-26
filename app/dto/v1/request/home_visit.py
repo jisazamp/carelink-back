@@ -6,8 +6,8 @@ from decimal import Decimal
 
 class VisitaDomiciliariaCreateDTO(BaseModel):
     id_usuario: int
-    fecha_visita: date
-    hora_visita: time
+    fecha_visita: Optional[date] = None
+    hora_visita: Optional[time] = None
     direccion_visita: str
     telefono_visita: Optional[str] = None
     valor_dia: Decimal
@@ -22,7 +22,7 @@ class VisitaDomiciliariaCreateDTO(BaseModel):
 
     @validator('fecha_visita')
     def validate_fecha_visita(cls, v):
-        if v < date.today():
+        if v is not None and v < date.today():
             raise ValueError('La fecha de visita no puede ser anterior a hoy')
         return v
 
