@@ -1002,6 +1002,14 @@ class CareLinkCrud:
         # Extraer id_profesional_asignado si existe
         id_profesional_asignado = update_data.pop("id_profesional_asignado", None)
         
+        # Verificar si se está cambiando la fecha de visita
+        fecha_original = visita.fecha_visita
+        nueva_fecha = update_data.get("fecha_visita")
+        
+        # Si se está cambiando la fecha, actualizar el estado a REPROGRAMADA
+        if nueva_fecha and nueva_fecha != fecha_original:
+            update_data["estado_visita"] = "REPROGRAMADA"
+        
         update_data["fecha_actualizacion"] = datetime.utcnow()
         
         for key, value in update_data.items():
