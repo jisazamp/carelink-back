@@ -33,7 +33,7 @@ class UserResponseDTO(BaseModel):
     visitas_domiciliarias: bool | None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class UserUpdateRequestDTO(BaseModel):

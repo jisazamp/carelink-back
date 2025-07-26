@@ -30,7 +30,7 @@ from app.models.rates import TarifasServicioPorAnio
 from app.models.transporte import CronogramaTransporte, EstadoTransporte
 from app.models.user import User
 from app.models.vaccines import VacunasPorUsuario
-from app.models.home_visit import VisitasDomiciliarias
+from app.models.home_visit import VisitasDomiciliarias, VisitasDomiciliariasPorProfesional
 from boto3 import client
 from botocore.exceptions import NoCredentialsError
 from datetime import date, datetime
@@ -923,6 +923,215 @@ class CareLinkCrud:
         Devuelve todas las tarifas de servicios por año.
         """
         return self.__carelink_session.query(TarifasServicioPorAnio).all()
+
+    # Métodos para visitas domiciliarias
+    def get_user_home_visits(self, user_id: int) -> List[VisitasDomiciliarias]:
+        """Obtener todas las visitas domiciliarias de un usuario"""
+        return self.__carelink_session.query(VisitasDomiciliarias).filter(
+            VisitasDomiciliarias.id_usuario == user_id
+        ).order_by(VisitasDomiciliarias.fecha_visita.desc()).all()
+
+    def get_home_visit_by_id(self, visita_id: int) -> VisitasDomiciliarias:
+        """Obtener una visita domiciliaria por ID"""
+        visita = self.__carelink_session.query(VisitasDomiciliarias).filter(
+            VisitasDomiciliarias.id_visitadomiciliaria == visita_id
+        ).first()
+        
+        if not visita:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Visita domiciliaria no encontrada"
+            )
+        
+        return visita
+
+    def create_home_visit_manual(self, visita_data: dict, id_profesional_asignado: int = None) -> VisitasDomiciliarias:
+        """Crear una visita domiciliaria manualmente"""
+        from datetime import datetime
+        
+        visita_data["fecha_creacion"] = datetime.utcnow()
+        visita_data["fecha_actualizacion"] = datetime.utcnow()
+        
+        visita = VisitasDomiciliarias(**visita_data)
+        self.__carelink_session.add(visita)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(visita)
+        
+        # Si se proporciona un profesional asignado, crear la relación
+        if id_profesional_asignado:
+            asignacion = VisitasDomiciliariasPorProfesional(
+                id_visitadomiciliaria=visita.id_visitadomiciliaria,
+                id_profesional=id_profesional_asignado,
+                estado_asignacion="ACTIVA",
+                fecha_asignacion=datetime.utcnow()
+            )
+            self.__carelink_session.add(asignacion)
+            self.__carelink_session.commit()
+        
+        return visita
+
+    def update_home_visit(self, visita_id: int, update_data: dict) -> VisitasDomiciliarias:
+        """Actualizar una visita domiciliaria"""
+        from datetime import datetime
+        
+        visita = self.get_home_visit_by_id(visita_id)
+        
+        update_data["fecha_actualizacion"] = datetime.utcnow()
+        
+        for key, value in update_data.items():
+            if hasattr(visita, key):
+                setattr(visita, key, value)
+        
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(visita)
+        
+        return visita
+
+    def delete_home_visit(self, visita_id: int):
+        """Eliminar una visita domiciliaria"""
+        visita = self.get_home_visit_by_id(visita_id)
+        
+        self.__carelink_session.delete(visita)
+        self.__carelink_session.commit()
+
+    def get_home_visits_with_professionals(self, user_id: int) -> List[dict]:
+        """Obtener visitas domiciliarias con información del profesional asignado"""
+        from sqlalchemy.orm import joinedload
+        
+        visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
+            joinedload(VisitasDomiciliarias.usuario)
+        ).filter(
+            VisitasDomiciliarias.id_usuario == user_id
+        ).order_by(VisitasDomiciliarias.fecha_visita.desc()).all()
+        
+        result = []
+        for visita in visitas:
+            visita_dict = {
+                "id_visitadomiciliaria": visita.id_visitadomiciliaria,
+                "id_contrato": visita.id_contrato,
+                "id_usuario": visita.id_usuario,
+                "fecha_visita": visita.fecha_visita,
+                "hora_visita": visita.hora_visita,
+                "estado_visita": visita.estado_visita,
+                "direccion_visita": visita.direccion_visita,
+                "telefono_visita": visita.telefono_visita,
+                "valor_dia": visita.valor_dia,
+                "observaciones": visita.observaciones,
+                "fecha_creacion": visita.fecha_creacion,
+                "fecha_actualizacion": visita.fecha_actualizacion,
+                "profesional_asignado": None
+            }
+            
+            # Buscar si hay un profesional asignado
+            asignacion = self.__carelink_session.query(VisitasDomiciliariasPorProfesional).filter(
+                VisitasDomiciliariasPorProfesional.id_visitadomiciliaria == visita.id_visitadomiciliaria,
+                VisitasDomiciliariasPorProfesional.estado_asignacion == "ACTIVA"
+            ).first()
+            
+            if asignacion:
+                profesional = self.__carelink_session.query(Profesionales).filter(
+                    Profesionales.id_profesional == asignacion.id_profesional
+                ).first()
+                if profesional:
+                    visita_dict["profesional_asignado"] = f"{profesional.nombres} {profesional.apellidos}"
+            
+            result.append(visita_dict)
+        
+        return result
+
+    def get_all_home_visits_with_professionals(self) -> List[dict]:
+        """Obtener todas las visitas domiciliarias con información del profesional asignado"""
+        from sqlalchemy.orm import joinedload
+        
+        visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
+            joinedload(VisitasDomiciliarias.usuario)
+        ).order_by(VisitasDomiciliarias.fecha_visita.desc()).all()
+        
+        result = []
+        for visita in visitas:
+            visita_dict = {
+                "id_visitadomiciliaria": visita.id_visitadomiciliaria,
+                "id_contrato": visita.id_contrato,
+                "id_usuario": visita.id_usuario,
+                "fecha_visita": visita.fecha_visita,
+                "hora_visita": visita.hora_visita,
+                "estado_visita": visita.estado_visita,
+                "direccion_visita": visita.direccion_visita,
+                "telefono_visita": visita.telefono_visita,
+                "valor_dia": visita.valor_dia,
+                "observaciones": visita.observaciones,
+                "fecha_creacion": visita.fecha_creacion,
+                "fecha_actualizacion": visita.fecha_actualizacion,
+                "profesional_asignado": None,
+                "paciente_nombre": f"{visita.usuario.nombres} {visita.usuario.apellidos}" if visita.usuario else "Sin paciente"
+            }
+            
+            # Buscar si hay un profesional asignado
+            asignacion = self.__carelink_session.query(VisitasDomiciliariasPorProfesional).filter(
+                VisitasDomiciliariasPorProfesional.id_visitadomiciliaria == visita.id_visitadomiciliaria,
+                VisitasDomiciliariasPorProfesional.estado_asignacion == "ACTIVA"
+            ).first()
+            
+            if asignacion:
+                profesional = self.__carelink_session.query(Profesionales).filter(
+                    Profesionales.id_profesional == asignacion.id_profesional
+                ).first()
+                if profesional:
+                    visita_dict["profesional_asignado"] = f"{profesional.nombres} {profesional.apellidos} ({profesional.especialidad})"
+            
+            result.append(visita_dict)
+        
+        return result
+
+    def get_scheduled_home_visits_with_professionals(self) -> List[dict]:
+        """Obtener solo las visitas domiciliarias programadas (futuras) con información del profesional asignado"""
+        from sqlalchemy.orm import joinedload
+        from datetime import date
+        
+        # Obtener solo visitas con fecha futura o igual a hoy
+        visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
+            joinedload(VisitasDomiciliarias.usuario)
+        ).filter(
+            VisitasDomiciliarias.fecha_visita >= date.today(),
+            VisitasDomiciliarias.estado_visita.in_(["PENDIENTE", "REPROGRAMADA"])
+        ).order_by(VisitasDomiciliarias.fecha_visita.asc()).all()
+        
+        result = []
+        for visita in visitas:
+            visita_dict = {
+                "id_visitadomiciliaria": visita.id_visitadomiciliaria,
+                "id_contrato": visita.id_contrato,
+                "id_usuario": visita.id_usuario,
+                "fecha_visita": visita.fecha_visita,
+                "hora_visita": visita.hora_visita,
+                "estado_visita": visita.estado_visita,
+                "direccion_visita": visita.direccion_visita,
+                "telefono_visita": visita.telefono_visita,
+                "valor_dia": visita.valor_dia,
+                "observaciones": visita.observaciones,
+                "fecha_creacion": visita.fecha_creacion,
+                "fecha_actualizacion": visita.fecha_actualizacion,
+                "profesional_asignado": None,
+                "paciente_nombre": f"{visita.usuario.nombres} {visita.usuario.apellidos}" if visita.usuario else "Sin paciente"
+            }
+            
+            # Buscar si hay un profesional asignado
+            asignacion = self.__carelink_session.query(VisitasDomiciliariasPorProfesional).filter(
+                VisitasDomiciliariasPorProfesional.id_visitadomiciliaria == visita.id_visitadomiciliaria,
+                VisitasDomiciliariasPorProfesional.estado_asignacion == "ACTIVA"
+            ).first()
+            
+            if asignacion:
+                profesional = self.__carelink_session.query(Profesionales).filter(
+                    Profesionales.id_profesional == asignacion.id_profesional
+                ).first()
+                if profesional:
+                    visita_dict["profesional_asignado"] = f"{profesional.nombres} {profesional.apellidos} ({profesional.especialidad})"
+            
+            result.append(visita_dict)
+        
+        return result
+
 
 def get_bill_payments_total(db, id_factura: int) -> float:
     """

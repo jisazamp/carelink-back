@@ -62,7 +62,8 @@ from app.dto.v1.response.payment_method import (
 from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO
-from app.dto.v1.response.home_visit import HomeVisitResponseDTO
+from app.dto.v1.response.home_visit import VisitaDomiciliariaResponseDTO, VisitaDomiciliariaConProfesionalResponseDTO
+from app.dto.v1.request.home_visit import VisitaDomiciliariaCreateDTO, VisitaDomiciliariaUpdateDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.dto.v1.response.vaccines_per_user import (
     VaccinesPerUserResponseDTO,
@@ -794,9 +795,16 @@ async def create_users(
     if saved_user.visitas_domiciliarias:
         user_dict = user_data.dict()
         home_visit = crud.create_home_visit(saved_user.id_usuario, user_dict)
-        home_visit_response = HomeVisitResponseDTO(**home_visit.__dict__)
+        home_visit_response = VisitaDomiciliariaResponseDTO(**home_visit.__dict__)
     
-    user_response = UserResponseDTO(**saved_user.__dict__)
+    # Debug: verificar qué datos tiene el usuario guardado
+    print(f"🔍 DEBUG: saved_user.id_usuario = {saved_user.id_usuario}")
+    
+    # Usar from_orm en lugar de __dict__ para mejor compatibilidad con SQLAlchemy
+    user_response = UserResponseDTO.from_orm(saved_user)
+    
+    # Debug: verificar qué datos tiene la respuesta
+    print(f"🔍 DEBUG: user_response.id_usuario = {user_response.id_usuario}")
     
     # Preparar la respuesta con información adicional si se creó visita domiciliaria
     response_data = {
@@ -3442,3 +3450,221 @@ def eliminar_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al eliminar contrato: {str(e)}")
+
+
+# Endpoints para visitas domiciliarias
+@router.get("/users/{user_id}/home-visits", response_model=Response[List[VisitaDomiciliariaConProfesionalResponseDTO]])
+async def get_user_home_visits(
+    user_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[VisitaDomiciliariaConProfesionalResponseDTO]]:
+    """Obtener todas las visitas domiciliarias de un usuario"""
+    try:
+        visitas = crud.get_home_visits_with_professionals(user_id)
+        return Response(
+            data=visitas,
+            message="Visitas domiciliarias obtenidas exitosamente",
+            status_code=200,
+            error=None
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener visitas domiciliarias: {str(e)}"
+        )
+
+
+@router.get("/home-visits", response_model=Response[List[VisitaDomiciliariaConProfesionalResponseDTO]])
+async def get_all_home_visits(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[VisitaDomiciliariaConProfesionalResponseDTO]]:
+    """Obtener todas las visitas domiciliarias programadas (futuras)"""
+    try:
+        visitas = crud.get_scheduled_home_visits_with_professionals()
+        return Response(
+            data=visitas,
+            message="Visitas domiciliarias programadas obtenidas exitosamente",
+            status_code=200,
+            error=None
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener visitas domiciliarias: {str(e)}"
+        )
+
+
+@router.get("/home-visits/all", response_model=Response[List[VisitaDomiciliariaConProfesionalResponseDTO]])
+async def get_all_home_visits_history(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[VisitaDomiciliariaConProfesionalResponseDTO]]:
+    """Obtener todas las visitas domiciliarias (historial completo)"""
+    try:
+        visitas = crud.get_all_home_visits_with_professionals()
+        return Response(
+            data=visitas,
+            message="Historial de visitas domiciliarias obtenido exitosamente",
+            status_code=200,
+            error=None
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener historial de visitas domiciliarias: {str(e)}"
+        )
+
+
+@router.get("/home-visits/{visita_id}", response_model=Response[VisitaDomiciliariaResponseDTO])
+async def get_home_visit_by_id(
+    visita_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[VisitaDomiciliariaResponseDTO]:
+    """Obtener una visita domiciliaria por ID"""
+    try:
+        visita = crud.get_home_visit_by_id(visita_id)
+        return Response(
+            data=VisitaDomiciliariaResponseDTO.from_orm(visita),
+            message="Visita domiciliaria obtenida exitosamente",
+            status_code=200,
+            error=None
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener visita domiciliaria: {str(e)}"
+        )
+
+
+@router.post("/users/{user_id}/home-visits", response_model=Response[VisitaDomiciliariaResponseDTO])
+async def create_home_visit(
+    user_id: int,
+    visita_data: VisitaDomiciliariaCreateDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[VisitaDomiciliariaResponseDTO]:
+    """Crear una nueva visita domiciliaria"""
+    try:
+        # Verificar que el usuario existe
+        crud.list_user_by_user_id(user_id)
+        
+        # Extraer el id_profesional_asignado si existe
+        id_profesional_asignado = visita_data.id_profesional_asignado
+        
+        # Crear la visita
+        visita_dict = visita_data.dict()
+        visita_dict["id_usuario"] = user_id
+        
+        # Remover id_profesional_asignado del dict para no incluirlo en la tabla VisitasDomiciliarias
+        visita_dict.pop("id_profesional_asignado", None)
+        
+        visita = crud.create_home_visit_manual(visita_dict, id_profesional_asignado)
+        
+        return Response(
+            data=VisitaDomiciliariaResponseDTO.from_orm(visita),
+            message="Visita domiciliaria creada exitosamente",
+            status_code=201,
+            error=None
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al crear visita domiciliaria: {str(e)}"
+        )
+
+
+@router.patch("/home-visits/{visita_id}", response_model=Response[VisitaDomiciliariaResponseDTO])
+async def update_home_visit(
+    visita_id: int,
+    visita_data: VisitaDomiciliariaUpdateDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[VisitaDomiciliariaResponseDTO]:
+    """Actualizar una visita domiciliaria"""
+    try:
+        # Filtrar solo los campos que no son None
+        update_data = {k: v for k, v in visita_data.dict().items() if v is not None}
+        
+        visita = crud.update_home_visit(visita_id, update_data)
+        
+        return Response(
+            data=VisitaDomiciliariaResponseDTO.from_orm(visita),
+            message="Visita domiciliaria actualizada exitosamente",
+            status_code=200,
+            error=None
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al actualizar visita domiciliaria: {str(e)}"
+        )
+
+
+@router.delete("/home-visits/{visita_id}", response_model=Response[dict])
+async def delete_home_visit(
+    visita_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[dict]:
+    """Eliminar una visita domiciliaria"""
+    try:
+        crud.delete_home_visit(visita_id)
+        
+        return Response(
+            data={"deleted": True},
+            message="Visita domiciliaria eliminada exitosamente",
+            success=True
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al eliminar visita domiciliaria: {str(e)}"
+        )
+
+
+@router.put("/users/{user_id}/home-visits/{visita_id}", response_model=Response[VisitaDomiciliariaResponseDTO])
+async def update_user_home_visit(
+    user_id: int,
+    visita_id: int,
+    visita_data: VisitaDomiciliariaUpdateDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[VisitaDomiciliariaResponseDTO]:
+    """Actualizar una visita domiciliaria específica de un usuario"""
+    try:
+        # Verificar que la visita pertenece al usuario
+        visita = crud.get_home_visit_by_id(visita_id)
+        if visita.id_usuario != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="La visita no pertenece al usuario especificado"
+            )
+        
+        # Filtrar solo los campos que no son None
+        update_data = {k: v for k, v in visita_data.dict().items() if v is not None}
+        
+        visita_actualizada = crud.update_home_visit(visita_id, update_data)
+        return Response(
+            data=VisitaDomiciliariaResponseDTO.from_orm(visita_actualizada),
+            message="Visita domiciliaria actualizada exitosamente",
+            status_code=200,
+            error=None
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al actualizar visita domiciliaria: {str(e)}"
+        )
