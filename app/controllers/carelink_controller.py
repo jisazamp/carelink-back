@@ -445,7 +445,7 @@ def get_medical_reports(
 ) -> Response[List[ReporteClinicoResponse]]:
     reports = crud._get_medical_reports_by_user_id(user_id)
     return Response[List[ReporteClinicoResponse]](
-        data=[ReporteClinicoResponse(**report.__dict__) for report in reports],
+        data=[ReporteClinicoResponse.from_orm(report) for report in reports],
         message="Reporte consultado",
         status_code=200,
         error=None,

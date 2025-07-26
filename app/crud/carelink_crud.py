@@ -822,8 +822,14 @@ class CareLinkCrud:
         return report
 
     def _get_medical_reports_by_user_id(self, user_id: int) -> List[ReportesClinicos]:
+        # Primero obtener el id_historiaclinica del usuario
+        medical_record = self._get_user_medical_record_by_user_id(user_id)
+        if not medical_record:
+            return []
+        
+        # Luego buscar los reportes clínicos asociados a esa historia clínica
         return self.__carelink_session.execute(
-            select(ReportesClinicos).where(ReportesClinicos.id_historiaclinica == user_id)
+            select(ReportesClinicos).where(ReportesClinicos.id_historiaclinica == medical_record.id_historiaclinica)
         ).scalars().all()
 
     def _get_professionals(self) -> List[Profesionales]:
