@@ -136,14 +136,14 @@ Paciente ID: 123, Estado actual: ASISTIO"
 
 ## Casos de Uso Cubiertos
 
-### ✅ Casos Prevenidos
+### Casos Prevenidos
 
 1. **Crear contrato con fechas que ya tienen agendamiento**
 2. **Agregar paciente a cronograma existente**
 3. **Reagendar paciente a fecha ya ocupada**
 4. **Inserción directa en base de datos**
 
-### ✅ Casos Permitidos
+### Casos Permitidos
 
 1. **Crear contrato con fechas nuevas**
 2. **Agregar paciente a cronograma vacío**

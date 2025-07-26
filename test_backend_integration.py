@@ -16,21 +16,21 @@ from datetime import date, datetime, time
 
 def test_database_connection():
     """Probar la conexión a la base de datos"""
-    print("🔍 Probando conexión a la base de datos...")
+    print(" Probando conexión a la base de datos...")
     
     try:
         engine = create_engine("mysql+pymysql://root:@localhost/carelink")
         with engine.connect() as connection:
             result = connection.execute(text("SELECT 1"))
-            print("✅ Conexión a la base de datos exitosa")
+            print(" Conexión a la base de datos exitosa")
             return True
     except Exception as e:
-        print(f"❌ Error de conexión: {e}")
+        print(f" Error de conexión: {e}")
         return False
 
 def test_models_import():
     """Probar que todos los modelos se importen correctamente"""
-    print("\n🔍 Probando importación de modelos...")
+    print("\n Probando importación de modelos...")
     
     try:
         # Probar importación de modelos principales
@@ -40,15 +40,15 @@ def test_models_import():
         from app.models.user import User
         from app.models.professional import Profesionales
         
-        print("✅ Importación de modelos exitosa")
+        print(" Importación de modelos exitosa")
         return True
     except Exception as e:
-        print(f"❌ Error en importación de modelos: {e}")
+        print(f" Error en importación de modelos: {e}")
         return False
 
 def test_crud_operations():
     """Probar operaciones básicas del CRUD"""
-    print("\n🔍 Probando operaciones del CRUD...")
+    print("\n Probando operaciones del CRUD...")
     
     try:
         engine = create_engine("mysql+pymysql://root:@localhost/carelink")
@@ -57,28 +57,28 @@ def test_crud_operations():
         
         # Probar obtener usuarios
         users = crud.list_users()
-        print(f"✅ Obtención de usuarios: {len(users)} usuarios encontrados")
+        print(f" Obtención de usuarios: {len(users)} usuarios encontrados")
         
         # Probar obtener profesionales
         professionals = crud._get_professionals()
-        print(f"✅ Obtención de profesionales: {len(professionals)} profesionales encontrados")
+        print(f" Obtención de profesionales: {len(professionals)} profesionales encontrados")
         
         # Probar obtener contratos
         try:
             contracts = session.query(Contratos).limit(5).all()
-            print(f"✅ Obtención de contratos: {len(contracts)} contratos encontrados")
+            print(f" Obtención de contratos: {len(contracts)} contratos encontrados")
         except Exception as e:
             print(f"⚠️  Error obteniendo contratos: {e}")
         
         session.close()
         return True
     except Exception as e:
-        print(f"❌ Error en operaciones CRUD: {e}")
+        print(f" Error en operaciones CRUD: {e}")
         return False
 
 def test_cronograma_operations():
     """Probar operaciones de cronograma de asistencia"""
-    print("\n🔍 Probando operaciones de cronograma...")
+    print("\n Probando operaciones de cronograma...")
     
     try:
         engine = create_engine("mysql+pymysql://root:@localhost/carelink")
@@ -88,34 +88,34 @@ def test_cronograma_operations():
         # Verificar que las tablas existen
         result = session.execute(text("SHOW TABLES LIKE 'cronograma_asistencia'"))
         if result.fetchone():
-            print("✅ Tabla cronograma_asistencia existe")
+            print(" Tabla cronograma_asistencia existe")
         else:
-            print("❌ Tabla cronograma_asistencia no existe")
+            print(" Tabla cronograma_asistencia no existe")
             return False
         
         result = session.execute(text("SHOW TABLES LIKE 'cronograma_asistencia_pacientes'"))
         if result.fetchone():
-            print("✅ Tabla cronograma_asistencia_pacientes existe")
+            print(" Tabla cronograma_asistencia_pacientes existe")
         else:
-            print("❌ Tabla cronograma_asistencia_pacientes no existe")
+            print(" Tabla cronograma_asistencia_pacientes no existe")
             return False
         
         # Probar obtener cronogramas por rango
         try:
             cronogramas = crud.get_cronogramas_por_rango("2025-01-01", "2025-01-31")
-            print(f"✅ Obtención de cronogramas por rango: {len(cronogramas)} cronogramas encontrados")
+            print(f" Obtención de cronogramas por rango: {len(cronogramas)} cronogramas encontrados")
         except Exception as e:
             print(f"⚠️  Error obteniendo cronogramas por rango: {e}")
         
         session.close()
         return True
     except Exception as e:
-        print(f"❌ Error en operaciones de cronograma: {e}")
+        print(f" Error en operaciones de cronograma: {e}")
         return False
 
 def test_transporte_operations():
     """Probar operaciones de transporte"""
-    print("\n🔍 Probando operaciones de transporte...")
+    print("\n Probando operaciones de transporte...")
     
     try:
         engine = create_engine("mysql+pymysql://root:@localhost/carelink")
@@ -125,27 +125,27 @@ def test_transporte_operations():
         # Verificar que la tabla existe
         result = session.execute(text("SHOW TABLES LIKE 'cronograma_transporte'"))
         if result.fetchone():
-            print("✅ Tabla cronograma_transporte existe")
+            print(" Tabla cronograma_transporte existe")
         else:
-            print("❌ Tabla cronograma_transporte no existe")
+            print(" Tabla cronograma_transporte no existe")
             return False
         
         # Probar obtener ruta diaria
         try:
             rutas = crud.get_ruta_diaria("2025-01-01")
-            print(f"✅ Obtención de ruta diaria: {len(rutas)} rutas encontradas")
+            print(f" Obtención de ruta diaria: {len(rutas)} rutas encontradas")
         except Exception as e:
             print(f"⚠️  Error obteniendo ruta diaria: {e}")
         
         session.close()
         return True
     except Exception as e:
-        print(f"❌ Error en operaciones de transporte: {e}")
+        print(f" Error en operaciones de transporte: {e}")
         return False
 
 def test_contract_operations():
     """Probar operaciones de contratos y facturación"""
-    print("\n🔍 Probando operaciones de contratos...")
+    print("\n Probando operaciones de contratos...")
     
     try:
         engine = create_engine("mysql+pymysql://root:@localhost/carelink")
@@ -162,34 +162,34 @@ def test_contract_operations():
         for table in tables_to_check:
             result = session.execute(text(f"SHOW TABLES LIKE '{table}'"))
             if result.fetchone():
-                print(f"✅ Tabla {table} existe")
+                print(f" Tabla {table} existe")
             else:
-                print(f"❌ Tabla {table} no existe")
+                print(f" Tabla {table} no existe")
                 return False
         
         # Probar obtener contratos
         try:
             contracts = session.query(Contratos).limit(5).all()
-            print(f"✅ Obtención de contratos: {len(contracts)} contratos encontrados")
+            print(f" Obtención de contratos: {len(contracts)} contratos encontrados")
         except Exception as e:
             print(f"⚠️  Error obteniendo contratos: {e}")
         
         # Probar obtener facturas
         try:
             bills = session.query(Facturas).limit(5).all()
-            print(f"✅ Obtención de facturas: {len(bills)} facturas encontradas")
+            print(f" Obtención de facturas: {len(bills)} facturas encontradas")
         except Exception as e:
             print(f"⚠️  Error obteniendo facturas: {e}")
         
         session.close()
         return True
     except Exception as e:
-        print(f"❌ Error en operaciones de contratos: {e}")
+        print(f" Error en operaciones de contratos: {e}")
         return False
 
 def test_dto_validation():
     """Probar validación de DTOs"""
-    print("\n🔍 Probando validación de DTOs...")
+    print("\n Probando validación de DTOs...")
     
     try:
         from app.dto.v1.request.attendance_schedule import CronogramaAsistenciaCreateDTO, EstadoAsistenciaEnum
@@ -203,7 +203,7 @@ def test_dto_validation():
             "comentario": "Prueba de cronograma"
         }
         cronograma_dto = CronogramaAsistenciaCreateDTO(**cronograma_data)
-        print("✅ DTO CronogramaAsistenciaCreateDTO válido")
+        print(" DTO CronogramaAsistenciaCreateDTO válido")
         
         # Probar DTO de transporte
         transporte_data = {
@@ -215,11 +215,11 @@ def test_dto_validation():
             "observaciones": "Prueba de transporte"
         }
         transporte_dto = CronogramaTransporteCreateDTO(**transporte_data)
-        print("✅ DTO CronogramaTransporteCreateDTO válido")
+        print(" DTO CronogramaTransporteCreateDTO válido")
         
         return True
     except Exception as e:
-        print(f"❌ Error en validación de DTOs: {e}")
+        print(f" Error en validación de DTOs: {e}")
         return False
 
 def main():
@@ -242,18 +242,18 @@ def main():
             result = test_func()
             results.append((test_name, result))
         except Exception as e:
-            print(f"❌ Error en prueba '{test_name}': {e}")
+            print(f" Error en prueba '{test_name}': {e}")
             results.append((test_name, False))
     
     print("\n" + "="*50)
-    print("📊 RESUMEN DE PRUEBAS")
+    print(" RESUMEN DE PRUEBAS")
     print("="*50)
     
     passed = 0
     total = len(results)
     
     for test_name, result in results:
-        status = "✅ PASÓ" if result else "❌ FALLÓ"
+        status = " PASÓ" if result else " FALLÓ"
         print(f"{test_name}: {status}")
         if result:
             passed += 1

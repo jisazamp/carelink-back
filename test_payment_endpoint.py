@@ -15,7 +15,7 @@ PAYMENT_URL = f"{BASE_URL}/api/pagos/registrar"
 def test_payment_endpoint():
     """Prueba el endpoint de registro de pagos"""
     
-    print("🧪 Iniciando pruebas del endpoint de pagos...")
+    print(" Iniciando pruebas del endpoint de pagos...")
     
     # 1. Login para obtener token
     print("\n1. Obteniendo token de autenticación...")
@@ -27,16 +27,16 @@ def test_payment_endpoint():
     try:
         login_response = requests.post(LOGIN_URL, json=login_data)
         if login_response.status_code != 200:
-            print(f"❌ Error en login: {login_response.status_code}")
+            print(f" Error en login: {login_response.status_code}")
             print(f"Respuesta: {login_response.text}")
             return
         
         token = login_response.json()["data"]["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
-        print("✅ Login exitoso")
+        print(" Login exitoso")
         
     except Exception as e:
-        print(f"❌ Error en login: {str(e)}")
+        print(f" Error en login: {str(e)}")
         return
 
     # 2. Probar registro de pago válido
@@ -55,12 +55,12 @@ def test_payment_endpoint():
         print(f"Respuesta: {payment_response.text}")
         
         if payment_response.status_code == 201:
-            print("✅ Pago registrado exitosamente")
+            print(" Pago registrado exitosamente")
         else:
-            print("❌ Error al registrar pago")
+            print(" Error al registrar pago")
             
     except Exception as e:
-        print(f"❌ Error en prueba de pago: {str(e)}")
+        print(f" Error en prueba de pago: {str(e)}")
 
     # 3. Probar con factura inexistente
     print("\n3. Probando con factura inexistente...")
@@ -78,12 +78,12 @@ def test_payment_endpoint():
         print(f"Respuesta: {response.text}")
         
         if response.status_code == 400:
-            print("✅ Validación de factura inexistente funciona correctamente")
+            print(" Validación de factura inexistente funciona correctamente")
         else:
-            print("❌ No se validó correctamente la factura inexistente")
+            print(" No se validó correctamente la factura inexistente")
             
     except Exception as e:
-        print(f"❌ Error en prueba: {str(e)}")
+        print(f" Error en prueba: {str(e)}")
 
     # 4. Probar con método de pago inexistente
     print("\n4. Probando con método de pago inexistente...")
@@ -101,12 +101,12 @@ def test_payment_endpoint():
         print(f"Respuesta: {response.text}")
         
         if response.status_code == 400:
-            print("✅ Validación de método de pago inexistente funciona correctamente")
+            print(" Validación de método de pago inexistente funciona correctamente")
         else:
-            print("❌ No se validó correctamente el método de pago inexistente")
+            print(" No se validó correctamente el método de pago inexistente")
             
     except Exception as e:
-        print(f"❌ Error en prueba: {str(e)}")
+        print(f" Error en prueba: {str(e)}")
 
     # 5. Probar con tipo de pago inexistente
     print("\n5. Probando con tipo de pago inexistente...")
@@ -124,14 +124,14 @@ def test_payment_endpoint():
         print(f"Respuesta: {response.text}")
         
         if response.status_code == 400:
-            print("✅ Validación de tipo de pago inexistente funciona correctamente")
+            print(" Validación de tipo de pago inexistente funciona correctamente")
         else:
-            print("❌ No se validó correctamente el tipo de pago inexistente")
+            print(" No se validó correctamente el tipo de pago inexistente")
             
     except Exception as e:
-        print(f"❌ Error en prueba: {str(e)}")
+        print(f" Error en prueba: {str(e)}")
 
-    print("\n✅ Pruebas completadas")
+    print("\n Pruebas completadas")
 
 if __name__ == "__main__":
     test_payment_endpoint() 

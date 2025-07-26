@@ -14,7 +14,7 @@ LOGIN_URL = f"{BASE_URL}/api/login"
 def test_facturacion_completa():
     """Prueba completa del sistema de facturación"""
     
-    print("🧪 Iniciando pruebas de facturación completa...")
+    print(" Iniciando pruebas de facturación completa...")
     
     # 1. Login para obtener token
     print("\n1. Obteniendo token de autenticación...")
@@ -26,16 +26,16 @@ def test_facturacion_completa():
     try:
         login_response = requests.post(LOGIN_URL, json=login_data)
         if login_response.status_code != 200:
-            print(f"❌ Error en login: {login_response.status_code}")
+            print(f" Error en login: {login_response.status_code}")
             print(f"Respuesta: {login_response.text}")
             return
         
         token = login_response.json()["data"]["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
-        print("✅ Login exitoso")
+        print(" Login exitoso")
         
     except Exception as e:
-        print(f"❌ Error en login: {e}")
+        print(f" Error en login: {e}")
         return
 
     # 2. Probar cálculo de total de factura
@@ -59,13 +59,13 @@ def test_facturacion_completa():
         
         if calculo_response.status_code == 200:
             total_calculado = calculo_response.json()["data"]
-            print(f"✅ Total calculado: {total_calculado}")
-            print(f"✅ Verificación: 100000 + 5000 - 2000 = {100000 + 5000 - 2000}")
+            print(f" Total calculado: {total_calculado}")
+            print(f" Verificación: 100000 + 5000 - 2000 = {100000 + 5000 - 2000}")
         else:
-            print("❌ Error al calcular total de factura")
+            print(" Error al calcular total de factura")
             
     except Exception as e:
-        print(f"❌ Error en cálculo: {e}")
+        print(f" Error en cálculo: {e}")
 
     # 3. Probar creación de contrato con validación de doble agendamiento
     print("\n3. Probando creación de contrato...")
@@ -116,7 +116,7 @@ def test_facturacion_completa():
         
         if contrato_response.status_code == 201:
             contrato_id = contrato_response.json()["data"]["id_contrato"]
-            print(f"✅ Contrato creado con ID: {contrato_id}")
+            print(f" Contrato creado con ID: {contrato_id}")
             
             # 4. Probar creación de factura con datos completos
             print("\n4. Probando creación de factura con datos completos...")
@@ -138,14 +138,14 @@ def test_facturacion_completa():
             
             if factura_response.status_code == 201:
                 factura = factura_response.json()["data"]
-                print(f"✅ Factura creada con ID: {factura['id_factura']}")
-                print(f"✅ Fecha vencimiento: {factura['fecha_vencimiento']}")
-                print(f"✅ Subtotal: {factura['subtotal']}")
-                print(f"✅ Impuestos: {factura['impuestos']}")
-                print(f"✅ Descuentos: {factura['descuentos']}")
-                print(f"✅ Total: {factura['total_factura']}")
-                print(f"✅ Estado: {factura['estado_factura']}")
-                print(f"✅ Observaciones: {factura['observaciones']}")
+                print(f" Factura creada con ID: {factura['id_factura']}")
+                print(f" Fecha vencimiento: {factura['fecha_vencimiento']}")
+                print(f" Subtotal: {factura['subtotal']}")
+                print(f" Impuestos: {factura['impuestos']}")
+                print(f" Descuentos: {factura['descuentos']}")
+                print(f" Total: {factura['total_factura']}")
+                print(f" Estado: {factura['estado_factura']}")
+                print(f" Observaciones: {factura['observaciones']}")
                 
                 # 5. Probar registro de pago
                 print("\n5. Probando registro de pago...")
@@ -168,18 +168,18 @@ def test_facturacion_completa():
                 print(f"Respuesta: {pago_response.text}")
                 
                 if pago_response.status_code == 201:
-                    print("✅ Pago registrado exitosamente")
+                    print(" Pago registrado exitosamente")
                 else:
-                    print("❌ Error al registrar pago")
+                    print(" Error al registrar pago")
             else:
-                print("❌ Error al crear factura")
+                print(" Error al crear factura")
         else:
-            print("❌ Error al crear contrato")
+            print(" Error al crear contrato")
             
     except Exception as e:
-        print(f"❌ Error en prueba: {e}")
+        print(f" Error en prueba: {e}")
 
-    print("\n✅ Pruebas de facturación completa finalizadas")
+    print("\n Pruebas de facturación completa finalizadas")
 
 if __name__ == "__main__":
     test_facturacion_completa() 

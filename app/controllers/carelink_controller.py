@@ -796,15 +796,9 @@ async def create_users(
         user_dict = user_data.dict()
         home_visit = crud.create_home_visit(saved_user.id_usuario, user_dict)
         home_visit_response = VisitaDomiciliariaResponseDTO(**home_visit.__dict__)
-    
-    # Debug: verificar qué datos tiene el usuario guardado
-    print(f"🔍 DEBUG: saved_user.id_usuario = {saved_user.id_usuario}")
-    
+        
     # Usar from_orm en lugar de __dict__ para mejor compatibilidad con SQLAlchemy
     user_response = UserResponseDTO.from_orm(saved_user)
-    
-    # Debug: verificar qué datos tiene la respuesta
-    print(f"🔍 DEBUG: user_response.id_usuario = {user_response.id_usuario}")
     
     # Preparar la respuesta con información adicional si se creó visita domiciliaria
     response_data = {
