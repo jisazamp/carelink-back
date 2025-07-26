@@ -1007,6 +1007,7 @@ class CareLinkCrud:
         nueva_fecha = update_data.get("fecha_visita")
         
         # Si se está cambiando la fecha, actualizar el estado a REPROGRAMADA
+        # (sin importar el estado actual: PENDIENTE, REALIZADA, etc.)
         if nueva_fecha and nueva_fecha != fecha_original:
             update_data["estado_visita"] = "REPROGRAMADA"
         
@@ -1048,6 +1049,10 @@ class CareLinkCrud:
     def get_home_visits_with_professionals(self, user_id: int) -> List[dict]:
         """Obtener visitas domiciliarias con información del profesional asignado"""
         from sqlalchemy.orm import joinedload
+        from datetime import datetime
+        
+        # Primero, actualizar automáticamente el estado de las visitas vencidas
+        self._update_expired_visits_status()
         
         visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
             joinedload(VisitasDomiciliarias.usuario)
@@ -1094,6 +1099,9 @@ class CareLinkCrud:
         """Obtener todas las visitas domiciliarias con información del profesional asignado"""
         from sqlalchemy.orm import joinedload
         
+        # Primero, actualizar automáticamente el estado de las visitas vencidas
+        self._update_expired_visits_status()
+        
         visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
             joinedload(VisitasDomiciliarias.usuario)
         ).order_by(VisitasDomiciliarias.fecha_visita.desc()).all()
@@ -1134,10 +1142,40 @@ class CareLinkCrud:
         
         return result
 
+    def _update_expired_visits_status(self):
+        """Actualizar automáticamente el estado de las visitas vencidas a REALIZADA"""
+        from datetime import datetime
+        
+        now = datetime.now()
+        
+        # Buscar visitas que están pendientes o reprogramadas
+        pending_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+            VisitasDomiciliarias.estado_visita.in_(['PENDIENTE', 'REPROGRAMADA'])
+        ).all()
+        
+        expired_visits = []
+        
+        for visita in pending_visits:
+            # Crear datetime combinando fecha y hora de la visita
+            visita_datetime = datetime.combine(visita.fecha_visita, visita.hora_visita)
+            
+            # Si la fecha y hora de la visita ya pasó, marcarla como vencida
+            if visita_datetime <= now:
+                visita.estado_visita = "REALIZADA"
+                visita.fecha_actualizacion = now
+                expired_visits.append(visita)
+        
+        if expired_visits:
+            self.__carelink_session.commit()
+            print(f"✅ Se actualizaron {len(expired_visits)} visitas vencidas a estado REALIZADA")
+
     def get_scheduled_home_visits_with_professionals(self) -> List[dict]:
         """Obtener solo las visitas domiciliarias programadas (futuras) con información del profesional asignado"""
         from sqlalchemy.orm import joinedload
         from datetime import date
+        
+        # Primero, actualizar automáticamente el estado de las visitas vencidas
+        self._update_expired_visits_status()
         
         # Obtener solo visitas con fecha futura o igual a hoy
         visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
