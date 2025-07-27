@@ -38,6 +38,13 @@ class User(Base):
 
     # Relaciones
     visitas_domiciliarias_list = relationship("VisitasDomiciliarias", back_populates="usuario")
+    
+    # Relación con actividades asignadas
+    actividades_asignadas = relationship(
+        "ActividadesUsuarios", 
+        back_populates="usuario",
+        cascade="all, delete-orphan"
+    )
 
     class Config:
         orm_mode = True

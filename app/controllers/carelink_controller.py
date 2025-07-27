@@ -69,6 +69,12 @@ from app.dto.v1.response.monthly_payments import MonthlyPaymentsResponseDTO
 from app.dto.v1.response.operational_efficiency import OperationalEfficiencyResponseDTO
 from app.dto.v1.request.home_visit import VisitaDomiciliariaCreateDTO, VisitaDomiciliariaUpdateDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
+from app.dto.v1.response.activity_users import (
+    ActivityWithUsersDTO,
+    UserForActivityDTO,
+    AssignUsersToActivityDTO,
+    UpdateUserActivityStatusDTO
+)
 from app.dto.v1.response.vaccines_per_user import (
     VaccinesPerUserResponseDTO,
     VaccinesPerUserUpdateDTO,
@@ -4016,5 +4022,144 @@ async def get_operational_efficiency(
             data=None,
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             message=f"Error al obtener datos de eficiencia operativa: {str(e)}",
+            error=None,
+        )
+
+
+# ============================================================================
+# ENDPOINTS PARA GESTIÓN DE USUARIOS EN ACTIVIDADES
+# ============================================================================
+
+@router.get("/activities/{activity_id}/users", response_model=Response[ActivityWithUsersDTO])
+async def get_activity_with_users(
+    activity_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[ActivityWithUsersDTO]:
+    """Obtener una actividad con sus usuarios asignados"""
+    try:
+        result = crud.get_activity_with_users(activity_id)
+        return Response[ActivityWithUsersDTO](
+            data=result,
+            status_code=HTTPStatus.OK,
+            message="Actividad con usuarios obtenida exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        return Response[ActivityWithUsersDTO](
+            data=None,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            message=f"Error al obtener actividad con usuarios: {str(e)}",
+            error=None,
+        )
+
+
+@router.get("/activities/users/available/{activity_date}", response_model=Response[List[UserForActivityDTO]])
+async def get_users_for_activity_date(
+    activity_date: str,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[UserForActivityDTO]]:
+    """Obtener usuarios disponibles para una fecha específica basado en el cronograma"""
+    try:
+        from datetime import datetime
+        date_obj = datetime.strptime(activity_date, "%Y-%m-%d").date()
+        result = crud.get_users_for_activity_date(date_obj)
+        
+        return Response[List[UserForActivityDTO]](
+            data=result,
+            status_code=HTTPStatus.OK,
+            message="Usuarios disponibles obtenidos exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        return Response[List[UserForActivityDTO]](
+            data=None,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            message=f"Error al obtener usuarios disponibles: {str(e)}",
+            error=None,
+        )
+
+
+@router.post("/activities/{activity_id}/users", response_model=Response[dict])
+async def assign_users_to_activity(
+    activity_id: int,
+    assign_data: AssignUsersToActivityDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[dict]:
+    """Asignar usuarios a una actividad"""
+    try:
+        result = crud.assign_users_to_activity(
+            activity_id=activity_id,
+            user_ids=assign_data.usuarios_ids,
+            estado_participacion=assign_data.estado_participacion,
+            observaciones=assign_data.observaciones
+        )
+        return Response[dict](
+            data={"message": f"Se asignaron {len(result)} usuarios a la actividad"},
+            status_code=HTTPStatus.OK,
+            message="Usuarios asignados exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        return Response[dict](
+            data=None,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            message=f"Error al asignar usuarios: {str(e)}",
+            error=None,
+        )
+
+
+@router.delete("/activities/{activity_id}/users", response_model=Response[dict])
+async def remove_users_from_activity(
+    activity_id: int,
+    user_ids: List[int],
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[dict]:
+    """Remover usuarios de una actividad"""
+    try:
+        result = crud.remove_users_from_activity(activity_id, user_ids)
+        return Response[dict](
+            data={"message": f"Se removieron {len(user_ids)} usuarios de la actividad"},
+            status_code=HTTPStatus.OK,
+            message="Usuarios removidos exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        return Response[dict](
+            data=None,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            message=f"Error al remover usuarios: {str(e)}",
+            error=None,
+        )
+
+
+@router.patch("/activities/users/{activity_user_id}/status", response_model=Response[dict])
+async def update_user_activity_status(
+    activity_user_id: int,
+    status_data: UpdateUserActivityStatusDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[dict]:
+    """Actualizar el estado de participación de un usuario en una actividad"""
+    try:
+        result = crud.update_user_activity_status(
+            activity_user_id=activity_user_id,
+            estado_participacion=status_data.estado_participacion,
+            observaciones=status_data.observaciones
+        )
+        return Response[dict](
+            data={"message": "Estado de participación actualizado"},
+            status_code=HTTPStatus.OK,
+            message="Estado actualizado exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        return Response[dict](
+            data=None,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            message=f"Error al actualizar estado: {str(e)}",
             error=None,
         )

@@ -30,5 +30,6 @@ from .medical_report import ReportesClinicos
 from .cares_per_user import CuidadosEnfermeriaPorUsuario
 from .clinical_evolutions import EvolucionesClinicas
 from .activities import ActividadesGrupales, TipoActividad
+from .activity_users import ActividadesUsuarios
 from .authorized_users import AuthorizedUsers
 from .base import Base

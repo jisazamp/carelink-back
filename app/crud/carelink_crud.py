@@ -3,6 +3,7 @@ from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
 from app.dto.v1.response.contracts import ContratoResponseDTO, ServicioContratoDTO, FechaServicioDTO
 from app.exceptions.exceptions_classes import EntityNotFoundError
 from app.models.activities import ActividadesGrupales, TipoActividad
+from app.models.activity_users import ActividadesUsuarios
 from app.models.authorized_users import AuthorizedUsers
 from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes, EstadoAsistencia
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
@@ -36,7 +37,7 @@ from botocore.exceptions import NoCredentialsError
 from datetime import date, datetime
 from fastapi import HTTPException, UploadFile, status
 from passlib.context import CryptContext
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional, Tuple
@@ -969,6 +970,157 @@ class CareLinkCrud:
             .order_by(ActividadesGrupales.fecha.asc())
             .limit(10)
         ).scalars().all()
+
+    def get_activity_with_users(self, activity_id: int) -> dict:
+        """Obtener una actividad con sus usuarios asignados"""
+        from app.dto.v1.response.activity_users import ActivityWithUsersDTO, ActivityUserDTO
+        
+        # Obtener la actividad
+        activity = self._get_activity_by_id(activity_id)
+        
+        # Obtener usuarios asignados
+        usuarios_asignados = self.__carelink_session.execute(
+            select(ActividadesUsuarios, User)
+            .join(User, ActividadesUsuarios.id_usuario == User.id_usuario)
+            .where(ActividadesUsuarios.id_actividad == activity_id)
+        ).all()
+        
+        # Construir la respuesta
+        usuarios_dto = []
+        for au, user in usuarios_asignados:
+            usuarios_dto.append(ActivityUserDTO(
+                id=au.id,
+                id_usuario=au.id_usuario,
+                id_actividad=au.id_actividad,
+                fecha_asignacion=au.fecha_asignacion,
+                estado_participacion=au.estado_participacion,
+                observaciones=au.observaciones,
+                fecha_creacion=au.fecha_creacion,
+                fecha_actualizacion=au.fecha_actualizacion,
+                nombres=user.nombres,
+                apellidos=user.apellidos,
+                n_documento=user.n_documento
+            ))
+        
+        return ActivityWithUsersDTO(
+            id=activity.id,
+            nombre=activity.nombre,
+            descripcion=activity.descripcion,
+            fecha=activity.fecha,
+            duracion=activity.duracion,
+            comentarios=activity.comentarios,
+            id_profesional=activity.id_profesional,
+            id_tipo_actividad=activity.id_tipo_actividad,
+            profesional_nombres=activity.profesional.nombres if activity.profesional else None,
+            profesional_apellidos=activity.profesional.apellidos if activity.profesional else None,
+            tipo_actividad=activity.tipo_actividad.tipo if activity.tipo_actividad else None,
+            usuarios_asignados=usuarios_dto,
+            total_usuarios=len(usuarios_dto)
+        )
+
+    def get_users_for_activity_date(self, activity_date: date) -> List[dict]:
+        """Obtener usuarios agendados en el cronograma para una fecha específica"""
+        from app.dto.v1.response.activity_users import UserForActivityDTO
+        
+        # Obtener solo los usuarios que están agendados en el cronograma para esa fecha
+        usuarios_cronograma = self.__carelink_session.execute(
+            select(User, CronogramaAsistenciaPacientes)
+            .join(CronogramaAsistenciaPacientes, User.id_usuario == CronogramaAsistenciaPacientes.id_usuario)
+            .join(CronogramaAsistencia, CronogramaAsistenciaPacientes.id_cronograma == CronogramaAsistencia.id_cronograma)
+            .where(CronogramaAsistencia.fecha == activity_date)
+            .where(User.is_deleted == False)
+        ).all()
+        
+        # Construir la respuesta solo con usuarios agendados
+        usuarios_dto = []
+        for user, cap in usuarios_cronograma:
+            usuarios_dto.append(UserForActivityDTO(
+                id_usuario=user.id_usuario,
+                nombres=user.nombres,
+                apellidos=user.apellidos,
+                n_documento=user.n_documento,
+                telefono=user.telefono,
+                email=user.email,
+                fecha_nacimiento=user.fecha_nacimiento,
+                genero=user.genero,
+                estado=user.estado,
+                tiene_cronograma_fecha=True,  # Todos los usuarios devueltos tienen cronograma
+                estado_asistencia=cap.estado_asistencia.value if cap.estado_asistencia else None
+            ))
+        
+        return usuarios_dto
+
+    def assign_users_to_activity(self, activity_id: int, user_ids: List[int], estado_participacion: str = "PENDIENTE", observaciones: str = None) -> List[ActividadesUsuarios]:
+        """Asignar usuarios a una actividad"""
+        # Verificar que la actividad existe
+        activity = self._get_activity_by_id(activity_id)
+        
+        # Crear las asignaciones
+        asignaciones = []
+        for user_id in user_ids:
+            # Verificar que el usuario existe
+            user = self.__carelink_session.execute(
+                select(User).where(User.id_usuario == user_id)
+            ).scalar_one_or_none()
+            
+            if not user:
+                raise ValueError(f"Usuario con ID {user_id} no encontrado")
+            
+            # Verificar si ya existe la asignación
+            existing = self.__carelink_session.execute(
+                select(ActividadesUsuarios)
+                .where(ActividadesUsuarios.id_actividad == activity_id)
+                .where(ActividadesUsuarios.id_usuario == user_id)
+            ).scalar_one_or_none()
+            
+            if existing:
+                # Actualizar la asignación existente
+                existing.estado_participacion = estado_participacion
+                if observaciones:
+                    existing.observaciones = observaciones
+                asignaciones.append(existing)
+            else:
+                # Crear nueva asignación
+                nueva_asignacion = ActividadesUsuarios(
+                    id_actividad=activity_id,
+                    id_usuario=user_id,
+                    estado_participacion=estado_participacion,
+                    observaciones=observaciones
+                )
+                self.__carelink_session.add(nueva_asignacion)
+                asignaciones.append(nueva_asignacion)
+        
+        self.__carelink_session.commit()
+        return asignaciones
+
+    def remove_users_from_activity(self, activity_id: int, user_ids: List[int]) -> bool:
+        """Remover usuarios de una actividad"""
+        # Eliminar las asignaciones
+        deleted = self.__carelink_session.execute(
+            delete(ActividadesUsuarios)
+            .where(ActividadesUsuarios.id_actividad == activity_id)
+            .where(ActividadesUsuarios.id_usuario.in_(user_ids))
+        )
+        
+        self.__carelink_session.commit()
+        return deleted.rowcount > 0
+
+    def update_user_activity_status(self, activity_user_id: int, estado_participacion: str, observaciones: str = None) -> ActividadesUsuarios:
+        """Actualizar el estado de participación de un usuario en una actividad"""
+        activity_user = self.__carelink_session.execute(
+            select(ActividadesUsuarios)
+            .where(ActividadesUsuarios.id == activity_user_id)
+        ).scalar_one_or_none()
+        
+        if not activity_user:
+            raise ValueError(f"Asignación de actividad con ID {activity_user_id} no encontrada")
+        
+        activity_user.estado_participacion = estado_participacion
+        if observaciones:
+            activity_user.observaciones = observaciones
+        
+        self.__carelink_session.commit()
+        return activity_user
 
     def upload_file_to_s3(self, file, bucket_name, object_name):
         try:
