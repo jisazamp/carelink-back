@@ -154,6 +154,7 @@ from enum import Enum
 token_auth_scheme = HTTPBearer()
 router = APIRouter()
 
+
 class Role(Enum):
     ADMIN = "admin"
     PROFESSIONAL = "profesional"
@@ -207,7 +208,8 @@ def require_roles(*allowed_roles: str):
     def role_checker(user: dict = Depends(get_current_user)):
         if user.role not in allowed_roles:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="No tienes los suficientes permisos"
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes los suficientes permisos",
             )
         return user
 
@@ -217,7 +219,9 @@ def require_roles(*allowed_roles: str):
 @router.get("/users", response_model=Response[List[UserResponseDTO]])
 async def list_users(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[UserResponseDTO]]:
     users = crud.list_users()
     users_list = []
@@ -235,7 +239,9 @@ async def list_users(
 async def list_user_by_id(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[UserResponseDTO]:
     user = crud.list_user_by_user_id(id)
     user_response = UserResponseDTO(**user.__dict__)
@@ -254,7 +260,9 @@ async def list_user_by_id(
 )
 async def get_family_members(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     family_members = crud._get_family_members()
     family_members_dto = [
@@ -276,7 +284,9 @@ async def get_family_members(
 async def get_family_member_by_id(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     family_member, parentesco = crud._get_family_member_by_id(id)
     family_member.parentesco = parentesco
@@ -298,7 +308,9 @@ async def get_family_member_by_id(
 async def get_user_family_members(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     family_members = crud._get_family_members_by_user_id(id)
     family_members_dto = [
@@ -320,7 +332,9 @@ async def get_user_family_members(
 async def get_user_medical_record(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     medical_record = crud.list_user_medical_record(id)
     medical_record_response = None
@@ -345,7 +359,9 @@ async def get_user_medical_record(
 async def get_record_medicines(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     medicines = crud._get_user_medicines_by_medical_record_id(id)
     result = [
@@ -367,7 +383,9 @@ async def get_record_medicines(
 async def get_record_interventions(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     interventions = crud._get_user_interventions_by_medical_record_id(id)
     result = [
@@ -387,7 +405,9 @@ async def get_record_interventions(
 async def get_record_cares(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     cares = crud._get_user_cares_by_medical_record_id(id)
     result = [CaresPerUserResponseDTO(**care.__dict__) for care in cares]
@@ -404,7 +424,9 @@ async def get_record_cares(
 async def get_record_vaccines(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     vaccines = crud._get_user_vaccines_by_medical_record_id(id)
     result = [VaccinesPerUserResponseDTO(**vaccine.__dict__) for vaccine in vaccines]
@@ -433,7 +455,9 @@ async def get_user_info(
 def get_reporte_clinico(
     reporte_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ReporteClinicoResponse]:
     report = crud._get_medical_report_by_id(reporte_id)
     report_dict = report.__dict__
@@ -458,7 +482,9 @@ def get_reporte_clinico(
 def get_medical_reports(
     user_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ReporteClinicoResponse]]:
     reports = crud._get_medical_reports_by_user_id(user_id)
     return Response[List[ReporteClinicoResponse]](
@@ -472,7 +498,9 @@ def get_medical_reports(
 @router.get("/professionals", response_model=Response[List[ProfessionalResponse]])
 async def get_professionals(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ProfessionalResponse]]:
     professionals = crud._get_professionals()
     response = [
@@ -489,7 +517,9 @@ async def get_professionals(
 async def get_clinical_evolutions(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ClinicalEvolutionResponse]]:
     evolutions = crud._get_clinical_evolutions_by_report_id(id)
     response = [
@@ -507,7 +537,9 @@ async def get_clinical_evolutions(
 async def get_clinical_evolution(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ClinicalEvolutionResponse]:
     evolution = crud._get_clinical_evolution_by_evolution_id(id)
     response = ClinicalEvolutionResponse.from_orm(evolution)
@@ -527,7 +559,9 @@ async def get_clinical_evolution(
 )
 async def get_activities(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ActivitiesResponse]]:
     activities = crud._get_activities()
     result = [ActivitiesResponse(**activity.__dict__) for activity in activities]
@@ -547,7 +581,9 @@ async def get_activities(
 async def get_activity_by_id(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ActivitiesResponse]:
     activity = crud._get_activity_by_id(id)
     result = ActivitiesResponse(**activity.__dict__)
@@ -566,7 +602,9 @@ async def get_activity_by_id(
 )
 async def get_activity_types(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[TypeOfActivityResponse]]:
     activity_types = crud._get_activity_types()
     result = [TypeOfActivityResponse(**type.__dict__) for type in activity_types]
@@ -581,7 +619,9 @@ async def get_activity_types(
 @router.get("/metodos_pago", response_model=Response[List[PaymentMethodResponseDTO]])
 async def get_payment_methods(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[PaymentMethodResponseDTO]]:
     payment_methods = crud._get_payment_methods()
     payment_methods_response = [
@@ -598,7 +638,9 @@ async def get_payment_methods(
 @router.get("/tipos_pago", response_model=Response[List[PaymentTypeResponseDTO]])
 async def get_payment_types(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[PaymentTypeResponseDTO]]:
     payment_types = crud._get_payment_types()
     payment_types_response = [
@@ -619,7 +661,9 @@ async def get_payment_types(
 )
 async def get_upcoming_activities(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ActivitiesResponse]]:
     activities = crud._get_upcoming_activities()
     result = [ActivitiesResponse(**activity.__dict__) for activity in activities]
@@ -635,7 +679,9 @@ async def get_upcoming_activities(
 async def register_payment(
     payment: CreateUserPaymentRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[PaymentResponseDTO]:
     try:
         # Validar que la factura existe
@@ -700,8 +746,11 @@ async def register_payment(
 
 @router.post("/calcular/factura", response_model=Response[float])
 async def calculate_partial_bill(
-    partial_bill: CalculatePartialBillRequestDTO, crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    partial_bill: CalculatePartialBillRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[float]:
     try:
         total = crud.calculate_partial_bill(
@@ -721,8 +770,11 @@ async def calculate_partial_bill(
 
 @router.post("/calcular/total_factura", response_model=Response[float])
 async def calculate_total_factura(
-    payload: dict, crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    payload: dict,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[float]:
     """
     Calcula el total de factura incluyendo impuestos y descuentos
@@ -812,7 +864,9 @@ async def create_family_members(
     family_member: CreateFamilyMemberRequestDTO,
     kinship: AssociateFamilyMemberRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     family_member_to_save = FamilyMember(**family_member.dict())
     crud.save_family_member(id, kinship, family_member_to_save)
@@ -827,8 +881,8 @@ async def create_family_members(
 
 @router.post("/login", response_model=Response[dict])
 async def login_user(
-    login_data: UserLoginRequestDTO, crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    login_data: UserLoginRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
 ) -> Response[dict]:
     user = crud.authenticate_user(login_data.email, login_data.password)
     if not user:
@@ -862,7 +916,9 @@ async def create_user_record(
     vaccines: str = Form(None),
     attachments: Optional[List[UploadFile]] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     record_data = json.loads(record)
     medicines_data = json.loads(medicines) if medicines else []
@@ -907,7 +963,9 @@ async def create_user_medical_record(
     id: int,
     record: CreateUserMedicalRecordCreateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[CreateUserMedicalRecordResponseDTO]:
     record_to_save = MedicalRecord(**record.dict())
     saved_record = crud.create_user_medical_record(id, record_to_save)
@@ -947,7 +1005,9 @@ async def create_user(
 def create_reporte_clinico(
     reporte: ReporteClinicoCreate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ReporteClinicoResponse]:
     report_to_save = ReportesClinicos(**reporte.dict())
     resulting_report = crud.save_medical_report(report_to_save)
@@ -965,7 +1025,9 @@ def create_reporte_clinico(
 def create_clinical_evolution(
     evolution: ClinicalEvolutionCreate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ClinicalEvolutionResponse]:
     report_to_save = EvolucionesClinicas(**evolution.dict())
     resulting_report = crud.save_clinical_evolution(report_to_save)
@@ -981,7 +1043,9 @@ def create_clinical_evolution(
 def create_activity(
     activity: ActividadesGrupalesCreate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ActivitiesResponse]:
     activity_to_save = ActividadesGrupales(**activity.dict())
     resulting_activity = crud.save_activity(activity_to_save)
@@ -999,7 +1063,9 @@ async def update_user(
     user: str = Form(...),
     photo: Optional[UploadFile] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     try:
         user_data = UserCreateRequestDTO.parse_raw(user)
@@ -1024,7 +1090,9 @@ async def update_treatment(
     id: int,
     treatment: MedicinesPerUserUpdateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     treatment_to_update = MedicamentosPorUsuario(**treatment.__dict__)
     crud.update_medical_treatment(id, treatment_to_update)
@@ -1041,7 +1109,9 @@ async def update_nursing(
     id: int,
     treatment: CaresPerUserUpdateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     treatment_to_update = CuidadosEnfermeriaPorUsuario(**treatment.__dict__)
     crud.update_medical_nursing(id, treatment_to_update)
@@ -1060,7 +1130,9 @@ async def update_intervention(
     id: int,
     treatment: InterventionsPerUserUpdateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     treatment_to_update = IntervencionesPorUsuario(**treatment.__dict__)
     crud.update_medical_intervention(id, treatment_to_update)
@@ -1077,7 +1149,9 @@ async def update_vaccine(
     id: int,
     treatment: VaccinesPerUserUpdateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     treatment_to_update = VacunasPorUsuario(**treatment.__dict__)
     crud.update_medical_vaccine(id, treatment_to_update)
@@ -1100,7 +1174,9 @@ async def update_family_member(
     family_member: UpdateFamilyMemberRequestDTO,
     kinship: AssociateFamilyMemberRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     db_family_member = crud._get_family_member_by_id(family_member_id)
     if not db_family_member:
@@ -1139,7 +1215,9 @@ async def update_user_medical_record(
     interventions: List[CreateUserAssociatedInterventionsRequestDTO],
     vaccines: List[CreateUserAssociatedVaccinesRequestDTO],
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     update_data = record.dict(exclude_unset=True)
     medicines_to_save = [
@@ -1175,7 +1253,9 @@ def update_reporte_clinico(
     reporte_id: int,
     reporte: ReporteClinicoUpdate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ReporteClinicoResponse]:
     report_to_update = ReportesClinicos(**reporte.__dict__)
     result = crud.update_medical_record(reporte_id, report_to_update)
@@ -1194,7 +1274,9 @@ def update_evolution(
     evolution_id: int,
     evolution: ClinicalEvolutionUpdate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ClinicalEvolutionResponse]:
     report_to_update = EvolucionesClinicas(**evolution.__dict__)
     result = crud.update_clinical_evolution(evolution_id, report_to_update)
@@ -1211,7 +1293,9 @@ def update_activity(
     id: int,
     activity: ActividadesGrupalesUpdate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ActivitiesResponse]:
     activity_to_update = ActividadesGrupales(**activity.__dict__)
     result = crud.update_activity(id, activity_to_update)
@@ -1227,7 +1311,9 @@ def update_activity(
 async def delete_payment(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[None]:
     crud.delete_payment(id)
     return Response[None](
@@ -1242,7 +1328,9 @@ async def delete_payment(
 async def delete_user(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user(id)
     return Response[object](
@@ -1257,7 +1345,9 @@ async def delete_user(
 async def delete_family_member(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_family_member(id)
     return Response[object](
@@ -1272,7 +1362,9 @@ async def delete_family_member(
 async def delete_record(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user_medical_record(id)
     return Response[object](
@@ -1292,7 +1384,9 @@ async def delete_vaccine(
     id: int,
     vaccine_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user_vaccine_by_record_id(id, vaccine_id)
     return Response[object](
@@ -1312,7 +1406,9 @@ async def delete_medicine(
     id: int,
     medicine_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user_medicines_by_record_id(id, medicine_id)
     return Response[object](
@@ -1332,7 +1428,9 @@ async def delete_care(
     id: int,
     care_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user_care_by_record_id(id, care_id)
     return Response[object](
@@ -1352,7 +1450,9 @@ async def delete_intervention(
     id: int,
     intervention_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user_intervention_by_record_id(id, intervention_id)
     return Response[object](
@@ -1367,7 +1467,9 @@ async def delete_intervention(
 async def delete_evolution(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     crud.delete_clinical_evolution(id)
     return Response[object](
@@ -1382,7 +1484,9 @@ async def delete_evolution(
 async def delete_report(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     crud.delete_medical_report(id)
     return Response[object](
@@ -1401,7 +1505,9 @@ async def delete_report(
 async def delete_activity(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_activity(id)
     return Response[object](
@@ -1417,7 +1523,9 @@ def get_tarifa_servicio(
     id_servicio: int,
     anio: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     """Obtener la tarifa de un servicio para un año específico"""
     try:
@@ -1442,7 +1550,9 @@ def get_tarifa_servicio(
 @router.get("/contratos", response_model=Response[List[ContratoResponseDTO]])
 def listar_todos_contratos(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ContratoResponseDTO]]:
     """Obtener todos los contratos del sistema"""
     try:
@@ -1463,7 +1573,9 @@ def listar_todos_contratos(
 def crear_contrato(
     data: ContratoCreateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ContratoResponseDTO]:
     try:
         # Usar la función CRUD actualizada que retorna contrato y servicios_por_contrato
@@ -1634,7 +1746,9 @@ def crear_contrato(
 async def list_contract_bill(
     contract_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[FacturaOut]:
     bill = crud.get_contract_bill(contract_id)
     bill_response = FacturaOut.from_orm(bill)
@@ -1648,8 +1762,11 @@ async def list_contract_bill(
 
 @router.get("/contratos/{id_usuario}", response_model=List[ContratoResponseDTO])
 def listar_contratos_por_usuario(
-    id_usuario: int, db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    id_usuario: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     try:
         contratos = db.query(Contratos).filter(Contratos.id_usuario == id_usuario).all()
@@ -1709,9 +1826,13 @@ def listar_contratos_por_usuario(
 
 
 @router.get("/contrato/{id_contrato}", response_model=ContratoResponseDTO)
-def obtener_contrato(id_contrato: int, db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
-                     ):
+def obtener_contrato(
+    id_contrato: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
     contrato = db.query(Contratos).filter(Contratos.id_contrato == id_contrato).first()
 
     if not contrato:
@@ -1759,7 +1880,9 @@ def actualizar_contrato(
     id_contrato: int,
     data: ContratoUpdateDTO,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     contrato = db.query(Contratos).filter(Contratos.id_contrato == id_contrato).first()
 
@@ -1829,7 +1952,9 @@ def crear_fechas_servicio(
     id_servicio: int,
     fechas: List[FechaServicioDTO],
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     for fecha in fechas:
         nueva_fecha = FechasServicio(
@@ -1846,7 +1971,9 @@ def actualizar_fechas_servicio(
     id_servicio_contratado: int,
     fechas: List[FechaServicioDTO],
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     servicio = (
         db.query(ServiciosPorContrato)
@@ -1872,9 +1999,13 @@ def actualizar_fechas_servicio(
 
 
 @router.post("/pagos/")
-def crear_pago(data: PagoCreateDTO, db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
-               ):
+def crear_pago(
+    data: PagoCreateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
     factura = db.query(Facturas).filter(Facturas.id_factura == data.id_factura).first()
     if not factura:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
@@ -1906,17 +2037,25 @@ def crear_pago(data: PagoCreateDTO, db: Session = Depends(get_carelink_db),
 
 
 @router.get("/pagos/factura/{factura_id}", response_model=list[PagoResponseDTO])
-def get_pagos_by_factura(factura_id: int, db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
-                         ):
+def get_pagos_by_factura(
+    factura_id: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
     pagos = db.query(Pagos).filter(Pagos.id_factura == factura_id).all()
     return [PagoResponseDTO.from_orm(pago) for pago in pagos]
 
 
 @router.delete("/pagos/{id_pago}")
-def eliminar_pago(id_pago: int, db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
-                  ):
+def eliminar_pago(
+    id_pago: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
     pago = db.query(Pagos).filter(Pagos.id_pago == id_pago).first()
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
@@ -1943,7 +2082,9 @@ def eliminar_pago(id_pago: int, db: Session = Depends(get_carelink_db),
 def crear_cronograma_asistencia(
     cronograma_data: CronogramaAsistenciaCreateDTO,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[CronogramaAsistenciaResponseDTO]:
     """
     Crea un nuevo cronograma de asistencia
@@ -2016,7 +2157,9 @@ def crear_cronograma_asistencia(
 def agregar_paciente_cronograma(
     paciente_data: CronogramaAsistenciaPacienteCreateDTO,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
     """
     Agrega un paciente a un cronograma de asistencia existente
@@ -2116,7 +2259,9 @@ def get_cronogramas_por_rango(
     fecha_inicio: str,
     fecha_fin: str,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[CronogramaAsistenciaResponseDTO]]:
     """
     Obtiene los cronogramas de asistencia en un rango de fechas
@@ -2232,7 +2377,9 @@ def get_cronogramas_por_rango(
 def get_cronogramas_por_profesional(
     id_profesional: int,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[CronogramaAsistenciaResponseDTO]]:
     """
     Obtiene los cronogramas de asistencia de un profesional específico
@@ -2338,7 +2485,9 @@ def update_estado_asistencia(
     id_cronograma_paciente: int,
     estado_data: EstadoAsistenciaUpdateDTO,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
     """
     Actualiza el estado de asistencia de un paciente y guarda observaciones.
@@ -2448,7 +2597,9 @@ def reagendar_asistencia_paciente(
     id_cronograma_paciente: int,
     estado_data: EstadoAsistenciaUpdateDTO,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
     """
     Reagenda la asistencia de un paciente SOLO si existe justificación (observaciones) y nueva fecha.
@@ -2586,7 +2737,9 @@ def reagendar_asistencia_paciente(
 def create_factura(
     factura_data: FacturaCreate,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[FacturaOut]:
     """
     Crea una nueva factura con sus pagos asociados
@@ -2725,7 +2878,9 @@ def add_pago_to_factura(
     factura_id: int,
     pagos: List[PagoCreate],
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[dict]:
     """
     Agrega uno o varios pagos a una factura existente
@@ -2840,7 +2995,9 @@ def add_pago_to_factura(
 def delete_factura(
     factura_id: int,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[dict]:
     """
     Elimina una factura y todos sus pagos asociados
@@ -2899,7 +3056,9 @@ def update_factura(
     factura_id: int,
     factura_data: dict,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[FacturaOut]:
     """
     Actualiza una factura existente
@@ -2999,7 +3158,9 @@ def update_factura(
 @router.get("/facturas", response_model=Response[List[FacturaOut]])
 def get_all_facturas(
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[FacturaOut]]:
     facturas = db.query(Facturas).all()
     facturas_out = []
@@ -3064,7 +3225,9 @@ def get_all_facturas(
 def read_facturas_by_contrato(
     contrato_id: int,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[FacturaOut]]:
     """
     Obtiene todas las facturas asociadas a un contrato específico
@@ -3164,7 +3327,9 @@ def create_contract_bill(
     contrato_id: int,
     factura_data: FacturaCreateWithDetails = None,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[FacturaOut]:
     """
     Crea una factura automáticamente para un contrato específico usando la lógica de negocio del CRUD
@@ -3256,9 +3421,12 @@ def create_contract_bill(
 
 
 @router.get("/facturacion/completa")
-def get_facturacion_completa(db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
-                             ):
+def get_facturacion_completa(
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
     sql = text(
         """
         SELECT
@@ -3320,7 +3488,9 @@ def get_facturacion_completa(db: Session = Depends(get_carelink_db),
 @router.get("/tarifas-servicios", response_model=Response[TarifasServicioResponseDTO])
 async def get_all_service_rates(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[TarifasServicioResponseDTO]:
     """
     Obtener todas las tarifas de servicios por año con información del servicio
@@ -3374,7 +3544,9 @@ async def get_all_service_rates(
 async def update_service_rates(
     tarifas_data: TarifasServicioUpdateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[TarifasServicioResponseDTO]:
     """
     Actualizar múltiples tarifas de servicios por año
@@ -3443,7 +3615,9 @@ async def update_service_rates(
 @router.get("/facturas/estadisticas")
 def get_facturas_estadisticas(
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     """
     Obtiene estadísticas calculadas de facturación
@@ -3512,7 +3686,9 @@ def get_facturas_estadisticas(
 def get_bill_payments_total_endpoint(
     id_factura: int,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     """
     Retorna el total de pagos asociados a una factura
@@ -3558,3 +3734,8 @@ async def generate_factura_pdf(
     except Exception as e:
         print(f"Error generando PDF de factura {id_factura}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error generando PDF: {str(e)}")
+
+
+@router.delete("/photo/{user_id}")
+async def delete_user_photo(user_id: int, crud: CareLinkCrud = Depends(get_crud)):
+    crud.delete_user_photo(user_id)
