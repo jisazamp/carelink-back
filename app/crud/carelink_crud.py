@@ -3,6 +3,7 @@ from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
 from app.dto.v1.response.contracts import ContratoResponseDTO, ServicioContratoDTO, FechaServicioDTO
 from app.exceptions.exceptions_classes import EntityNotFoundError
 from app.models.activities import ActividadesGrupales, TipoActividad
+from app.models.activity_users import ActividadesUsuarios
 from app.models.authorized_users import AuthorizedUsers
 from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes, EstadoAsistencia
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
@@ -30,12 +31,13 @@ from app.models.rates import TarifasServicioPorAnio
 from app.models.transporte import CronogramaTransporte, EstadoTransporte
 from app.models.user import User
 from app.models.vaccines import VacunasPorUsuario
+from app.models.home_visit import VisitasDomiciliarias, VisitasDomiciliariasPorProfesional
 from boto3 import client
 from botocore.exceptions import NoCredentialsError
 from datetime import date, datetime
 from fastapi import HTTPException, UploadFile, status
 from passlib.context import CryptContext
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional, Tuple
@@ -58,6 +60,12 @@ class CareLinkCrud:
 
     def list_users(self) -> List[User]:
         return self._get_users()
+
+    def list_users_with_home_visits(self) -> List[User]:
+        return self._get_users_with_home_visits()
+
+    def list_users_without_home_visits(self) -> List[User]:
+        return self._get_users_without_home_visits()
 
     def list_user_by_user_id(self, user_id: int) -> User:
         return self._get_user_by_id(user_id)
@@ -110,6 +118,58 @@ class CareLinkCrud:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Ocurrió un error al guardar el usuario.",
             )
+
+    def create_home_visit(self, user_id: int, user_data: dict) -> VisitasDomiciliarias:
+        """
+        Crea una visita domiciliaria para un usuario cuando visitas_domiciliarias es True
+        """
+        from datetime import datetime, date, time
+
+        # Crear visita domiciliaria con datos básicos
+        # fecha_visita y hora_visita se dejan como NULL para que el usuario las complete
+        visita_data = {
+            "id_usuario": user_id,
+            "id_contrato": None,  # Se asignará cuando se cree el contrato
+            "fecha_visita": None,  # NULL - debe ser completado por el usuario
+            "hora_visita": None,   # NULL - debe ser completado por el usuario
+            "estado_visita": "PENDIENTE",
+            "direccion_visita": user_data.get("direccion", ""),
+            "telefono_visita": user_data.get("telefono", ""),
+            "valor_dia": 0.00,
+            "observaciones": f"Visita domiciliaria creada automáticamente para usuario {user_id} - Pendiente de programación",
+            "fecha_creacion": datetime.utcnow(),
+            "fecha_actualizacion": datetime.utcnow()
+        }
+
+        visita = VisitasDomiciliarias(**visita_data)
+        self.__carelink_session.add(visita)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(visita)
+
+        # Intentar asignar un profesional por defecto si hay profesionales disponibles
+        try:
+            profesionales = self._get_professionals()
+            if profesionales:
+                # Tomar el primer profesional activo disponible
+                profesional_activo = next(
+                    (p for p in profesionales if p.estado == "Activo"), 
+                    profesionales[0]
+                )
+                
+                # Crear la asignación del profesional
+                asignacion = VisitasDomiciliariasPorProfesional(
+                    id_visitadomiciliaria=visita.id_visitadomiciliaria,
+                    id_profesional=profesional_activo.id_profesional,
+                    estado_asignacion="ACTIVA",
+                    fecha_asignacion=datetime.utcnow()
+                )
+                self.__carelink_session.add(asignacion)
+                self.__carelink_session.commit()
+        except Exception as e:
+            # Si hay algún error al asignar el profesional, no fallar la creación de la visita
+            print(f"⚠️ No se pudo asignar profesional por defecto: {e}")
+
+        return visita
 
     def save_family_member(self, id: int, kinship, family_member: FamilyMember):
         self._get_user_by_id(id)
@@ -261,22 +321,10 @@ class CareLinkCrud:
         kinship,
         db_family_member: FamilyMember,
     ) -> FamilyMember:
-        kinship_string = kinship.dict()["parentezco"]
-
         for key, value in family_member.__dict__.items():
             if key != "_sa_instance_state" and value is not None:
                 if hasattr(db_family_member, key):
                     setattr(db_family_member, key, value)
-
-        association = (
-            self.__carelink_session.query(FamiliaresYAcudientesPorUsuario)
-            .filter_by(id_usuario=user_id, id_acudiente=db_family_member.id_acudiente)
-            .first()
-        )
-
-        if association:
-            association.parentesco = kinship_string
-
         self.__carelink_session.commit()
         self.__carelink_session.refresh(db_family_member)
         return db_family_member
@@ -307,70 +355,56 @@ class CareLinkCrud:
         self, user_id: int, user: User, photo: Optional[UploadFile] = None
     ) -> User:
         db_user = self._get_user_by_id(user_id)
-
-        if db_user.url_imagen:
-            old_photo_key = db_user.url_imagen.split("/")[-1]
-            self.delete_s3_file(
-                "images-care-link", f"user_photos/{user_id}/{old_photo_key}"
-            )
+        updated_user = self._update_user(user, db_user)
 
         if photo:
-            photo_url = self.upload_file_to_s3(
+            image_url = self.upload_file_to_s3(
                 photo.file,
                 "images-care-link",
                 f"user_photos/{user_id}/{photo.filename}",
             )
-            user.url_imagen = photo_url
-        elif user.url_imagen is None:
-            self.delete_s3_folder("images-care-link", f"user_photos/{user_id}")
-            user.url_imagen = None
+            updated_user.url_imagen = image_url
+            self.__carelink_session.commit()
 
-        updated_user = self._update_user(user, db_user)
         return updated_user
 
     def update_clinical_evolution(
         self, evolution_id: int, evolution: EvolucionesClinicas
     ) -> EvolucionesClinicas:
         db_evolution = self._get_clinical_evolution_by_evolution_id(evolution_id)
-        updated_evolution = self._update_evolution(evolution, db_evolution)
-        return updated_evolution
+        return self._update_evolution(evolution, db_evolution)
 
     def update_medical_treatment(
         self, treatment_id: int, treatment: MedicamentosPorUsuario
     ) -> MedicamentosPorUsuario:
         db_treatment = self._get_user_medical_treatment_by_id(treatment_id)
-        updated_treatment = self._update_treatment(treatment, db_treatment)
-        return updated_treatment
+        return self._update_treatment(treatment, db_treatment)
 
     def update_medical_nursing(
         self, treatment_id: int, treatment: CuidadosEnfermeriaPorUsuario
     ) -> CuidadosEnfermeriaPorUsuario:
         db_treatment = self._get_user_medical_nursing_by_id(treatment_id)
-        updated_treatment = self._update_nursing(treatment, db_treatment)
-        return updated_treatment
+        return self._update_nursing(treatment, db_treatment)
 
     def update_medical_intervention(
         self, treatment_id: int, treatment: IntervencionesPorUsuario
     ) -> IntervencionesPorUsuario:
         db_treatment = self._get_user_medical_intervention_by_id(treatment_id)
-        updated_treatment = self._update_intervention(treatment, db_treatment)
-        return updated_treatment
+        return self._update_intervention(treatment, db_treatment)
 
     def update_medical_vaccine(
         self, treatment_id: int, treatment: VacunasPorUsuario
     ) -> VacunasPorUsuario:
         db_treatment = self._get_user_medical_vaccine_by_id(treatment_id)
-        updated_treatment = self._update_vaccine(treatment, db_treatment)
-        return updated_treatment
+        return self._update_vaccine(treatment, db_treatment)
 
     def update_family_member(
         self, family_member_id: int, family_member: FamilyMember
     ) -> FamilyMember:
-        db_family_member, _ = self._get_family_member_by_id(family_member_id)
-        updated_family_member = self._update_family_member(
-            family_member, db_family_member
+        db_family_member = self._get_family_member_by_id(family_member_id)[0]
+        return self._update_family_member(
+            family_member_id, family_member, None, db_family_member
         )
-        return updated_family_member
 
     def update_user_medical_record(
         self,
@@ -383,433 +417,295 @@ class CareLinkCrud:
         vaccines: List[VacunasPorUsuario],
     ) -> MedicalRecord:
         self._get_user_by_id(user_id)
-
-        record_to_update = (
-            self.__carelink_session.query(MedicalRecord)
-            .filter_by(id_historiaclinica=record_id, id_usuario=user_id)
-            .first()
-        )
-
-        if not record_to_update:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Medical record with ID {record_id} not found for user {user_id}",
-            )
+        db_record = self._get_medical_record_by_id(record_id)
 
         for key, value in update_data.items():
-            setattr(record_to_update, key, value)
+            if hasattr(db_record, key):
+                setattr(db_record, key, value)
 
         for medicine in medicines:
-            medicine.id_historiaClinica = record_to_update.id_historiaclinica
+            medicine.id_historiaClinica = record_id
             self.__carelink_session.add(medicine)
+
         for care in cares:
-            care.id_historiaClinica = record_to_update.id_historiaclinica
+            care.id_historiaClinica = record_id
             self.__carelink_session.add(care)
+
         for intervention in interventions:
-            intervention.id_historiaClinica = record_to_update.id_historiaclinica
+            intervention.id_historiaClinica = record_id
             self.__carelink_session.add(intervention)
+
         for vaccine in vaccines:
-            vaccine.id_historiaClinica = record_to_update.id_historiaclinica
+            vaccine.id_historiaClinica = record_id
             self.__carelink_session.add(vaccine)
 
-        self.__carelink_session.flush()
-        self.__carelink_session.refresh(record_to_update)
         self.__carelink_session.commit()
-        return record_to_update
+        self.__carelink_session.refresh(db_record)
+        return db_record
 
     def update_medical_record(
         self, report_id: int, report: ReportesClinicos
     ) -> ReportesClinicos:
         db_report = self._get_medical_report_by_id(report_id)
-        updated_report = self._update_record(report, db_report)
-        return updated_report
+        return self._update_record(report, db_report)
 
     def update_activity(
         self, activity_id: int, activity: ActividadesGrupales
     ) -> ActividadesGrupales:
         db_activity = self._get_activity_by_id(activity_id)
-        updated_activity = self._update_activity(activity, db_activity)
-        return updated_activity
+        return self._update_activity(activity, db_activity)
 
     def delete_user(self, user_id: int):
-        db_user = self._get_user_by_id(user_id)
-        db_user.is_deleted = True
+        user = self._get_user_by_id(user_id)
+        user.is_deleted = True
         self.__carelink_session.commit()
 
     def delete_payment(self, payment_id: int):
-        db_payment = self.get_payment_by_id(payment_id)
-        self.__carelink_session.delete(db_payment)
+        payment = self.get_payment_by_id(payment_id)
+        self.__carelink_session.delete(payment)
         self.__carelink_session.commit()
 
     def delete_contract_by_id(self, contract_id: int):
-        db_contract = self._get_contract_by_id(contract_id)
-        self.__carelink_session.delete(db_contract)
+        contract = self._get_contract_by_id(contract_id)
+        self.__carelink_session.delete(contract)
         self.__carelink_session.commit()
 
     def delete_family_member(self, id: int):
-        db_family_member, _ = self._get_family_member_by_id(id)
-        db_family_member.is_deleted = True
+        family_member = self._get_family_member_by_id(id)[0]
+        self.__carelink_session.delete(family_member)
         self.__carelink_session.commit()
 
     def delete_clinical_evolution(self, id: int):
-        db_clinical_evolution = self._get_clinical_evolution_by_evolution_id(id)
-        self.__carelink_session.delete(db_clinical_evolution)
+        evolution = self._get_clinical_evolution_by_evolution_id(id)
+        self.__carelink_session.delete(evolution)
         self.__carelink_session.commit()
 
     def delete_medical_report(self, id: int):
-        db_clinical_evolution = self._get_medical_report_by_id(id)
-        self.__carelink_session.delete(db_clinical_evolution)
+        report = self._get_medical_report_by_id(id)
+        self.__carelink_session.delete(report)
         self.__carelink_session.commit()
 
     def delete_user_medical_record(self, record_id: int):
-        db_record = self._get_medical_record_by_id(record_id)
-        self.__carelink_session.delete(db_record)
+        record = self._get_medical_record_by_id(record_id)
+        self.__carelink_session.delete(record)
         self.__carelink_session.commit()
 
     def delete_activity(self, activity_id: int):
-        db_activity = self._get_activity_by_id(activity_id)
-        self.__carelink_session.delete(db_activity)
+        activity = self._get_activity_by_id(activity_id)
+        self.__carelink_session.delete(activity)
         self.__carelink_session.commit()
 
     def delete_user_vaccine_by_record_id(self, record_id: int, vaccine_id: int):
-        db_vaccines = self._get_user_vaccines_by_medical_record_id(record_id)
-        vaccines = []
-        for vaccine in db_vaccines:
-            vaccines.append(vaccine)
-        db_vaccine = next((x for x in vaccines if x.id == vaccine_id), None)
-        if not db_vaccine:
-            raise EntityNotFoundError("No se encuentra la vacuna")
-        self.__carelink_session.delete(db_vaccine)
-        self.__carelink_session.commit()
+        vaccine = self.__carelink_session.execute(
+            select(VacunasPorUsuario).where(
+                VacunasPorUsuario.id_vacuna == vaccine_id,
+                VacunasPorUsuario.id_historiaClinica == record_id,
+            )
+        ).scalar_one_or_none()
+        if vaccine:
+            self.__carelink_session.delete(vaccine)
+            self.__carelink_session.commit()
 
     def delete_user_medicines_by_record_id(self, record_id: int, medicine_id: int):
-        db_medicines = self._get_user_medicines_by_medical_record_id(record_id)
-        medicines = []
-        for medicine in db_medicines:
-            medicines.append(medicine)
-        db_medicine = next((x for x in medicines if x.id == medicine_id), None)
-        if not db_medicine:
-            raise EntityNotFoundError("No se encuentra el medicamento")
-        self.__carelink_session.delete(db_medicine)
-        self.__carelink_session.commit()
+        medicine = self.__carelink_session.execute(
+            select(MedicamentosPorUsuario).where(
+                MedicamentosPorUsuario.id_medicamento == medicine_id,
+                MedicamentosPorUsuario.id_historiaClinica == record_id,
+            )
+        ).scalar_one_or_none()
+        if medicine:
+            self.__carelink_session.delete(medicine)
+            self.__carelink_session.commit()
 
     def delete_user_care_by_record_id(self, record_id: int, care_id: int):
-        db_cares = self._get_user_cares_by_medical_record_id(record_id)
-        cares = []
-        for care in db_cares:
-            cares.append(care)
-        db_care = next((x for x in cares if x.id == care_id), None)
-        if not db_care:
-            raise EntityNotFoundError("No se encuentra el cuidado")
-        self.__carelink_session.delete(db_care)
-        self.__carelink_session.commit()
+        care = self.__carelink_session.execute(
+            select(CuidadosEnfermeriaPorUsuario).where(
+                CuidadosEnfermeriaPorUsuario.id_cuidado == care_id,
+                CuidadosEnfermeriaPorUsuario.id_historiaClinica == record_id,
+            )
+        ).scalar_one_or_none()
+        if care:
+            self.__carelink_session.delete(care)
+            self.__carelink_session.commit()
 
     def delete_user_intervention_by_record_id(
         self, record_id: int, intervention_id: int
     ):
-        db_interventions = self._get_user_interventions_by_medical_record_id(record_id)
-        interventions = []
-        for intervention in db_interventions:
-            interventions.append(intervention)
-        db_intervention = next(
-            (x for x in interventions if x.id == intervention_id), None
-        )
-        if not db_intervention:
-            raise EntityNotFoundError("No se encuentra la intervención")
-        self.__carelink_session.delete(db_intervention)
-        self.__carelink_session.commit()
+        intervention = self.__carelink_session.execute(
+            select(IntervencionesPorUsuario).where(
+                IntervencionesPorUsuario.id_intervencion == intervention_id,
+                IntervencionesPorUsuario.id_historiaClinica == record_id,
+            )
+        ).scalar_one_or_none()
+        if intervention:
+            self.__carelink_session.delete(intervention)
+            self.__carelink_session.commit()
 
     def authenticate_user(self, email: str, password: str) -> AuthorizedUsers | None:
-        user = (
-            self.__carelink_session.query(AuthorizedUsers)
-            .filter(AuthorizedUsers.email == email)
-            .first()
-        )
+        user = self.__carelink_session.execute(
+            select(AuthorizedUsers).where(AuthorizedUsers.email == email)
+        ).scalar_one_or_none()
         if user and pwd_context.verify(password, user.password):
             return user
         return None
 
     def update_factura_status(self, factura_id: int):
-        """
-        Actualiza el estado de la factura según los pagos realizados
-        Si los pagos cubren el total, estado = "PAGADA"
-        Si no, estado = "PENDIENTE"
-        """
-        try:
-            # Obtener la factura
-            factura = self.__carelink_session.query(Facturas).filter(
-                Facturas.id_factura == factura_id
-            ).first()
-            
-            if not factura:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Factura con ID {factura_id} no encontrada"
-                )
-            
-            # Calcular total de pagos
-            total_pagado = self.__carelink_session.query(func.sum(Pagos.valor)).filter(
-                Pagos.id_factura == factura_id
-            ).scalar() or 0
-            
-            # Determinar estado según pagos
-            if total_pagado >= float(factura.total_factura):
-                factura.estado_factura = EstadoFactura.PAGADA
-            else:
-                factura.estado_factura = EstadoFactura.PENDIENTE
-            
+        factura = self.__carelink_session.execute(
+            select(Facturas).where(Facturas.id_factura == factura_id)
+        ).scalar_one_or_none()
+        if factura:
+            factura.estado = "PAGADA"
             self.__carelink_session.commit()
-            self.__carelink_session.refresh(factura)
-            
-            return factura
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error al actualizar estado de factura: {str(e)}"
-            )
+
 
     def create_payment(self, payment_data: Pagos) -> Pagos:
-        try:
-            # Validar que la factura existe
-            bill = self.get_bill_by_id(payment_data.id_factura)
-            if not bill:
-                raise EntityNotFoundError("Factura no encontrada")
-
-            # Validar que el método de pago existe
-            payment_method = self.__carelink_session.query(MetodoPago).filter(
-                MetodoPago.id_metodo_pago == payment_data.id_metodo_pago
-            ).first()
-            if not payment_method:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Método de pago con ID {payment_data.id_metodo_pago} no existe"
-                )
-
-            # Validar que el tipo de pago existe
-            payment_type = self.__carelink_session.query(TipoPago).filter(
-                TipoPago.id_tipo_pago == payment_data.id_tipo_pago
-            ).first()
-            if not payment_type:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Tipo de pago con ID {payment_data.id_tipo_pago} no existe"
-                )
-
-            # Validar tipo de pago total: solo un pago permitido
-            tipo_pago = payment_data.id_tipo_pago
-            if tipo_pago == 1:  # 1 = Total
-                pagos_existentes = self.__carelink_session.query(Pagos).filter(
-                    Pagos.id_factura == payment_data.id_factura
-                ).count()
-                if pagos_existentes > 0:
-                    raise HTTPException(
-                        status_code=400, 
-                        detail="Solo se permite un pago total por factura"
-                    )
-                # Permitir pagos parciales - no validar que sea igual al total
-                # El pago total puede ser menor al total de la factura
-
-            # Validar que el valor del pago no exceda el total de la factura
-            total_pagado = self.__carelink_session.query(Pagos).filter(
-                Pagos.id_factura == payment_data.id_factura
-            ).with_entities(func.sum(Pagos.valor)).scalar() or 0
-            
-            if float(total_pagado) + float(payment_data.valor) > float(bill.total_factura):
-                raise HTTPException(
-                    status_code=400,
-                    detail="El valor del pago excede el total pendiente de la factura"
-                )
-
-            # Crear el pago
-            payment = Pagos(
-                id_factura=payment_data.id_factura,
-                id_metodo_pago=payment_data.id_metodo_pago,
-                id_tipo_pago=payment_data.id_tipo_pago,
-                fecha_pago=payment_data.fecha_pago,
-                valor=payment_data.valor,
-            )
-
-            self.__carelink_session.add(payment)
-            self.__carelink_session.commit()
-            self.__carelink_session.refresh(payment)
-
-            # Actualizar estado de la factura
-            self.update_factura_status(payment.id_factura)
-
-            return payment
-
-        except HTTPException:
-            # Re-lanzar HTTPExceptions para mantener el status code
-            self.__carelink_session.rollback()
-            raise
-        except Exception as e:
-            self.__carelink_session.rollback()
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Error al crear el pago: {str(e)}"
-            )
+        self.__carelink_session.add(payment_data)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(payment_data)
+        return payment_data
 
     def create_user(self, user_data: AuthorizedUsers) -> AuthorizedUsers:
         self.__carelink_session.add(user_data)
         self.__carelink_session.commit()
+        self.__carelink_session.refresh(user_data)
         return user_data
 
     def get_contract_bill(self, contract_id: int) -> Facturas:
-        bill = (
-            self.__carelink_session.query(Facturas)
-            .filter(Facturas.id_contrato == contract_id)
-            .first()
-        )
-
-        if bill is None:
-            raise EntityNotFoundError(
-                "No se encuentran facturas registradas para este contrato"
-            )
-
-        return bill
+        return self.__carelink_session.execute(
+            select(Facturas).where(Facturas.id_contrato == contract_id)
+        ).scalar_one_or_none()
 
     def get_payment_by_id(self, payment_id: int) -> Pagos:
-        payment = (
-            self.__carelink_session.query(Pagos)
-            .filter(Pagos.id_pago == payment_id)
-            .first()
-        )
-        if payment is None:
-            raise EntityNotFoundError(
-                f"No existe un pago con identificador {payment_id}"
-            )
-        return payment
+        return self.__carelink_session.execute(
+            select(Pagos).where(Pagos.id_pago == payment_id)
+        ).scalar_one_or_none()
 
     def _get_payment_methods(self) -> list[MetodoPago]:
-        payment_methods = self.__carelink_session.query(MetodoPago).all()
-        return payment_methods
+        return self.__carelink_session.execute(select(MetodoPago)).scalars().all()
 
     def _get_payment_types(self) -> list[TipoPago]:
-        payment_types = self.__carelink_session.query(TipoPago).all()
-        return payment_types
+        return self.__carelink_session.execute(select(TipoPago)).scalars().all()
+
+    def get_payments_by_factura(self, factura_id: int) -> list[Pagos]:
+        return self.__carelink_session.execute(
+            select(Pagos).where(Pagos.id_factura == factura_id)
+        ).scalars().all()
 
     def get_bill_by_id(self, bill_id: int) -> Facturas:
-        bill = (
-            self.__carelink_session.query(Facturas)
-            .filter(Facturas.id_factura == bill_id)
-            .first()
-        )
-        if bill is None:
-            raise EntityNotFoundError(
-                f"No hay factura registrada con el identificador {bill_id}"
-            )
-        return bill
+        return self.__carelink_session.execute(
+            select(Facturas).where(Facturas.id_factura == bill_id)
+        ).scalar_one_or_none()
 
     def _get_service_dates(self, service: ServiciosPorContrato) -> list[FechasServicio]:
-        service_dates = (
-            self.__carelink_session.query(FechasServicio)
-            .filter(
+        return self.__carelink_session.execute(
+            select(FechasServicio).where(
                 FechasServicio.id_servicio_contratado == service.id_servicio_contratado
             )
-            .all()
-        )
-        return service_dates
+        ).scalars().all()
 
     def _calculate_service_total(
         self, service: ServiciosPorContrato, contract_start_year: int
     ) -> float:
-        rate = self._get_service_rate(service.id_servicio, contract_start_year)
-        service_dates = self._get_service_dates(service)
-        return rate.precio_por_dia * len(service_dates)
+        # Intentar obtener la tarifa del servicio, si no existe usar el precio del servicio contratado
+        service_rate = self._get_service_rate(service.id_servicio, contract_start_year)
+        if service_rate is None:
+            # Si no hay tarifa configurada, usar el precio del servicio contratado
+            # Para servicios por contrato, asumimos cantidad = 1 (un día de servicio)
+            return float(service.precio_por_dia)
+        # Para servicios por contrato, asumimos cantidad = 1 (un día de servicio)
+        return service_rate.precio_por_dia
 
     def _calculate_contract_bill_total(self, contract_id: int) -> float:
-        contract = self._get_contract_by_id(contract_id)
-        contract_start_date = contract.fecha_inicio
-        contract_start_year = contract_start_date.year
-        contract_services = self._get_contract_services(contract_id)
+        services = self._get_contract_services(contract_id)
         total = 0.0
-        for contract_service in contract_services:
-            result = self._calculate_service_total(
-                contract_service, contract_start_year
-            )
-            total += result
+        
+        for service in services:
+            # Obtener las fechas de servicio para este servicio contratado
+            fechas_servicio = self._get_service_dates(service)
+            num_fechas = len(fechas_servicio)
+            
+            # Calcular el total para este servicio: precio por día * número de fechas
+            precio_por_dia = float(service.precio_por_dia)
+            total_servicio = precio_por_dia * num_fechas
+            total += total_servicio
+            
+        
         return total
 
     def calculate_partial_bill(
         self, service_ids: list[int], quantities: list[int], year: int
     ) -> float:
-        total = 0.0
-        for index, service_id in enumerate(service_ids):
+        total = 0
+        for service_id, quantity in zip(service_ids, quantities):
             rate = self._get_service_rate(service_id, year)
-            total += rate.precio_por_dia * quantities[index]
+            if rate is None:
+                # Si no hay tarifa configurada, usar un precio por defecto o lanzar error
+                raise ValueError(f"No se encontró tarifa configurada para el servicio {service_id} en el año {year}")
+            total += rate.precio_por_dia * quantity
         return total
 
     def create_contract_bill(self, contract_id: int) -> Facturas:
-        bill_total = self._calculate_contract_bill_total(contract_id)
+        total = self._calculate_contract_bill_total(contract_id)
         bill = Facturas(
             id_contrato=contract_id,
-            fecha_emision=datetime.now(),
-            total_factura=bill_total,
+            total_factura=total,
+            estado="PENDIENTE",
+            fecha_creacion=datetime.utcnow(),
         )
         self.__carelink_session.add(bill)
         self.__carelink_session.commit()
         self.__carelink_session.refresh(bill)
-        
-        # Generar numero_factura basado en id_factura (relleno de ceros a la izquierda)
-        numero_factura = str(bill.id_factura).zfill(4)
-        bill.numero_factura = numero_factura
-        self.__carelink_session.commit()
-        self.__carelink_session.refresh(bill)
-        
         return bill
 
     def create_contract(self, contract_data: ContratoCreateDTO) -> dict:
-        """
-        Crea un contrato y los servicios asociados, retornando el contrato y los IDs de ServiciosPorContrato generados.
-        """
-        self.actualizar_estados_contratos_finalizados()
-        try:
-            contrato = Contratos(
-                id_usuario=contract_data.id_usuario,
-                tipo_contrato=contract_data.tipo_contrato,
-                fecha_inicio=contract_data.fecha_inicio,
-                fecha_fin=contract_data.fecha_fin,
-                facturar_contrato=contract_data.facturar_contrato,
+        contract = Contratos(
+            id_usuario=contract_data.id_usuario,
+            tipo_contrato=contract_data.tipo_contrato,
+            fecha_inicio=contract_data.fecha_inicio,
+            fecha_fin=contract_data.fecha_fin,
+            facturar_contrato=contract_data.facturar_contrato,
+        )
+        self.__carelink_session.add(contract)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(contract)
+        
+        # Crear servicios por contrato
+        servicios_por_contrato = []
+        for servicio_data in contract_data.servicios:
+            servicio_contratado = ServiciosPorContrato(
+                id_contrato=contract.id_contrato,
+                id_servicio=servicio_data.id_servicio,
+                fecha=servicio_data.fecha,
+                descripcion=servicio_data.descripcion,
+                precio_por_dia=servicio_data.precio_por_dia
             )
-            self.__carelink_session.add(contrato)
+            self.__carelink_session.add(servicio_contratado)
             self.__carelink_session.commit()
-            self.__carelink_session.refresh(contrato)
-            # Insertar servicios y recolectar IDs
-            servicios_ids = []
-            for servicio in contract_data.servicios:
-                servicio_contratado = ServiciosPorContrato(
-                    id_contrato=contrato.id_contrato,
-                    id_servicio=servicio.id_servicio,
-                    fecha=servicio.fecha,
-                    descripcion=servicio.descripcion,
-                    precio_por_dia=servicio.precio_por_dia,
+            self.__carelink_session.refresh(servicio_contratado)
+            
+            # Crear fechas de servicio
+            for fecha_servicio_data in servicio_data.fechas_servicio:
+                fecha_servicio = FechasServicio(
+                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
+                    fecha=fecha_servicio_data.fecha
                 )
-                self.__carelink_session.add(servicio_contratado)
-                self.__carelink_session.commit()
-                self.__carelink_session.refresh(servicio_contratado)
-                servicios_ids.append({
-                    'id_servicio_contratado': servicio_contratado.id_servicio_contratado,
-                    'id_servicio': servicio_contratado.id_servicio
-                })
-                for f in servicio.fechas_servicio:
-                    fecha_servicio = FechasServicio(
-                        id_servicio_contratado=servicio_contratado.id_servicio_contratado,
-                        fecha=f.fecha,
-                    )
-                    self.__carelink_session.add(fecha_servicio)
-                self.__carelink_session.commit()
-            return {
-                'contrato': contrato,
-                'servicios_por_contrato': servicios_ids
-            }
-        except Exception as e:
-            self.__carelink_session.rollback()
-            raise HTTPException(
-                status_code=500, detail=f"Error al crear contrato: {str(e)}"
-            )
+                self.__carelink_session.add(fecha_servicio)
+            
+            self.__carelink_session.commit()
+            
+            # Agregar a la lista de servicios por contrato
+            servicios_por_contrato.append({
+                'id_servicio_contratado': servicio_contratado.id_servicio_contratado,
+                'id_servicio': servicio_contratado.id_servicio,
+                'fecha': servicio_contratado.fecha,
+                'descripcion': servicio_contratado.descripcion,
+                'precio_por_dia': servicio_contratado.precio_por_dia
+            })
+        
+        return {
+            'contrato': contract,
+            'servicios_por_contrato': servicios_por_contrato
+        }
 
     def create_user_medical_record(
         self, user_id: int, record: MedicalRecord
@@ -821,339 +717,421 @@ class CareLinkCrud:
         return record
 
     def _get_service_rate(self, service_id: int, year: int) -> TarifasServicioPorAnio:
-        rate = (
-            self.__carelink_session.query(TarifasServicioPorAnio)
-            .filter(
+        return self.__carelink_session.execute(
+            select(TarifasServicioPorAnio).where(
                 TarifasServicioPorAnio.id_servicio == service_id,
                 TarifasServicioPorAnio.anio == year,
             )
-            .one()
-        )
-        if rate is None:
-            raise EntityNotFoundError("Tarifa no encontrada")
-        return rate
+        ).scalar_one_or_none()
 
     def _get_contract_services(self, contract_id: int) -> list[ServiciosPorContrato]:
-        services = (
-            self.__carelink_session.query(ServiciosPorContrato)
-            .filter(ServiciosPorContrato.id_contrato == contract_id)
-            .all()
-        )
-        return services
+        return self.__carelink_session.execute(
+            select(ServiciosPorContrato).where(
+                ServiciosPorContrato.id_contrato == contract_id
+            )
+        ).scalars().all()
 
     def _get_users(self) -> List[User]:
-        users = (
-            self.__carelink_session.query(User).filter(User.is_deleted == False).all()
-        )
-        return users
+        return self.__carelink_session.execute(
+            select(User).where(User.is_deleted == False)
+        ).scalars().all()
+
+    def _get_users_with_home_visits(self) -> List[User]:
+        return self.__carelink_session.execute(
+            select(User).where(
+                User.is_deleted == False,
+                User.visitas_domiciliarias == True
+            )
+        ).scalars().all()
+
+    def _get_users_without_home_visits(self) -> List[User]:
+        return self.__carelink_session.execute(
+            select(User).where(
+                User.is_deleted == False,
+                User.visitas_domiciliarias == False
+            )
+        ).scalars().all()
 
     def get_all_contracts(self) -> List[ContratoResponseDTO]:
-        """Obtener todos los contratos del sistema"""
-        self.actualizar_estados_contratos_finalizados()
-        try:
-            contratos = self.__carelink_session.query(Contratos).all()
-            contratos_response = []
-            
-            for contrato in contratos:
-                # Obtener servicios del contrato
-                servicios = self.__carelink_session.query(ServiciosPorContrato).filter(
-                    ServiciosPorContrato.id_contrato == contrato.id_contrato
-                ).all()
-                
-                servicios_dto = []
-                for servicio in servicios:
-                    # Obtener fechas de servicio
-                    fechas = self.__carelink_session.query(FechasServicio).filter(
-                        FechasServicio.id_servicio_contratado == servicio.id_servicio_contratado
-                    ).all()
-                    
-                    fechas_dto = [FechaServicioDTO(fecha=fecha.fecha) for fecha in fechas]
-                    
-                    servicio_dto = ServicioContratoDTO(
-                        id_servicio_contratado=servicio.id_servicio_contratado,
-                        id_servicio=servicio.id_servicio,
-                        fecha=servicio.fecha,
-                        descripcion=servicio.descripcion,
-                        precio_por_dia=float(servicio.precio_por_dia),
-                        fechas_servicio=fechas_dto
-                    )
-                    servicios_dto.append(servicio_dto)
-                
-                contrato_dto = ContratoResponseDTO(
-                    id_contrato=contrato.id_contrato,
-                    id_usuario=contrato.id_usuario,
-                    tipo_contrato=contrato.tipo_contrato,
-                    fecha_inicio=contrato.fecha_inicio,
-                    fecha_fin=contrato.fecha_fin,
-                    facturar_contrato=contrato.facturar_contrato,
-                    estado=contrato.estado,
-                    servicios=servicios_dto
-                )
-                contratos_response.append(contrato_dto)
-            
-            return contratos_response
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error al obtener contratos: {str(e)}"
+        contracts = self.__carelink_session.execute(select(Contratos)).scalars().all()
+        return [
+            ContratoResponseDTO(
+                id_contrato=contract.id_contrato,
+                id_usuario=contract.id_usuario,
+                tipo_contrato=contract.tipo_contrato,
+                fecha_inicio=contract.fecha_inicio,
+                fecha_fin=contract.fecha_fin,
+                facturar_contrato=contract.facturar_contrato,
+                estado=contract.estado,
+                servicios=[],
+                fechas_servicio=[],
             )
+            for contract in contracts
+        ]
 
     def _get_contract_by_id(self, contract_id: int) -> Contratos:
-        contract = (
-            self.__carelink_session.query(Contratos)
-            .filter(Contratos.id_contrato == contract_id)
-            .first()
-        )
-        if contract is None:
-            raise EntityNotFoundError(f"El contrato con id {contract_id} no existe")
+        contract = self.__carelink_session.execute(
+            select(Contratos).where(Contratos.id_contrato == contract_id)
+        ).scalar_one_or_none()
+        if not contract:
+            raise EntityNotFoundError(f"Contrato con ID {contract_id} no encontrado")
         return contract
 
     def _get_user_by_id(self, user_id: int) -> User:
-        user = (
-            self.__carelink_session.query(User)
-            .filter(User.id_usuario == user_id)
-            .first()
-        )
-        if user is None:
-            raise EntityNotFoundError(f"El usuario con id {user_id} no existe")
+        user = self.__carelink_session.execute(
+            select(User).where(
+                User.id_usuario == user_id, User.is_deleted == False
+            )
+        ).scalar_one_or_none()
+        if not user:
+            raise EntityNotFoundError(f"Usuario con ID {user_id} no encontrado")
         return user
 
     def _get_authorized_user_info(self, user_id) -> AuthorizedUsers:
-        user = (
-            self.__carelink_session.query(AuthorizedUsers)
-            .filter(AuthorizedUsers.id == user_id)
-            .first()
-        )
-        if user is None:
-            raise EntityNotFoundError(f"No user found with id {user_id}")
-        return user
+        return self.__carelink_session.execute(
+            select(AuthorizedUsers).where(AuthorizedUsers.id == user_id)
+        ).scalar_one_or_none()
 
     def _get_family_members_by_user_id(
         self, user_id: int
     ) -> List[FamiliaresYAcudientesPorUsuario]:
-        family_members = (
-            self.__carelink_session.query(FamiliaresYAcudientesPorUsuario)
-            .join(
-                FamilyMember,
-                FamiliaresYAcudientesPorUsuario.id_acudiente
-                == FamilyMember.id_acudiente,
+        return self.__carelink_session.execute(
+            select(FamiliaresYAcudientesPorUsuario).where(
+                FamiliaresYAcudientesPorUsuario.id_usuario == user_id
             )
-            .filter(
-                FamiliaresYAcudientesPorUsuario.id_usuario == user_id,
-                FamilyMember.is_deleted == False,
-            )
-            .all()
-        )
-        return family_members
+        ).scalars().all()
 
     def _get_family_members(self) -> List[FamilyMember]:
-        return self.__carelink_session.query(FamilyMember).all()
+        return self.__carelink_session.execute(select(FamilyMember)).scalars().all()
 
     def _get_family_member_by_id(self, id: int) -> Tuple[FamilyMember, str]:
-        family_member, parentesco = (
-            self.__carelink_session.query(
-                FamilyMember, FamiliaresYAcudientesPorUsuario.parentesco
-            )
-            .join(
-                FamiliaresYAcudientesPorUsuario,
-                FamilyMember.id_acudiente
-                == FamiliaresYAcudientesPorUsuario.id_acudiente,
-            )
-            .filter(FamilyMember.id_acudiente == id)
-            .first()
-        )
-        if family_member is None:
-            raise EntityNotFoundError(f"Acudiente con id {id} no existe")
-        return family_member, parentesco
+        family_member = self.__carelink_session.execute(
+            select(FamilyMember).where(FamilyMember.id_acudiente == id)
+        ).scalar_one_or_none()
+        if not family_member:
+            raise EntityNotFoundError(f"Acudiente con ID {id} no encontrado")
+        return family_member, ""
 
     def _get_user_medical_record_by_user_id(self, id: int) -> MedicalRecord | None:
-        return (
-            self.__carelink_session.query(MedicalRecord)
-            .filter(MedicalRecord.id_usuario == id)
-            .first()
-        )
+        return self.__carelink_session.execute(
+            select(MedicalRecord).where(MedicalRecord.id_usuario == id)
+        ).scalar_one_or_none()
 
     def _get_medical_record_by_id(self, id: int) -> MedicalRecord:
-        record = (
-            self.__carelink_session.query(MedicalRecord)
-            .filter(MedicalRecord.id_historiaclinica == id)
-            .first()
-        )
+        record = self.__carelink_session.execute(
+            select(MedicalRecord).where(MedicalRecord.id_historiaclinica == id)
+        ).scalar_one_or_none()
         if not record:
-            raise EntityNotFoundError("Record not found")
+            raise EntityNotFoundError(f"Historia clínica con ID {id} no encontrada")
         return record
 
     def _get_user_medicines_by_medical_record_id(
         self, id: int
     ) -> List[MedicamentosPorUsuario]:
-        self._get_medical_record_by_id(id)
-        return (
-            self.__carelink_session.query(MedicamentosPorUsuario)
-            .filter(MedicamentosPorUsuario.id_historiaClinica == id)
-            .all()
-        )
+        return self.__carelink_session.execute(
+            select(MedicamentosPorUsuario).where(
+                MedicamentosPorUsuario.id_historiaClinica == id
+            )
+        ).scalars().all()
 
     def _get_user_cares_by_medical_record_id(
         self, id: int
     ) -> List[CuidadosEnfermeriaPorUsuario]:
-        self._get_medical_record_by_id(id)
-        return (
-            self.__carelink_session.query(CuidadosEnfermeriaPorUsuario)
-            .filter(CuidadosEnfermeriaPorUsuario.id_historiaClinica == id)
-            .all()
-        )
+        return self.__carelink_session.execute(
+            select(CuidadosEnfermeriaPorUsuario).where(
+                CuidadosEnfermeriaPorUsuario.id_historiaClinica == id
+            )
+        ).scalars().all()
 
     def _get_user_interventions_by_medical_record_id(
         self, id: int
     ) -> List[IntervencionesPorUsuario]:
-        self._get_medical_record_by_id(id)
-        return (
-            self.__carelink_session.query(IntervencionesPorUsuario)
-            .filter(IntervencionesPorUsuario.id_historiaClinica == id)
-            .all()
-        )
+        return self.__carelink_session.execute(
+            select(IntervencionesPorUsuario).where(
+                IntervencionesPorUsuario.id_historiaClinica == id
+            )
+        ).scalars().all()
 
     def _get_user_vaccines_by_medical_record_id(
         self, id: int
     ) -> List[VacunasPorUsuario]:
-        self._get_medical_record_by_id(id)
-        return (
-            self.__carelink_session.query(VacunasPorUsuario)
-            .filter(VacunasPorUsuario.id_historiaClinica == id)
-            .all()
-        )
+        return self.__carelink_session.execute(
+            select(VacunasPorUsuario).where(
+                VacunasPorUsuario.id_historiaClinica == id
+            )
+        ).scalars().all()
 
     def _get_user_medical_treatment_by_id(self, id: int) -> MedicamentosPorUsuario:
-        treatment = (
-            self.__carelink_session.query(MedicamentosPorUsuario)
-            .filter(MedicamentosPorUsuario.id == id)
-            .first()
-        )
-        if treatment is None:
-            raise EntityNotFoundError("Not found")
+        treatment = self.__carelink_session.execute(
+            select(MedicamentosPorUsuario).where(
+                MedicamentosPorUsuario.id_medicamento == id
+            )
+        ).scalar_one_or_none()
+        if not treatment:
+            raise EntityNotFoundError(f"Tratamiento con ID {id} no encontrado")
         return treatment
 
     def _get_user_medical_nursing_by_id(self, id: int) -> CuidadosEnfermeriaPorUsuario:
-        treatment = (
-            self.__carelink_session.query(CuidadosEnfermeriaPorUsuario)
-            .filter(CuidadosEnfermeriaPorUsuario.id == id)
-            .first()
-        )
-        if treatment is None:
-            raise EntityNotFoundError("Not found")
-        return treatment
+        nursing = self.__carelink_session.execute(
+            select(CuidadosEnfermeriaPorUsuario).where(
+                CuidadosEnfermeriaPorUsuario.id_cuidado == id
+            )
+        ).scalar_one_or_none()
+        if not nursing:
+            raise EntityNotFoundError(f"Cuidado de enfermería con ID {id} no encontrado")
+        return nursing
 
     def _get_user_medical_intervention_by_id(self, id: int) -> IntervencionesPorUsuario:
-        treatment = (
-            self.__carelink_session.query(IntervencionesPorUsuario)
-            .filter(IntervencionesPorUsuario.id == id)
-            .first()
-        )
-        if treatment is None:
-            raise EntityNotFoundError("Not found")
-        return treatment
+        intervention = self.__carelink_session.execute(
+            select(IntervencionesPorUsuario).where(
+                IntervencionesPorUsuario.id_intervencion == id
+            )
+        ).scalar_one_or_none()
+        if not intervention:
+            raise EntityNotFoundError(f"Intervención con ID {id} no encontrada")
+        return intervention
 
     def _get_user_medical_vaccine_by_id(self, id: int) -> VacunasPorUsuario:
-        treatment = (
-            self.__carelink_session.query(VacunasPorUsuario)
-            .filter(VacunasPorUsuario.id == id)
-            .first()
-        )
-        if treatment is None:
-            raise EntityNotFoundError("Not found")
-        return treatment
+        vaccine = self.__carelink_session.execute(
+            select(VacunasPorUsuario).where(VacunasPorUsuario.id_vacuna == id)
+        ).scalar_one_or_none()
+        if not vaccine:
+            raise EntityNotFoundError(f"Vacuna con ID {id} no encontrada")
+        return vaccine
 
     def _get_medical_report_by_id(self, id: int) -> ReportesClinicos:
-        db_reporte = (
-            self.__carelink_session.query(ReportesClinicos)
-            .filter(ReportesClinicos.id_reporteclinico == id)
-            .first()
-        )
-        if db_reporte is None:
-            raise EntityNotFoundError("Reporte Clinico not found")
-        return db_reporte
+        report = self.__carelink_session.execute(
+            select(ReportesClinicos).where(ReportesClinicos.id_reporteclinico == id)
+        ).scalar_one_or_none()
+        if not report:
+            raise EntityNotFoundError(f"Reporte clínico con ID {id} no encontrado")
+        return report
 
     def _get_medical_reports_by_user_id(self, user_id: int) -> List[ReportesClinicos]:
-        db_medical_record = self._get_user_medical_record_by_user_id(user_id)
-        if db_medical_record is None:
+        # Primero obtener el id_historiaclinica del usuario
+        medical_record = self._get_user_medical_record_by_user_id(user_id)
+        if not medical_record:
             return []
-        return (
-            self.__carelink_session.query(ReportesClinicos)
-            .filter(
-                ReportesClinicos.id_historiaclinica
-                == db_medical_record.id_historiaclinica
-            )
-            .all()
-        )
+        
+        # Luego buscar los reportes clínicos asociados a esa historia clínica
+        return self.__carelink_session.execute(
+            select(ReportesClinicos).where(ReportesClinicos.id_historiaclinica == medical_record.id_historiaclinica)
+        ).scalars().all()
 
     def _get_professionals(self) -> List[Profesionales]:
-        return self.__carelink_session.query(Profesionales).all()
+        return self.__carelink_session.execute(select(Profesionales)).scalars().all()
 
     def _get_professional_by_id(self, id: int) -> Profesionales:
-        professional = (
-            self.__carelink_session.query(Profesionales)
-            .filter(Profesionales.id_profesional == id)
-            .first()
-        )
-        if professional is None:
-            raise EntityNotFoundError(f"Profesional con identificador #{id} no existe")
+        professional = self.__carelink_session.execute(
+            select(Profesionales).where(Profesionales.id_profesional == id)
+        ).scalar_one_or_none()
+        if not professional:
+            raise EntityNotFoundError(f"Profesional con ID {id} no encontrado")
         return professional
 
     def _get_clinical_evolutions_by_report_id(
         self, report_id: int
     ) -> List[EvolucionesClinicas]:
-        return (
-            self.__carelink_session.query(EvolucionesClinicas)
-            .filter(EvolucionesClinicas.id_reporteclinico == report_id)
-            .all()
-        )
+        return self.__carelink_session.execute(
+            select(EvolucionesClinicas).where(
+                EvolucionesClinicas.id_reporteclinico == report_id
+            )
+        ).scalars().all()
 
     def _get_clinical_evolution_by_evolution_id(
         self, evolution_id: int
     ) -> EvolucionesClinicas:
-        evolucion = (
-            self.__carelink_session.query(EvolucionesClinicas)
-            .filter(EvolucionesClinicas.id_TipoReporte == evolution_id)
-            .first()
-        )
-        if evolucion is None:
-            raise EntityNotFoundError("No se encuentra el reporte clínico")
-        return evolucion
+        evolution = self.__carelink_session.execute(
+            select(EvolucionesClinicas).where(
+                EvolucionesClinicas.id_evolucionclinica == evolution_id
+            )
+        ).scalar_one_or_none()
+        if not evolution:
+            raise EntityNotFoundError(f"Evolución clínica con ID {evolution_id} no encontrada")
+        return evolution
 
     def _get_activities(self) -> List[ActividadesGrupales]:
-        return self.__carelink_session.query(ActividadesGrupales).all()
+        return self.__carelink_session.execute(select(ActividadesGrupales)).scalars().all()
 
     def _get_activity_by_id(self, id: int) -> ActividadesGrupales:
-        activity = (
-            self.__carelink_session.query(ActividadesGrupales)
-            .filter(ActividadesGrupales.id == id)
-            .first()
-        )
-        if activity is None:
-            raise EntityNotFoundError(
-                f"No se encuentra una actividad con el identificador #{id}"
-            )
+        activity = self.__carelink_session.execute(
+            select(ActividadesGrupales).where(ActividadesGrupales.id == id)
+        ).scalar_one_or_none()
+        if not activity:
+            raise EntityNotFoundError(f"Actividad con ID {id} no encontrada")
         return activity
 
     def _get_activity_types(self) -> List[TipoActividad]:
-        return self.__carelink_session.query(TipoActividad).all()
+        return self.__carelink_session.execute(select(TipoActividad)).scalars().all()
 
     def _get_upcoming_activities(self) -> List[ActividadesGrupales]:
-        today = date.today()
-        upcoming_activities = (
-            self.__carelink_session.query(ActividadesGrupales)
-            .filter(ActividadesGrupales.fecha >= today)
+        return self.__carelink_session.execute(
+            select(ActividadesGrupales)
+            .where(ActividadesGrupales.fecha >= date.today())
             .order_by(ActividadesGrupales.fecha.asc())
-            .all()
+            .limit(10)
+        ).scalars().all()
+
+    def get_activity_with_users(self, activity_id: int) -> dict:
+        """Obtener una actividad con sus usuarios asignados"""
+        from app.dto.v1.response.activity_users import ActivityWithUsersDTO, ActivityUserDTO
+        
+        # Obtener la actividad
+        activity = self._get_activity_by_id(activity_id)
+        
+        # Obtener usuarios asignados
+        usuarios_asignados = self.__carelink_session.execute(
+            select(ActividadesUsuarios, User)
+            .join(User, ActividadesUsuarios.id_usuario == User.id_usuario)
+            .where(ActividadesUsuarios.id_actividad == activity_id)
+        ).all()
+        
+        # Construir la respuesta
+        usuarios_dto = []
+        for au, user in usuarios_asignados:
+            usuarios_dto.append(ActivityUserDTO(
+                id=au.id,
+                id_usuario=au.id_usuario,
+                id_actividad=au.id_actividad,
+                fecha_asignacion=au.fecha_asignacion,
+                estado_participacion=au.estado_participacion,
+                observaciones=au.observaciones,
+                fecha_creacion=au.fecha_creacion,
+                fecha_actualizacion=au.fecha_actualizacion,
+                nombres=user.nombres,
+                apellidos=user.apellidos,
+                n_documento=user.n_documento
+            ))
+        
+        return ActivityWithUsersDTO(
+            id=activity.id,
+            nombre=activity.nombre,
+            descripcion=activity.descripcion,
+            fecha=activity.fecha,
+            duracion=activity.duracion,
+            comentarios=activity.comentarios,
+            id_profesional=activity.id_profesional,
+            id_tipo_actividad=activity.id_tipo_actividad,
+            profesional_nombres=activity.profesional.nombres if activity.profesional else None,
+            profesional_apellidos=activity.profesional.apellidos if activity.profesional else None,
+            tipo_actividad=activity.tipo_actividad.tipo if activity.tipo_actividad else None,
+            usuarios_asignados=usuarios_dto,
+            total_usuarios=len(usuarios_dto)
         )
-        return upcoming_activities
+
+    def get_users_for_activity_date(self, activity_date: date) -> List[dict]:
+        """Obtener usuarios agendados en el cronograma para una fecha específica"""
+        from app.dto.v1.response.activity_users import UserForActivityDTO
+        
+        # Obtener solo los usuarios que están agendados en el cronograma para esa fecha
+        usuarios_cronograma = self.__carelink_session.execute(
+            select(User, CronogramaAsistenciaPacientes)
+            .join(CronogramaAsistenciaPacientes, User.id_usuario == CronogramaAsistenciaPacientes.id_usuario)
+            .join(CronogramaAsistencia, CronogramaAsistenciaPacientes.id_cronograma == CronogramaAsistencia.id_cronograma)
+            .where(CronogramaAsistencia.fecha == activity_date)
+            .where(User.is_deleted == False)
+        ).all()
+        
+        # Construir la respuesta solo con usuarios agendados
+        usuarios_dto = []
+        for user, cap in usuarios_cronograma:
+            usuarios_dto.append(UserForActivityDTO(
+                id_usuario=user.id_usuario,
+                nombres=user.nombres,
+                apellidos=user.apellidos,
+                n_documento=user.n_documento,
+                telefono=user.telefono,
+                email=user.email,
+                fecha_nacimiento=user.fecha_nacimiento,
+                genero=user.genero,
+                estado=user.estado,
+                tiene_cronograma_fecha=True,  # Todos los usuarios devueltos tienen cronograma
+                estado_asistencia=cap.estado_asistencia.value if cap.estado_asistencia else None
+            ))
+        
+        return usuarios_dto
+
+    def assign_users_to_activity(self, activity_id: int, user_ids: List[int], estado_participacion: str = "PENDIENTE", observaciones: str = None) -> List[ActividadesUsuarios]:
+        """Asignar usuarios a una actividad"""
+        # Verificar que la actividad existe
+        activity = self._get_activity_by_id(activity_id)
+        
+        # Crear las asignaciones
+        asignaciones = []
+        for user_id in user_ids:
+            # Verificar que el usuario existe
+            user = self.__carelink_session.execute(
+                select(User).where(User.id_usuario == user_id)
+            ).scalar_one_or_none()
+            
+            if not user:
+                raise ValueError(f"Usuario con ID {user_id} no encontrado")
+            
+            # Verificar si ya existe la asignación
+            existing = self.__carelink_session.execute(
+                select(ActividadesUsuarios)
+                .where(ActividadesUsuarios.id_actividad == activity_id)
+                .where(ActividadesUsuarios.id_usuario == user_id)
+            ).scalar_one_or_none()
+            
+            if existing:
+                # Actualizar la asignación existente
+                existing.estado_participacion = estado_participacion
+                if observaciones:
+                    existing.observaciones = observaciones
+                asignaciones.append(existing)
+            else:
+                # Crear nueva asignación
+                nueva_asignacion = ActividadesUsuarios(
+                    id_actividad=activity_id,
+                    id_usuario=user_id,
+                    estado_participacion=estado_participacion,
+                    observaciones=observaciones
+                )
+                self.__carelink_session.add(nueva_asignacion)
+                asignaciones.append(nueva_asignacion)
+        
+        self.__carelink_session.commit()
+        return asignaciones
+
+    def remove_users_from_activity(self, activity_id: int, user_ids: List[int]) -> bool:
+        """Remover usuarios de una actividad"""
+        # Eliminar las asignaciones
+        deleted = self.__carelink_session.execute(
+            delete(ActividadesUsuarios)
+            .where(ActividadesUsuarios.id_actividad == activity_id)
+            .where(ActividadesUsuarios.id_usuario.in_(user_ids))
+        )
+        
+        self.__carelink_session.commit()
+        return deleted.rowcount > 0
+
+    def update_user_activity_status(self, activity_user_id: int, estado_participacion: str, observaciones: str = None) -> ActividadesUsuarios:
+        """Actualizar el estado de participación de un usuario en una actividad"""
+        activity_user = self.__carelink_session.execute(
+            select(ActividadesUsuarios)
+            .where(ActividadesUsuarios.id == activity_user_id)
+        ).scalar_one_or_none()
+        
+        if not activity_user:
+            raise ValueError(f"Asignación de actividad con ID {activity_user_id} no encontrada")
+        
+        activity_user.estado_participacion = estado_participacion
+        if observaciones:
+            activity_user.observaciones = observaciones
+        
+        self.__carelink_session.commit()
+        return activity_user
 
     def upload_file_to_s3(self, file, bucket_name, object_name):
         try:
             self.__s3_client.upload_fileobj(file, bucket_name, object_name)
             return f"https://{bucket_name}.s3.amazonaws.com/{object_name}"
         except NoCredentialsError:
-            raise Exception("AWS credentials not available")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Credenciales de AWS no configuradas",
+            )
 
     def delete_s3_folder(self, bucket_name: str, folder_path: str):
         try:
@@ -1161,837 +1139,925 @@ class CareLinkCrud:
                 Bucket=bucket_name, Prefix=folder_path
             )
             if "Contents" in objects:
-                delete_keys = [{"Key": obj["Key"]} for obj in objects["Contents"]]
-                self.__s3_client.delete_objects(
-                    Bucket=bucket_name, Delete={"Objects": delete_keys}
-                )
+                for obj in objects["Contents"]:
+                    self.__s3_client.delete_object(Bucket=bucket_name, Key=obj["Key"])
         except NoCredentialsError:
-            raise Exception("AWS credentials not available")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Credenciales de AWS no configuradas",
+            )
 
     def delete_s3_file(self, bucket_name, object_name):
         try:
             self.__s3_client.delete_object(Bucket=bucket_name, Key=object_name)
         except NoCredentialsError:
-            raise Exception("AWS credentials not available")
-
-    # ==================== MÉTODOS DE CRONOGRAMA DE ASISTENCIA ====================
-    
-    def create_cronograma_asistencia(self, cronograma_data) -> CronogramaAsistencia:
-        """Crear un nuevo cronograma de asistencia"""
-        try:
-            cronograma = CronogramaAsistencia(**cronograma_data.dict())
-            self.__carelink_session.add(cronograma)
-            self.__carelink_session.commit()
-            self.__carelink_session.refresh(cronograma)
-            return cronograma
-        except SQLAlchemyError as e:
-            self.__carelink_session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al crear cronograma de asistencia: {str(e)}"
+                detail="Credenciales de AWS no configuradas",
             )
 
-    def add_paciente_to_cronograma(self, paciente_data) -> CronogramaAsistenciaPacientes:
-        """Agregar un paciente a un cronograma de asistencia"""
-        try:
-            # Verificar que el cronograma existe
-            cronograma = self._get_cronograma_by_id(paciente_data.id_cronograma)
-            
-            # Verificar que el usuario existe
-            usuario = self._get_user_by_id(paciente_data.id_usuario)
-            
-            # Verificar que no haya doble reserva para el mismo paciente en la misma fecha
-            existing_booking = self.__carelink_session.query(CronogramaAsistenciaPacientes).join(
-                CronogramaAsistencia
-            ).filter(
-                CronogramaAsistenciaPacientes.id_usuario == paciente_data.id_usuario,
-                CronogramaAsistencia.fecha == cronograma.fecha
-            ).first()
-            
-            if existing_booking:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"El paciente ya tiene una cita agendada para la fecha {cronograma.fecha}"
-                )
-            
-            paciente = CronogramaAsistenciaPacientes(**paciente_data.dict())
-            self.__carelink_session.add(paciente)
-            self.__carelink_session.commit()
-            self.__carelink_session.refresh(paciente)
-            return paciente
-        except SQLAlchemyError as e:
-            self.__carelink_session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al agregar paciente al cronograma: {str(e)}"
-            )
-
-    def update_estado_asistencia(self, id_cronograma_paciente: int, estado_data) -> CronogramaAsistenciaPacientes:
-        """Actualizar el estado de asistencia de un paciente"""
-        try:
-            paciente = self._get_cronograma_paciente_by_id(id_cronograma_paciente)
-            
-            # Actualizar estado
-            paciente.estado_asistencia = estado_data.estado_asistencia
-            if estado_data.observaciones:
-                paciente.observaciones = estado_data.observaciones
-            
-            self.__carelink_session.commit()
-            self.__carelink_session.refresh(paciente)
-            return paciente
-        except SQLAlchemyError as e:
-            self.__carelink_session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al actualizar estado de asistencia: {str(e)}"
-            )
-
-    def reagendar_paciente(self, id_cronograma_paciente: int, estado_data) -> CronogramaAsistenciaPacientes:
-        """Reagendar un paciente a una nueva fecha"""
-        try:
-            paciente = self._get_cronograma_paciente_by_id(id_cronograma_paciente)
-            
-            # Verificar que el paciente esté en estado PENDIENTE
-            if paciente.estado_asistencia != EstadoAsistencia.PENDIENTE:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Solo se pueden reagendar pacientes con estado PENDIENTE"
-                )
-            
-            # Buscar o crear un cronograma para la nueva fecha
-            nuevo_cronograma = self.__carelink_session.query(CronogramaAsistencia).filter(
-                CronogramaAsistencia.fecha == estado_data.nueva_fecha,
-                CronogramaAsistencia.id_profesional == paciente.cronograma.id_profesional
-            ).first()
-            
-            if not nuevo_cronograma:
-                # Crear nuevo cronograma para la fecha
-                nuevo_cronograma = CronogramaAsistencia(
-                    id_profesional=paciente.cronograma.id_profesional,
-                    fecha=estado_data.nueva_fecha,
-                    comentario=f"Reagendamiento desde {paciente.cronograma.fecha}"
-                )
-                self.__carelink_session.add(nuevo_cronograma)
-                self.__carelink_session.flush()
-            
-            # Crear nuevo registro de paciente en el nuevo cronograma
-            nuevo_paciente = CronogramaAsistenciaPacientes(
-                id_cronograma=nuevo_cronograma.id_cronograma,
-                id_usuario=paciente.id_usuario,
-                id_contrato=paciente.id_contrato,
-                estado_asistencia=EstadoAsistencia.PENDIENTE,
-                requiere_transporte=paciente.requiere_transporte,
-                observaciones=f"Reagendado desde {paciente.cronograma.fecha}. {estado_data.observaciones or ''}"
-            )
-            
-            # Marcar el paciente original como reagendado
-            paciente.estado_asistencia = EstadoAsistencia.REAGENDADO
-            paciente.observaciones = f"Reagendado a {estado_data.nueva_fecha}. {estado_data.observaciones or ''}"
-            
-            self.__carelink_session.add(nuevo_paciente)
-            self.__carelink_session.commit()
-            self.__carelink_session.refresh(nuevo_paciente)
-            return nuevo_paciente
-        except SQLAlchemyError as e:
-            self.__carelink_session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al reagendar paciente: {str(e)}"
-            )
-
-    def get_cronogramas_por_rango(self, fecha_inicio: str, fecha_fin: str) -> List[CronogramaAsistencia]:
-        """Obtener cronogramas por rango de fechas"""
-        try:
-            cronogramas = self.__carelink_session.query(CronogramaAsistencia).filter(
-                CronogramaAsistencia.fecha >= fecha_inicio,
-                CronogramaAsistencia.fecha <= fecha_fin
-            ).order_by(CronogramaAsistencia.fecha.asc()).all()
-            
-            return cronogramas
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al obtener cronogramas: {str(e)}"
-            )
-
-    def get_cronogramas_por_profesional(self, id_profesional: int) -> List[CronogramaAsistencia]:
-        """Obtener cronogramas por profesional"""
-        try:
-            # Verificar que el profesional existe
-            self._get_professional_by_id(id_profesional)
-            
-            cronogramas = self.__carelink_session.query(CronogramaAsistencia).filter(
-                CronogramaAsistencia.id_profesional == id_profesional
-            ).order_by(CronogramaAsistencia.fecha.asc()).all()
-            
-            return cronogramas
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al obtener cronogramas del profesional: {str(e)}"
-            )
-
-    def _get_cronograma_by_id(self, id_cronograma: int) -> CronogramaAsistencia:
-        """Obtener cronograma por ID"""
-        cronograma = self.__carelink_session.query(CronogramaAsistencia).filter(
-            CronogramaAsistencia.id_cronograma == id_cronograma
-        ).first()
-        
-        if not cronograma:
-            raise EntityNotFoundError(f"Cronograma con ID {id_cronograma} no encontrado")
-        
-        return cronograma
-
-    def _get_cronograma_paciente_by_id(self, id_cronograma_paciente: int) -> CronogramaAsistenciaPacientes:
-        """Obtener paciente de cronograma por ID"""
-        paciente = self.__carelink_session.query(CronogramaAsistenciaPacientes).filter(
-            CronogramaAsistenciaPacientes.id_cronograma_paciente == id_cronograma_paciente
-        ).first()
-        
-        if not paciente:
-            raise EntityNotFoundError(f"Paciente de cronograma con ID {id_cronograma_paciente} no encontrado")
-        
-        return paciente
-
-    # ==================== MÉTODOS DE TRANSPORTE ====================
-    
-    def create_transporte(self, transporte_data) -> CronogramaTransporte:
-        """Crear un nuevo registro de transporte"""
-        try:
-            # Verificar que el paciente del cronograma existe
-            self._get_cronograma_paciente_by_id(transporte_data.id_cronograma_paciente)
-            
-            transporte = CronogramaTransporte(**transporte_data.dict())
-            self.__carelink_session.add(transporte)
-            self.__carelink_session.commit()
-            self.__carelink_session.refresh(transporte)
-            return transporte
-        except SQLAlchemyError as e:
-            self.__carelink_session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al crear transporte: {str(e)}"
-            )
-
-    def update_transporte(self, id_transporte: int, transporte_data) -> CronogramaTransporte:
-        """Actualizar un registro de transporte"""
-        try:
-            transporte = self._get_transporte_by_id(id_transporte)
-            
-            for key, value in transporte_data.dict(exclude_unset=True).items():
-                if hasattr(transporte, key):
-                    setattr(transporte, key, value)
-            
-            self.__carelink_session.commit()
-            self.__carelink_session.refresh(transporte)
-            return transporte
-        except SQLAlchemyError as e:
-            self.__carelink_session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al actualizar transporte: {str(e)}"
-            )
-
-    def delete_transporte(self, id_transporte: int):
-        """Eliminar un registro de transporte"""
-        try:
-            transporte = self._get_transporte_by_id(id_transporte)
-            self.__carelink_session.delete(transporte)
-            self.__carelink_session.commit()
-        except SQLAlchemyError as e:
-            self.__carelink_session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al eliminar transporte: {str(e)}"
-            )
-
-    def get_ruta_diaria(self, fecha: str) -> List[dict]:
-        """Obtener ruta de transporte para una fecha específica"""
-        try:
-            rutas = self.__carelink_session.query(CronogramaTransporte).join(
-                CronogramaAsistenciaPacientes
-            ).join(
-                CronogramaAsistencia
-            ).join(
-                User
-            ).filter(
-                CronogramaAsistencia.fecha == fecha
-            ).all()
-            
-            return [
-                {
-                    "id_transporte": ruta.id_transporte,
-                    "id_cronograma_paciente": ruta.id_cronograma_paciente,
-                    "nombres": ruta.cronograma_paciente.usuario.nombres,
-                    "apellidos": ruta.cronograma_paciente.usuario.apellidos,
-                    "n_documento": ruta.cronograma_paciente.usuario.n_documento,
-                    "direccion_recogida": ruta.direccion_recogida,
-                    "direccion_entrega": ruta.direccion_entrega,
-                    "hora_recogida": ruta.hora_recogida,
-                    "hora_entrega": ruta.hora_entrega,
-                    "estado": ruta.estado,
-                    "observaciones": ruta.observaciones
-                }
-                for ruta in rutas
-            ]
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al obtener ruta diaria: {str(e)}"
-            )
-
-    def get_transporte_paciente(self, id_cronograma_paciente: int) -> CronogramaTransporte:
-        """Obtener transporte de un paciente específico"""
-        try:
-            # Verificar que el paciente existe
-            self._get_cronograma_paciente_by_id(id_cronograma_paciente)
-            
-            transporte = self.__carelink_session.query(CronogramaTransporte).filter(
-                CronogramaTransporte.id_cronograma_paciente == id_cronograma_paciente
-            ).first()
-            
-            if not transporte:
-                raise EntityNotFoundError(f"No se encontró transporte para el paciente {id_cronograma_paciente}")
-            
-            return transporte
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al obtener transporte del paciente: {str(e)}"
-            )
-
-    def _get_transporte_by_id(self, id_transporte: int) -> CronogramaTransporte:
-        """Obtener transporte por ID"""
-        transporte = self.__carelink_session.query(CronogramaTransporte).filter(
-            CronogramaTransporte.id_transporte == id_transporte
-        ).first()
-        
-        if not transporte:
-            raise EntityNotFoundError(f"Transporte con ID {id_transporte} no encontrado")
-        
-        return transporte
-
-    def create_factura(self, factura_data):
-        # 1. Validar que no exista ya una factura para el contrato
-        detalles = factura_data.get('detalles', [])
-        impuestos = factura_data.get('impuestos', 0)
-        descuentos = factura_data.get('descuentos', 0)
-        # Si no se reciben detalles, generarlos automáticamente
-        if not detalles:
-            servicios = self.__carelink_session.query(ServiciosPorContrato).filter(
-                ServiciosPorContrato.id_contrato == factura_data['id_contrato']
-            ).all()
-            for servicio in servicios:
-                fechas_servicio = self.__carelink_session.query(FechasServicio).filter_by(
-                    id_servicio_contratado=servicio.id_servicio_contratado
-                ).all()
-                cantidad = len(fechas_servicio)
-                tarifa = self.__carelink_session.query(TarifasServicioPorAnio).filter_by(
-                    id_servicio=servicio.id_servicio,
-                    anio=int(str(factura_data['fecha_emision'])[:4])
-                ).first()
-                valor_unitario = tarifa.precio_por_dia if tarifa else 0
-                nombre_servicio = self.__carelink_session.query(Servicios).filter_by(
-                    id_servicio=servicio.id_servicio
-                ).first().nombre
-                detalles.append({
-                    'id_servicio_contratado': servicio.id_servicio_contratado,
-                    'cantidad': cantidad,
-                    'valor_unitario': valor_unitario,
-                    'subtotal_linea': cantidad * valor_unitario,
-                    'impuestos_linea': impuestos,
-                    'descuentos_linea': descuentos,
-                    'descripcion_servicio': nombre_servicio
-                })
-        # 2. Calcular el total de la factura
-        subtotal = sum([d['subtotal_linea'] for d in detalles])
-        impuestos_total = sum([d.get('impuestos_linea', 0) for d in detalles])
-        descuentos_total = sum([d.get('descuentos_linea', 0) for d in detalles])
-        total_factura = subtotal + impuestos_total - descuentos_total
-        # 3. Crear la factura SIN numero_factura
-        factura = Facturas(
-            id_contrato=factura_data['id_contrato'],
-            fecha_emision=factura_data['fecha_emision'],
-            fecha_vencimiento=factura_data.get('fecha_vencimiento'),
-            subtotal=subtotal,
-            impuestos=impuestos_total,
-            descuentos=descuentos_total,
-            total_factura=total_factura,
-            estado_factura='PENDIENTE',
-            observaciones=factura_data.get('observaciones', None)
-        )
-        self.__carelink_session.add(factura)
-        self.__carelink_session.commit()
-        self.__carelink_session.refresh(factura)
-
-        # 4. Generar numero_factura basado en id_factura (relleno de ceros a la izquierda)
-        numero_factura = str(factura.id_factura).zfill(4)
-        factura.numero_factura = numero_factura
-        self.__carelink_session.commit()
-        self.__carelink_session.refresh(factura)
-
-        # 5. Asociar detalles
-        for detalle in detalles:
-            detalle_factura = DetalleFactura(
-                id_factura=factura.id_factura,
-                id_servicio_contratado=detalle['id_servicio_contratado'],
-                cantidad=detalle['cantidad'],
-                valor_unitario=detalle['valor_unitario'],
-                subtotal_linea=detalle.get('subtotal_linea', detalle['cantidad']*detalle['valor_unitario']),
-                impuestos_linea=detalle.get('impuestos_linea', 0),
-                descuentos_linea=detalle.get('descuentos_linea', 0),
-                descripcion_servicio=detalle.get('descripcion_servicio', None)
-            )
-            self.__carelink_session.add(detalle_factura)
-
-        # 6. Asociar pagos
-        for pago in factura_data.get('pagos', []):
-            pago_obj = Pagos(
-                id_factura=factura.id_factura,
-                id_metodo_pago=pago['id_metodo_pago'],
-                id_tipo_pago=pago['id_tipo_pago'],
-                fecha_pago=pago['fecha_pago'],
-                valor=pago['valor']
-            )
-            self.__carelink_session.add(pago_obj)
-
-        self.__carelink_session.commit()
-        self.__carelink_session.refresh(factura)
-        return factura
-
-    def actualizar_estados_contratos_finalizados(self):
+    def get_all_service_rates(self):
         """
-        Actualiza el estado de todos los contratos cuya fecha_fin sea menor a hoy y que estén en estado ACTIVO, cambiándolos a FINALIZADO.
+        Devuelve todas las tarifas de servicios por año.
         """
-        from datetime import date
-        contratos = self.__carelink_session.query(Contratos).filter(
-            Contratos.estado == 'ACTIVO',
-            Contratos.fecha_fin != None,
-            Contratos.fecha_fin < date.today()
-        ).all()
-        for contrato in contratos:
-            contrato.estado = 'FINALIZADO'
-        if contratos:
-            self.__carelink_session.commit()
-
-    def get_all_service_rates(self) -> List[TarifasServicioPorAnio]:
-        """Obtener todas las tarifas de servicios por año"""
-        try:
-            tarifas = self.__carelink_session.query(TarifasServicioPorAnio).join(
-                Servicios, TarifasServicioPorAnio.id_servicio == Servicios.id_servicio
-            ).all()
-            return tarifas
-        except SQLAlchemyError as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al obtener tarifas de servicios: {str(e)}"
-            )
+        return self.__carelink_session.query(TarifasServicioPorAnio).all()
 
     def update_service_rates(self, tarifas_data: List[dict]) -> List[TarifasServicioPorAnio]:
-        """Actualizar múltiples tarifas de servicios por año"""
-        try:
-            updated_tarifas = []
+        """
+        Actualiza múltiples tarifas de servicios por año.
+        
+        Args:
+            tarifas_data: Lista de diccionarios con los datos de las tarifas a actualizar
+                Cada diccionario debe contener: id, id_servicio, anio, precio_por_dia
+        
+        Returns:
+            Lista de objetos TarifasServicioPorAnio actualizados
+        """
+        updated_tarifas = []
+        
+        for tarifa_data in tarifas_data:
+            # Buscar la tarifa existente por ID
+            tarifa = self.__carelink_session.query(TarifasServicioPorAnio).filter(
+                TarifasServicioPorAnio.id == tarifa_data['id']
+            ).first()
             
-            for tarifa_data in tarifas_data:
-                # Buscar la tarifa existente
-                tarifa = self.__carelink_session.query(TarifasServicioPorAnio).filter(
-                    TarifasServicioPorAnio.id == tarifa_data['id']
-                ).first()
-                
-                if not tarifa:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Tarifa con ID {tarifa_data['id']} no encontrada"
-                    )
-                
-                # Verificar que el servicio existe
-                servicio = self.__carelink_session.query(Servicios).filter(
-                    Servicios.id_servicio == tarifa_data['id_servicio']
-                ).first()
-                
-                if not servicio:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Servicio con ID {tarifa_data['id_servicio']} no encontrado"
-                    )
-                
-                # Actualizar los campos
-                tarifa.id_servicio = tarifa_data['id_servicio']
-                tarifa.anio = tarifa_data['anio']
-                tarifa.precio_por_dia = float(tarifa_data['precio_por_dia'])
-                
-                updated_tarifas.append(tarifa)
+            if not tarifa:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Tarifa con ID {tarifa_data['id']} no encontrada"
+                )
             
-            self.__carelink_session.commit()
+            # Actualizar los campos
+            tarifa.id_servicio = tarifa_data['id_servicio']
+            tarifa.anio = tarifa_data['anio']
+            tarifa.precio_por_dia = tarifa_data['precio_por_dia']
             
-            # Refrescar todas las tarifas actualizadas
-            for tarifa in updated_tarifas:
-                self.__carelink_session.refresh(tarifa)
-            
-            return updated_tarifas
-            
-        except SQLAlchemyError as e:
-            self.__carelink_session.rollback()
+            updated_tarifas.append(tarifa)
+        
+        # Confirmar todos los cambios
+        self.__carelink_session.commit()
+        
+        # Refrescar los objetos para obtener los datos actualizados
+        for tarifa in updated_tarifas:
+            self.__carelink_session.refresh(tarifa)
+        
+        return updated_tarifas
+
+    # Métodos para visitas domiciliarias
+    def get_user_home_visits(self, user_id: int) -> List[VisitasDomiciliarias]:
+        """Obtener todas las visitas domiciliarias de un usuario"""
+        return self.__carelink_session.query(VisitasDomiciliarias).filter(
+            VisitasDomiciliarias.id_usuario == user_id
+        ).order_by(VisitasDomiciliarias.fecha_visita.desc()).all()
+
+    def get_home_visit_by_id(self, visita_id: int) -> VisitasDomiciliarias:
+        """Obtener una visita domiciliaria por ID"""
+        visita = self.__carelink_session.query(VisitasDomiciliarias).filter(
+            VisitasDomiciliarias.id_visitadomiciliaria == visita_id
+        ).first()
+        
+        if not visita:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al actualizar tarifas de servicios: {str(e)}"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Visita domiciliaria no encontrada"
             )
+        
+        return visita
 
-    def get_complete_factura_data_for_pdf(self, factura_id: int) -> dict:
-        """
-        Obtiene todos los datos necesarios para generar el PDF de la factura
-        """
-        try:
-            # 1. Obtener la factura
-            factura = self._get_factura_by_id(factura_id)
-            if not factura:
-                return None
-            
-            # 2. Obtener el contrato asociado
-            contrato = self._get_contract_by_id(factura.id_contrato)
-            
-            # 3. Obtener el usuario asociado al contrato
-            usuario = self._get_user_by_id(contrato.id_usuario)
-            
-            # 4. Obtener los servicios incluidos en la factura
-            servicios = self._get_contract_services(factura.id_contrato)
-            
-            # 5. Obtener los pagos asociados a la factura
-            pagos = self._get_pagos_by_factura(factura_id)
-            
-            # 6. Obtener el cronograma de días agendados
-            cronograma = self._get_cronograma_by_contrato_and_user(
-                contrato.id_contrato, 
-                usuario.id_usuario
-            )
-            
-            # 7. Calcular totales
-            total_pagado = sum(pago.valor for pago in pagos)
-            saldo_pendiente = factura.total_factura - total_pagado
-            
-            return {
-                "factura": factura,
-                "contrato": contrato,
-                "usuario": usuario,
-                "servicios": servicios,
-                "pagos": pagos,
-                "cronograma": cronograma,
-                "total_pagado": total_pagado,
-                "saldo_pendiente": saldo_pendiente
-            }
-            
-        except Exception as e:
-            print(f"Error obteniendo datos de factura {factura_id}: {str(e)}")
-            return None
-
-    def generate_factura_pdf(self, factura_data: dict) -> bytes:
-        """
-        Genera el PDF de la factura con toda la información
-        """
-        from reportlab.lib.pagesizes import letter, A4
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import inch
-        from reportlab.lib import colors
-        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-        from io import BytesIO
+    def create_home_visit_manual(self, visita_data: dict, id_profesional_asignado: int = None) -> VisitasDomiciliarias:
+        """Crear una visita domiciliaria manualmente"""
         from datetime import datetime
         
-        # Crear el buffer para el PDF
-        buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4)
-        story = []
+        visita_data["fecha_creacion"] = datetime.utcnow()
+        visita_data["fecha_actualizacion"] = datetime.utcnow()
         
-        # Estilos
-        styles = getSampleStyleSheet()
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=16,
-            spaceAfter=30,
-            alignment=TA_CENTER
-        )
-        subtitle_style = ParagraphStyle(
-            'CustomSubtitle',
-            parent=styles['Heading2'],
-            fontSize=14,
-            spaceAfter=20
-        )
-        normal_style = styles['Normal']
+        visita = VisitasDomiciliarias(**visita_data)
+        self.__carelink_session.add(visita)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(visita)
         
-        # --- CABECERA CON LOGO Y DATOS PRINCIPALES ---
-        import os
-        from reportlab.platypus import Image
-        logo_path = os.path.join(os.path.dirname(__file__), '../static/psicoabuelosPDF.jpeg')
-        if os.path.exists(logo_path):
-            img = Image(logo_path, width=180, height=60)
-            img.hAlign = 'LEFT'
-            story.append(img)
-            story.append(Spacer(1, 10))
+        # Si se proporciona un profesional asignado, crear la relación
+        if id_profesional_asignado:
+            asignacion = VisitasDomiciliariasPorProfesional(
+                id_visitadomiciliaria=visita.id_visitadomiciliaria,
+                id_profesional=id_profesional_asignado,
+                estado_asignacion="ACTIVA",
+                fecha_asignacion=datetime.utcnow()
+            )
+            self.__carelink_session.add(asignacion)
+            self.__carelink_session.commit()
         
-        # Título con número de factura y contrato
-        story.append(Paragraph(f"<b>Factura N° {factura_data.get('numero_factura', '')}</b>   |   <b>Contrato N° {factura_data.get('id_contrato', '')}</b>", ParagraphStyle('Title', parent=title_style, fontSize=18, textColor=colors.HexColor('#4B0082'))))
-        story.append(Spacer(1, 20))
+        return visita
 
-        # Datos de la factura
-        factura = factura_data["factura"]
-        story.append(Paragraph("INFORMACIÓN DE LA FACTURA", subtitle_style))
+    def update_home_visit(self, visita_id: int, update_data: dict) -> VisitasDomiciliarias:
+        """Actualizar una visita domiciliaria"""
+        from datetime import datetime
         
-        factura_info = [
-            ["Número de Factura:", factura.numero_factura or f"F-{factura.id_factura}"],
-            ["Fecha de Emisión:", factura.fecha_emision.strftime("%d/%m/%Y")],
-            ["Fecha de Vencimiento:", factura.fecha_vencimiento.strftime("%d/%m/%Y") if factura.fecha_vencimiento else "N/A"],
-            ["Estado:", factura.estado_factura or "PENDIENTE"],
-            ["Subtotal:", f"$ {factura.subtotal:,.0f}"],
-            ["Impuestos:", f"$ {factura.impuestos:,.0f}"],
-            ["Descuentos:", f"$ {factura.descuentos:,.0f}"],
-            ["Total:", f"$ {factura.total_factura:,.0f}"],
-        ]
+        visita = self.get_home_visit_by_id(visita_id)
         
-        factura_table = Table(factura_info, colWidths=[2*inch, 3*inch])
-        factura_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ]))
-        story.append(factura_table)
-        story.append(Spacer(1, 20))
+        # Extraer id_profesional_asignado si existe
+        id_profesional_asignado = update_data.pop("id_profesional_asignado", None)
         
-        # Datos del usuario
-        usuario = factura_data["usuario"]
-        story.append(Paragraph("DATOS DEL CLIENTE", subtitle_style))
+        # Verificar si se está cambiando la fecha o hora de visita
+        fecha_original = visita.fecha_visita
+        hora_original = visita.hora_visita
+        nueva_fecha = update_data.get("fecha_visita")
+        nueva_hora = update_data.get("hora_visita")
         
-        usuario_info = [
-            ["Nombre Completo:", f"{usuario.nombres} {usuario.apellidos}"],
-            ["Documento:", usuario.n_documento or "N/A"],
-            ["Dirección:", usuario.direccion or "N/A"],
-            ["Teléfono:", usuario.telefono or "N/A"],
-            ["Email:", usuario.email or "N/A"],
-        ]
+        # Si se está cambiando la fecha o la hora, actualizar el estado a REPROGRAMADA
+        # (sin importar el estado actual: PENDIENTE, REALIZADA, etc.)
+        if (nueva_fecha and nueva_fecha != fecha_original) or (nueva_hora and nueva_hora != hora_original):
+            update_data["estado_visita"] = "REPROGRAMADA"
         
-        usuario_table = Table(usuario_info, colWidths=[2*inch, 3*inch])
-        usuario_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ]))
-        story.append(usuario_table)
-        story.append(Spacer(1, 20))
+        update_data["fecha_actualizacion"] = datetime.utcnow()
         
-        # Datos del contrato
-        contrato = factura_data["contrato"]
-        story.append(Paragraph("DATOS DEL CONTRATO", subtitle_style))
+        for key, value in update_data.items():
+            if hasattr(visita, key):
+                setattr(visita, key, value)
         
-        contrato_info = [
-            ["ID Contrato:", str(contrato.id_contrato)],
-            ["Tipo de Contrato:", contrato.tipo_contrato],
-            ["Fecha de Inicio:", contrato.fecha_inicio.strftime("%d/%m/%Y")],
-            ["Fecha de Fin:", contrato.fecha_fin.strftime("%d/%m/%Y")],
-        ]
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(visita)
         
-        contrato_table = Table(contrato_info, colWidths=[2*inch, 3*inch])
-        contrato_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ]))
-        story.append(contrato_table)
-        story.append(Spacer(1, 20))
-        
-        # Servicios incluidos
-        servicios = factura_data["servicios"]
-        story.append(Paragraph("SERVICIOS INCLUIDOS", subtitle_style))
-        
-        if servicios:
-            servicios_data = [["Servicio", "Descripción", "Precio/Día", "Días", "Total"]]
-            for servicio in servicios:
-                # Obtener las fechas de servicio usando el método correcto
-                fechas_servicio = self._get_service_dates(servicio)
-                dias_servicio = len(fechas_servicio)
-                total_servicio = float(servicio.precio_por_dia) * dias_servicio
-                servicios_data.append([
-                    servicio.servicio.nombre if hasattr(servicio, 'servicio') and servicio.servicio else f"Servicio #{servicio.id_servicio_contratado}",
-                    servicio.descripcion,
-                    f"$ {servicio.precio_por_dia:,.0f}",
-                    str(dias_servicio),
-                    f"$ {total_servicio:,.0f}"
-                ])
+        # Manejar la asignación del profesional
+        if id_profesional_asignado is not None:
+            # Primero, eliminar asignaciones existentes para esta visita
+            self.__carelink_session.query(VisitasDomiciliariasPorProfesional).filter(
+                VisitasDomiciliariasPorProfesional.id_visitadomiciliaria == visita_id
+            ).delete()
             
-            servicios_table = Table(servicios_data, colWidths=[1*inch, 2*inch, 1*inch, 0.5*inch, 1*inch])
-            servicios_table.setStyle(TableStyle([
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ]))
-            story.append(servicios_table)
-        else:
-            story.append(Paragraph("No hay servicios registrados", normal_style))
+            # Crear nueva asignación
+            asignacion = VisitasDomiciliariasPorProfesional(
+                id_visitadomiciliaria=visita_id,
+                id_profesional=id_profesional_asignado,
+                estado_asignacion="ACTIVA",
+                fecha_asignacion=datetime.utcnow()
+            )
+            self.__carelink_session.add(asignacion)
+            self.__carelink_session.commit()
         
-        story.append(Spacer(1, 20))
+        return visita
+
+    def delete_home_visit(self, visita_id: int):
+        """Eliminar una visita domiciliaria"""
+        visita = self.get_home_visit_by_id(visita_id)
         
-        # Pagos realizados
-        pagos = factura_data["pagos"]
-        story.append(Paragraph("PAGOS REALIZADOS", subtitle_style))
+        self.__carelink_session.delete(visita)
+        self.__carelink_session.commit()
+
+    def get_home_visits_with_professionals(self, user_id: int) -> List[dict]:
+        """Obtener visitas domiciliarias con información del profesional asignado"""
+        from sqlalchemy.orm import joinedload
+        from datetime import datetime
+        from app.models.user import User
         
-        if pagos:
-            pagos_data = [["Fecha", "Método", "Tipo", "Valor"]]
-            for pago in pagos:
-                metodo_pago = self._get_payment_method_name(pago.id_metodo_pago)
-                tipo_pago = self._get_payment_type_name(pago.id_tipo_pago)
-                pagos_data.append([
-                    pago.fecha_pago.strftime("%d/%m/%Y"),
-                    metodo_pago,
-                    tipo_pago,
-                    f"$ {pago.valor:,.0f}"
-                ])
+        # Primero, actualizar automáticamente el estado de las visitas vencidas
+        self._update_expired_visits_status()
+        
+        visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
+            joinedload(VisitasDomiciliarias.usuario)
+        ).filter(
+            VisitasDomiciliarias.id_usuario == user_id
+        ).order_by(VisitasDomiciliarias.fecha_visita.desc()).all()
+        
+        result = []
+        for visita in visitas:
+            # Intentar obtener el usuario directamente si la relación no funciona
+            paciente_nombre = "Sin paciente"
+            if visita.usuario:
+                paciente_nombre = f"{visita.usuario.nombres} {visita.usuario.apellidos}"
+            elif visita.id_usuario:
+                # Buscar el usuario directamente en la base de datos
+                usuario_directo = self.__carelink_session.query(User).filter(User.id_usuario == visita.id_usuario).first()
+                if usuario_directo:
+                    paciente_nombre = f"{usuario_directo.nombres} {usuario_directo.apellidos}"
             
-            pagos_table = Table(pagos_data, colWidths=[1.5*inch, 1.5*inch, 1*inch, 1*inch])
-            pagos_table.setStyle(TableStyle([
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ]))
-            story.append(pagos_table)
-        else:
-            story.append(Paragraph("No hay pagos registrados", normal_style))
-        
-        story.append(Spacer(1, 20))
-        
-        # --- CRONOGRAMA SIMPLIFICADO ---
-        cronograma = factura_data.get("cronograma", [])
-        story.append(Paragraph("CRONOGRAMA DE SERVICIOS", subtitle_style))
-        if cronograma:
-            cronograma_data = [["Fecha", "Transporte"]]
-            for item in cronograma:
-                # Corregir acceso: usar atributos en vez de .get()
-                fecha = getattr(item, 'fecha', None) if not isinstance(item, dict) else item.get('fecha')
-                transporte = getattr(item, 'transporte', None) if not isinstance(item, dict) else item.get('transporte')
-                if transporte is True or (isinstance(transporte, str) and transporte.lower().startswith("sí")):
-                    transporte_str = "Sí - PENDIENTE"
-                else:
-                    transporte_str = "No"
-                cronograma_data.append([
-                    fecha,
-                    transporte_str
-                ])
-            cronograma_table = Table(cronograma_data, colWidths=[1.5*inch, 1.5*inch])
-            cronograma_table.setStyle(TableStyle([
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ]))
-            story.append(cronograma_table)
-        else:
-            story.append(Paragraph("No hay cronograma registrado", normal_style))
-        story.append(Spacer(1, 20))
-        
-        # Resumen de pagos
-        story.append(Paragraph("RESUMEN DE PAGOS", subtitle_style))
-        
-        total_pagado = factura_data["total_pagado"]
-        saldo_pendiente = factura_data["saldo_pendiente"]
-        
-        resumen_data = [
-            ["Total Factura:", f"$ {factura.total_factura:,.0f}"],
-            ["Total Pagado:", f"$ {total_pagado:,.0f}"],
-            ["Saldo Pendiente:", f"$ {saldo_pendiente:,.0f}"],
-        ]
-        
-        resumen_table = Table(resumen_data, colWidths=[2*inch, 2*inch])
-        resumen_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-        ]))
-        story.append(resumen_table)
-        
-        # Observaciones
-        if factura.observaciones:
-            story.append(Spacer(1, 20))
-            story.append(Paragraph("OBSERVACIONES", subtitle_style))
-            story.append(Paragraph(factura.observaciones, normal_style))
-        
-        # Pie de página
-        story.append(Spacer(1, 30))
-        story.append(Paragraph(
-            f"Documento generado el {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
-            ParagraphStyle('Footer', parent=normal_style, fontSize=8, alignment=TA_CENTER)
-        ))
-        
-        # Generar el PDF
-        doc.build(story)
-        pdf_bytes = buffer.getvalue()
-        buffer.close()
-        
-        return pdf_bytes
-
-    def _get_payment_method_name(self, id_metodo_pago: int) -> str:
-        """Obtiene el nombre del método de pago"""
-        try:
-            metodo = self.__carelink_session.query(MetodoPago).filter(
-                MetodoPago.id_metodo_pago == id_metodo_pago
+            visita_dict = {
+                "id_visitadomiciliaria": visita.id_visitadomiciliaria,
+                "id_contrato": visita.id_contrato,
+                "id_usuario": visita.id_usuario,
+                "fecha_visita": visita.fecha_visita,
+                "hora_visita": visita.hora_visita,
+                "estado_visita": visita.estado_visita,
+                "direccion_visita": visita.direccion_visita,
+                "telefono_visita": visita.telefono_visita,
+                "valor_dia": visita.valor_dia,
+                "observaciones": visita.observaciones,
+                "fecha_creacion": visita.fecha_creacion,
+                "fecha_actualizacion": visita.fecha_actualizacion,
+                "profesional_asignado": None,
+                "paciente_nombre": paciente_nombre
+            }
+            
+            # Buscar si hay un profesional asignado
+            asignacion = self.__carelink_session.query(VisitasDomiciliariasPorProfesional).filter(
+                VisitasDomiciliariasPorProfesional.id_visitadomiciliaria == visita.id_visitadomiciliaria,
+                VisitasDomiciliariasPorProfesional.estado_asignacion == "ACTIVA"
             ).first()
-            return metodo.nombre if metodo else f"Método #{id_metodo_pago}"
-        except:
-            return f"Método #{id_metodo_pago}"
+            
+            if asignacion:
+                profesional = self.__carelink_session.query(Profesionales).filter(
+                    Profesionales.id_profesional == asignacion.id_profesional
+                ).first()
+                if profesional:
+                    visita_dict["profesional_asignado"] = f"{profesional.nombres} {profesional.apellidos}"
+            
+            result.append(visita_dict)
+        
+        return result
 
-    def _get_payment_type_name(self, id_tipo_pago: int) -> str:
-        """Obtiene el nombre del tipo de pago"""
-        try:
-            tipo = self.__carelink_session.query(TipoPago).filter(
-                TipoPago.id_tipo_pago == id_tipo_pago
+    def get_all_home_visits_with_professionals(self) -> List[dict]:
+        """Obtener todas las visitas domiciliarias con información del profesional asignado"""
+        from sqlalchemy.orm import joinedload
+        
+        # Primero, actualizar automáticamente el estado de las visitas vencidas
+        self._update_expired_visits_status()
+        
+        visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
+            joinedload(VisitasDomiciliarias.usuario)
+        ).order_by(VisitasDomiciliarias.fecha_visita.desc()).all()
+        
+        result = []
+        for visita in visitas:
+            # Intentar obtener el usuario directamente si la relación no funciona
+            paciente_nombre = "Sin paciente"
+            if visita.usuario:
+                paciente_nombre = f"{visita.usuario.nombres} {visita.usuario.apellidos}"
+            elif visita.id_usuario:
+                # Buscar el usuario directamente en la base de datos
+                usuario_directo = self.__carelink_session.query(User).filter(User.id_usuario == visita.id_usuario).first()
+                if usuario_directo:
+                    paciente_nombre = f"{usuario_directo.nombres} {usuario_directo.apellidos}"
+            
+            visita_dict = {
+                "id_visitadomiciliaria": visita.id_visitadomiciliaria,
+                "id_contrato": visita.id_contrato,
+                "id_usuario": visita.id_usuario,
+                "fecha_visita": visita.fecha_visita,
+                "hora_visita": visita.hora_visita,
+                "estado_visita": visita.estado_visita,
+                "direccion_visita": visita.direccion_visita,
+                "telefono_visita": visita.telefono_visita,
+                "valor_dia": visita.valor_dia,
+                "observaciones": visita.observaciones,
+                "fecha_creacion": visita.fecha_creacion,
+                "fecha_actualizacion": visita.fecha_actualizacion,
+                "profesional_asignado": None,
+                "paciente_nombre": paciente_nombre
+            }
+            
+            # Buscar si hay un profesional asignado
+            asignacion = self.__carelink_session.query(VisitasDomiciliariasPorProfesional).filter(
+                VisitasDomiciliariasPorProfesional.id_visitadomiciliaria == visita.id_visitadomiciliaria,
+                VisitasDomiciliariasPorProfesional.estado_asignacion == "ACTIVA"
             ).first()
-            return tipo.nombre if tipo else f"Tipo #{id_tipo_pago}"
-        except:
-            return f"Tipo #{id_tipo_pago}"
+            
+            if asignacion:
+                profesional = self.__carelink_session.query(Profesionales).filter(
+                    Profesionales.id_profesional == asignacion.id_profesional
+                ).first()
+                if profesional:
+                    visita_dict["profesional_asignado"] = f"{profesional.nombres} {profesional.apellidos} ({profesional.especialidad})"
+            
+            result.append(visita_dict)
+        
+        return result
 
-    def _get_factura_by_id(self, factura_id: int):
-        """Obtiene una factura por ID"""
-        try:
-            return self.__carelink_session.query(Facturas).filter(
-                Facturas.id_factura == factura_id
+    def _update_expired_visits_status(self):
+        """Actualizar automáticamente el estado de las visitas vencidas a REALIZADA"""
+        from datetime import datetime
+        
+        now = datetime.now()
+        
+        # Buscar visitas que están pendientes (las reprogramadas se manejan por separado)
+        pending_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+            VisitasDomiciliarias.estado_visita == 'PENDIENTE'
+        ).all()
+        
+        expired_visits = []
+        
+        for visita in pending_visits:
+            # Solo procesar visitas que tengan fecha y hora programadas
+            if visita.fecha_visita and visita.hora_visita:
+                # Crear datetime combinando fecha y hora de la visita
+                visita_datetime = datetime.combine(visita.fecha_visita, visita.hora_visita)
+                
+                
+                # Si la fecha y hora de la visita ya pasó, marcarla como vencida
+                if visita_datetime < now:  # Cambiado de <= a < para ser más preciso
+                    visita.estado_visita = "REALIZADA"
+                    visita.fecha_actualizacion = now
+                    expired_visits.append(visita)
+   
+        if expired_visits:
+            self.__carelink_session.commit()
+        
+        # Procesar visitas reprogramadas por separado
+        self._update_reprogrammed_visits_status()
+
+    def _update_reprogrammed_visits_status(self):
+        """Actualizar automáticamente el estado de las visitas reprogramadas vencidas a REALIZADA"""
+        from datetime import datetime
+        
+        now = datetime.now()
+        
+        # Buscar visitas reprogramadas
+        reprogrammed_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+            VisitasDomiciliarias.estado_visita == 'REPROGRAMADA'
+        ).all()
+        
+        expired_reprogrammed_visits = []
+        
+        for visita in reprogrammed_visits:
+            # Solo procesar visitas que tengan fecha y hora programadas
+            if visita.fecha_visita and visita.hora_visita:
+                # Crear datetime combinando fecha y hora de la visita
+                visita_datetime = datetime.combine(visita.fecha_visita, visita.hora_visita)
+                
+                # Si la fecha y hora de la visita reprogramada ya pasó, marcarla como vencida
+                if visita_datetime < now:  # Cambiado de <= a < para ser más preciso
+                    visita.estado_visita = "REALIZADA"
+                    visita.fecha_actualizacion = now
+                    expired_reprogrammed_visits.append(visita)
+        
+        if expired_reprogrammed_visits:
+            self.__carelink_session.commit()
+
+    def get_scheduled_home_visits_with_professionals(self) -> List[dict]:
+        """Obtener solo las visitas domiciliarias programadas (futuras) con información del profesional asignado"""
+        from sqlalchemy.orm import joinedload
+        from datetime import date
+        
+        # Primero, actualizar automáticamente el estado de las visitas vencidas
+        self._update_expired_visits_status()
+        
+        # Obtener solo visitas con fecha y hora futuras
+        from datetime import datetime
+        
+        now = datetime.now()
+        
+        visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
+            joinedload(VisitasDomiciliarias.usuario)
+        ).order_by(VisitasDomiciliarias.fecha_visita.asc()).all()
+        
+        # Filtrar visitas que realmente están en el futuro (considerando fecha y hora)
+        result_visitas = []
+        for visita in visitas:
+            if visita.fecha_visita and visita.hora_visita:
+                visita_datetime = datetime.combine(visita.fecha_visita, visita.hora_visita)
+                if visita_datetime > now:
+                    result_visitas.append(visita)
+            else:
+                # Si no tiene fecha/hora programada, incluirla (pendiente de programación)
+                result_visitas.append(visita)
+        
+        result = []
+        for visita in result_visitas:
+            visita_dict = {
+                "id_visitadomiciliaria": visita.id_visitadomiciliaria,
+                "id_contrato": visita.id_contrato,
+                "id_usuario": visita.id_usuario,
+                "fecha_visita": visita.fecha_visita,
+                "hora_visita": visita.hora_visita,
+                "estado_visita": visita.estado_visita,
+                "direccion_visita": visita.direccion_visita,
+                "telefono_visita": visita.telefono_visita,
+                "valor_dia": visita.valor_dia,
+                "observaciones": visita.observaciones,
+                "fecha_creacion": visita.fecha_creacion,
+                "fecha_actualizacion": visita.fecha_actualizacion,
+                "profesional_asignado": None,
+                "paciente_nombre": f"{visita.usuario.nombres} {visita.usuario.apellidos}" if visita.usuario else "Sin paciente"
+            }
+            
+            # Buscar si hay un profesional asignado
+            asignacion = self.__carelink_session.query(VisitasDomiciliariasPorProfesional).filter(
+                VisitasDomiciliariasPorProfesional.id_visitadomiciliaria == visita.id_visitadomiciliaria,
+                VisitasDomiciliariasPorProfesional.estado_asignacion == "ACTIVA"
             ).first()
-        except:
-            return None
+            
+            if asignacion:
+                profesional = self.__carelink_session.query(Profesionales).filter(
+                    Profesionales.id_profesional == asignacion.id_profesional
+                ).first()
+                if profesional:
+                    visita_dict["profesional_asignado"] = f"{profesional.nombres} {profesional.apellidos} ({profesional.especialidad})"
+            
+            result.append(visita_dict)
+        
+        return result
 
-    def _get_pagos_by_factura(self, factura_id: int):
-        """Obtiene los pagos de una factura"""
+    def get_user_flow_data(self):
+        """
+        Obtiene los datos del flujo de usuarios para el dashboard.
+        Incluye estadísticas y lista de usuarios con visitas domiciliarias = false.
+        """
+        from app.dto.v1.response.user_flow import UserFlowResponseDTO, UserFlowStatsDTO, UserFlowItemDTO
+        from datetime import datetime, date
+        from sqlalchemy import and_, extract, func
+        from app.models.user import User
+        from app.models.contracts import Contratos
+        from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes, EstadoAsistencia
+        
         try:
-            return self.__carelink_session.query(Pagos).filter(
-                Pagos.id_factura == factura_id
+            # Obtener usuarios con visitas domiciliarias = false
+            users_query = self.__carelink_session.query(User).filter(
+                and_(
+                    User.visitas_domiciliarias == False,
+                    User.is_deleted == False
+                )
             ).all()
-        except:
-            return []
-
-    def _get_cronograma_by_contrato_and_user(self, contrato_id: int, usuario_id: int):
-        """Obtiene el cronograma de un contrato y usuario específicos"""
-        try:
-            from app.models.attendance_schedule import CronogramaAsistencia
-            return self.__carelink_session.query(CronogramaAsistencia).join(
-                CronogramaAsistencia.pacientes
+            
+            # Obtener contratos activos para estos usuarios
+            user_contracts = {}
+            for user in users_query:
+                contract = self.__carelink_session.query(Contratos).filter(
+                    and_(
+                        Contratos.id_usuario == user.id_usuario,
+                        Contratos.estado == "ACTIVO"
+                    )
+                ).first()
+                if contract:
+                    user_contracts[user.id_usuario] = contract.id_contrato
+            
+            # Obtener visitas del mes actual para cada usuario
+            current_month = datetime.now().month
+            current_year = datetime.now().year
+            
+            user_visits = {}
+            for user in users_query:
+                if user.id_usuario in user_contracts:
+                    contract_id = user_contracts[user.id_usuario]
+                    
+                    # Contar visitas programadas para el mes actual
+                    visits_count = self.__carelink_session.query(CronogramaAsistenciaPacientes).join(
+                        CronogramaAsistencia
+                    ).filter(
+                        and_(
+                            CronogramaAsistenciaPacientes.id_contrato == contract_id,
+                            CronogramaAsistenciaPacientes.id_usuario == user.id_usuario,
+                            extract('month', CronogramaAsistencia.fecha) == current_month,
+                            extract('year', CronogramaAsistencia.fecha) == current_year
+                        )
+                    ).count()
+                    
+                    user_visits[user.id_usuario] = visits_count
+            
+            # Crear lista de usuarios con sus datos
+            users_list = []
+            for user in users_query:
+                if user.id_usuario in user_contracts:
+                    users_list.append(UserFlowItemDTO(
+                        id_usuario=user.id_usuario,
+                        nombre_completo=f"{user.nombres} {user.apellidos}",
+                        id_contrato=user_contracts[user.id_usuario],
+                        visitas_mes=user_visits.get(user.id_usuario, 0)
+                    ))
+            
+            # Calcular estadísticas
+            total_users_month = len(users_list)
+            
+            # Calcular tasa de asistencia (simplificado - se puede mejorar)
+            total_visits_scheduled = sum(user_visits.values())
+            total_visits_attended = self.__carelink_session.query(CronogramaAsistenciaPacientes).join(
+                CronogramaAsistencia
             ).filter(
-                CronogramaAsistenciaPacientes.id_contrato == contrato_id,
-                CronogramaAsistenciaPacientes.id_usuario == usuario_id
+                and_(
+                    CronogramaAsistenciaPacientes.estado_asistencia == EstadoAsistencia.ASISTIO,
+                    extract('month', CronogramaAsistencia.fecha) == current_month,
+                    extract('year', CronogramaAsistencia.fecha) == current_year
+                )
+            ).count()
+            
+            tasa_asistencia = (total_visits_attended / total_visits_scheduled * 100) if total_visits_scheduled > 0 else 0
+            
+            # Calcular tendencias (simplificado - se puede mejorar)
+            # Para este ejemplo, usamos valores fijos, pero se pueden calcular comparando con meses anteriores
+            usuarios_mes_trend = 17.1  # Porcentaje de crecimiento
+            tasa_asistencia_trend = 26.2  # Porcentaje de crecimiento
+            
+            stats = UserFlowStatsDTO(
+                usuarios_mes=total_users_month,
+                tasa_asistencia=round(tasa_asistencia, 1),
+                usuarios_mes_trend=usuarios_mes_trend,
+                tasa_asistencia_trend=tasa_asistencia_trend
+            )
+            
+            return UserFlowResponseDTO(
+                stats=stats,
+                users=users_list
+            )
+            
+        except Exception as e:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al obtener datos del flujo de usuarios: {str(e)}"
+            )
+
+    def get_quarterly_visits_data(self):
+        """
+        Obtiene los datos de visitas del trimestre para el dashboard.
+        Incluye estadísticas trimestrales y datos mensuales para el gráfico.
+        """
+        from app.dto.v1.response.quarterly_visits import QuarterlyVisitsResponseDTO, MonthlyVisitData
+        from datetime import datetime, date, timedelta
+        from sqlalchemy import and_, extract, func
+        from app.models.home_visit import VisitasDomiciliarias
+        
+        try:
+            # Obtener datos de la tabla
+            total_visits = self.__carelink_session.query(VisitasDomiciliarias).count()
+            
+            # Calcular el trimestre actual
+            now = datetime.now()
+            current_month = now.month
+            current_year = now.year
+            
+            # Determinar el trimestre actual (Q1: Jan-Mar, Q2: Apr-Jun, Q3: Jul-Sep, Q4: Oct-Dec)
+            if current_month <= 3:
+                quarter_start_month = 1
+                quarter_end_month = 3
+                quarter_name = "Q1"
+            elif current_month <= 6:
+                quarter_start_month = 4
+                quarter_end_month = 6
+                quarter_name = "Q2"
+            elif current_month <= 9:
+                quarter_start_month = 7
+                quarter_end_month = 9
+                quarter_name = "Q3"
+            else:
+                quarter_start_month = 10
+                quarter_end_month = 12
+                quarter_name = "Q4"
+            
+            # Obtener visitas del trimestre actual
+            quarterly_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                and_(
+                    extract('year', VisitasDomiciliarias.fecha_visita) == current_year,
+                    extract('month', VisitasDomiciliarias.fecha_visita) >= quarter_start_month,
+                    extract('month', VisitasDomiciliarias.fecha_visita) <= quarter_end_month,
+                    VisitasDomiciliarias.fecha_visita.isnot(None)
+                )
             ).all()
-        except:
-            return []
+            
+            total_quarterly_visits = len(quarterly_visits)
+            
+            # Calcular promedio de visitas por día del trimestre
+            if total_quarterly_visits > 0:
+                # Contar días del trimestre
+                quarter_start = date(current_year, quarter_start_month, 1)
+                if quarter_end_month == 12:
+                    quarter_end = date(current_year + 1, 1, 1) - timedelta(days=1)
+                else:
+                    quarter_end = date(current_year, quarter_end_month + 1, 1) - timedelta(days=1)
+                
+                days_in_quarter = (quarter_end - quarter_start).days + 1
+                average_daily_visits = round(total_quarterly_visits / days_in_quarter, 1)
+            else:
+                average_daily_visits = 0.0
+            
+            # Obtener datos mensuales para el gráfico (últimos 6 meses)
+            monthly_data = []
+            month_names = [
+                "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+                "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+            ]
+            
+            for i in range(6):
+                # Calcular mes y año
+                target_month = current_month - i
+                target_year = current_year
+                
+                if target_month <= 0:
+                    target_month += 12
+                    target_year -= 1
+                
+                # Contar visitas del mes
+                month_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                    and_(
+                        extract('year', VisitasDomiciliarias.fecha_visita) == target_year,
+                        extract('month', VisitasDomiciliarias.fecha_visita) == target_month
+                    )
+                ).count()
+                
+                monthly_data.append(MonthlyVisitData(
+                    month=month_names[target_month - 1],
+                    visits=month_visits
+                ))
+
+            
+            # Invertir la lista para mostrar en orden cronológico
+            monthly_data.reverse()
+            
+            # Obtener visitas del mes actual y anterior para calcular crecimiento
+            current_month_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                and_(
+                    extract('year', VisitasDomiciliarias.fecha_visita) == current_year,
+                    extract('month', VisitasDomiciliarias.fecha_visita) == current_month,
+                    VisitasDomiciliarias.fecha_visita.isnot(None)
+                )
+            ).count()
+            
+            # Calcular mes anterior
+            previous_month = current_month - 1
+            previous_year = current_year
+            if previous_month <= 0:
+                previous_month = 12
+                previous_year -= 1
+            
+            previous_month_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                and_(
+                    extract('year', VisitasDomiciliarias.fecha_visita) == previous_year,
+                    extract('month', VisitasDomiciliarias.fecha_visita) == previous_month,
+                    VisitasDomiciliarias.fecha_visita.isnot(None)
+                )
+            ).count()
+            
+            # Calcular porcentaje de crecimiento
+            if previous_month_visits > 0:
+                growth_percentage = round(((current_month_visits - previous_month_visits) / previous_month_visits) * 100, 1)
+            else:
+                growth_percentage = 0.0 if current_month_visits == 0 else 100.0
+            
+            return QuarterlyVisitsResponseDTO(
+                total_quarterly_visits=total_quarterly_visits,
+                average_daily_visits=average_daily_visits,
+                monthly_data=monthly_data,
+                current_month_visits=current_month_visits,
+                previous_month_visits=previous_month_visits,
+                growth_percentage=growth_percentage
+            )
+            
+        except Exception as e:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al obtener datos de visitas trimestrales: {str(e)}"
+            )
+
+    def get_monthly_payments_data(self):
+        """
+        Obtiene los datos de pagos mensuales para el dashboard.
+        Incluye estadísticas de pagos y metas basadas en el mes anterior.
+        """
+        from app.dto.v1.response.monthly_payments import MonthlyPaymentsResponseDTO, MonthlyPaymentData
+        from datetime import datetime, date, timedelta
+        from sqlalchemy import and_, extract, func
+        from app.models.contracts import Pagos, Facturas
+        
+        try:
+            # Calcular el mes actual
+            now = datetime.now()
+            current_month = now.month
+            current_year = now.year
+            
+            # Obtener datos mensuales para el gráfico (últimos 6 meses)
+            monthly_data = []
+            month_names = [
+                "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+                "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+            ]
+            
+            previous_month_payments = 0
+            current_month_payments = 0
+            total_payments = 0
+            
+            for i in range(6):
+                # Calcular mes y año
+                target_month = current_month - i
+                target_year = current_year
+                
+                if target_month <= 0:
+                    target_month += 12
+                    target_year -= 1
+                
+                # Obtener pagos del mes (suma de todos los pagos del mes)
+                month_payments = self.__carelink_session.query(func.sum(Pagos.valor)).filter(
+                    and_(
+                        extract('year', Pagos.fecha_pago) == target_year,
+                        extract('month', Pagos.fecha_pago) == target_month,
+                        Pagos.valor.isnot(None)
+                    )
+                ).scalar() or 0.0
+                
+                # Convertir a float si es Decimal
+                month_payments = float(month_payments)
+                
+                # Calcular meta del mes (el valor del mes anterior si es superior, sino mantener el actual)
+                if i == 0:  # Mes actual
+                    goal = previous_month_payments if previous_month_payments > month_payments else month_payments
+                    current_month_payments = month_payments
+                else:
+                    # Para meses anteriores, la meta es el valor del mes anterior
+                    goal = previous_month_payments if previous_month_payments > 0 else month_payments
+                
+                # Calcular porcentaje de cumplimiento
+                achievement_percentage = (month_payments / goal * 100) if goal > 0 else 0
+                
+                monthly_data.append(MonthlyPaymentData(
+                    month=month_names[target_month - 1],
+                    payments=month_payments,
+                    goal=goal,
+                    achievement_percentage=round(achievement_percentage, 1)
+                ))
+                
+                # Actualizar para el siguiente mes
+                previous_month_payments = month_payments
+                total_payments += month_payments
+            
+            # Invertir la lista para mostrar en orden cronológico
+            monthly_data.reverse()
+            
+            # Calcular porcentaje de cumplimiento general (promedio de los últimos 6 meses)
+            overall_goal_achievement = sum(item.achievement_percentage for item in monthly_data) / len(monthly_data) if monthly_data else 0
+            
+            return MonthlyPaymentsResponseDTO(
+                total_payments=total_payments,
+                current_month_payments=current_month_payments,
+                previous_month_payments=previous_month_payments,
+                monthly_data=monthly_data,
+                overall_goal_achievement=round(overall_goal_achievement, 1)
+            )
+            
+        except Exception as e:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al obtener datos de pagos mensuales: {str(e)}"
+            )
+
+    def get_operational_efficiency_data(self):
+        """
+        Obtiene los datos de eficiencia operativa para el dashboard.
+        Combina múltiples métricas: asistencia, visitas domiciliarias, contratos y facturación.
+        """
+        from app.dto.v1.response.operational_efficiency import OperationalEfficiencyResponseDTO, MonthlyEfficiencyData
+        from datetime import datetime, date, timedelta
+        from sqlalchemy import and_, extract, func
+        from app.models.contracts import Contratos, Facturas, Pagos
+        from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes, EstadoAsistencia
+        from app.models.home_visit import VisitasDomiciliarias
+        
+        try:
+            # Calcular el mes actual
+            now = datetime.now()
+            current_month = now.month
+            current_year = now.year
+            
+            # Obtener datos mensuales para el gráfico (últimos 6 meses)
+            monthly_data = []
+            month_names = [
+                "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+                "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+            ]
+            
+            previous_month_efficiency = 0
+            current_month_efficiency = 0
+            
+            for i in range(6):
+                # Calcular mes y año
+                target_month = current_month - i
+                target_year = current_year
+                
+                if target_month <= 0:
+                    target_month += 12
+                    target_year -= 1
+                
+                # 1. Calcular tasa de asistencia del mes
+                total_scheduled = self.__carelink_session.query(CronogramaAsistenciaPacientes).join(
+                    CronogramaAsistencia
+                ).filter(
+                    and_(
+                        extract('year', CronogramaAsistencia.fecha) == target_year,
+                        extract('month', CronogramaAsistencia.fecha) == target_month
+                    )
+                ).count()
+                
+                total_attended = self.__carelink_session.query(CronogramaAsistenciaPacientes).join(
+                    CronogramaAsistencia
+                ).filter(
+                    and_(
+                        CronogramaAsistenciaPacientes.estado_asistencia == EstadoAsistencia.ASISTIO,
+                        extract('year', CronogramaAsistencia.fecha) == target_year,
+                        extract('month', CronogramaAsistencia.fecha) == target_month
+                    )
+                ).count()
+                
+                attendance_rate = (total_attended / total_scheduled * 100) if total_scheduled > 0 else 0
+                
+                # 2. Calcular cumplimiento de visitas domiciliarias
+                total_home_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                    and_(
+                        extract('year', VisitasDomiciliarias.fecha_visita) == target_year,
+                        extract('month', VisitasDomiciliarias.fecha_visita) == target_month
+                    )
+                ).count()
+                
+                completed_home_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                    and_(
+                        VisitasDomiciliarias.estado_visita == "REALIZADA",
+                        extract('year', VisitasDomiciliarias.fecha_visita) == target_year,
+                        extract('month', VisitasDomiciliarias.fecha_visita) == target_month
+                    )
+                ).count()
+                
+                home_visits_completion = (completed_home_visits / total_home_visits * 100) if total_home_visits > 0 else 0
+                
+                # 3. Calcular eficiencia en gestión de contratos
+                total_contracts = self.__carelink_session.query(Contratos).filter(
+                    and_(
+                        extract('year', Contratos.fecha_inicio) == target_year,
+                        extract('month', Contratos.fecha_inicio) == target_month
+                    )
+                ).count()
+                
+                active_contracts = self.__carelink_session.query(Contratos).filter(
+                    and_(
+                        Contratos.estado == "ACTIVO",
+                        extract('year', Contratos.fecha_inicio) == target_year,
+                        extract('month', Contratos.fecha_inicio) == target_month
+                    )
+                ).count()
+                
+                contract_management = (active_contracts / total_contracts * 100) if total_contracts > 0 else 0
+                
+                # 4. Calcular eficiencia en facturación
+                total_bills = self.__carelink_session.query(Facturas).filter(
+                    and_(
+                        extract('year', Facturas.fecha_emision) == target_year,
+                        extract('month', Facturas.fecha_emision) == target_month
+                    )
+                ).count()
+                
+                paid_bills = self.__carelink_session.query(Facturas).filter(
+                    and_(
+                        Facturas.estado_factura == "PAGADA",
+                        extract('year', Facturas.fecha_emision) == target_year,
+                        extract('month', Facturas.fecha_emision) == target_month
+                    )
+                ).count()
+                
+                billing_efficiency = (paid_bills / total_bills * 100) if total_bills > 0 else 0
+                
+                # 5. Calcular eficiencia general (promedio ponderado)
+                efficiency = (
+                    attendance_rate * 0.3 +  # 30% peso para asistencia
+                    home_visits_completion * 0.25 +  # 25% peso para visitas domiciliarias
+                    contract_management * 0.25 +  # 25% peso para contratos
+                    billing_efficiency * 0.2  # 20% peso para facturación
+                )
+                
+                monthly_data.append(MonthlyEfficiencyData(
+                    month=month_names[target_month - 1],
+                    efficiency=round(efficiency, 1),
+                    attendance_rate=round(attendance_rate, 1),
+                    home_visits_completion=round(home_visits_completion, 1),
+                    contract_management=round(contract_management, 1),
+                    billing_efficiency=round(billing_efficiency, 1)
+                ))
+                
+                # Actualizar para el siguiente mes
+                if i == 0:  # Mes actual
+                    current_month_efficiency = efficiency
+                elif i == 1:  # Mes anterior
+                    previous_month_efficiency = efficiency
+            
+            # Invertir la lista para mostrar en orden cronológico
+            monthly_data.reverse()
+            
+            # Calcular eficiencia general (promedio de los últimos 6 meses)
+            overall_efficiency = sum(item.efficiency for item in monthly_data) / len(monthly_data) if monthly_data else 0
+            
+            # Calcular porcentaje de crecimiento
+            growth_percentage = ((current_month_efficiency - previous_month_efficiency) / previous_month_efficiency * 100) if previous_month_efficiency > 0 else 0
+            
+            # Calcular métricas actuales para el mes actual
+            current_attendance_rate = monthly_data[-1].attendance_rate if monthly_data else 0
+            current_home_visits_completion = monthly_data[-1].home_visits_completion if monthly_data else 0
+            current_contract_management = monthly_data[-1].contract_management if monthly_data else 0
+            current_billing_efficiency = monthly_data[-1].billing_efficiency if monthly_data else 0
+            
+            return OperationalEfficiencyResponseDTO(
+                overall_efficiency=round(overall_efficiency, 1),
+                current_month_efficiency=round(current_month_efficiency, 1),
+                previous_month_efficiency=round(previous_month_efficiency, 1),
+                monthly_data=monthly_data,
+                attendance_rate=round(current_attendance_rate, 1),
+                home_visits_completion_rate=round(current_home_visits_completion, 1),
+                contract_management_rate=round(current_contract_management, 1),
+                billing_efficiency_rate=round(current_billing_efficiency, 1),
+                growth_percentage=round(growth_percentage, 1)
+            )
+            
+        except Exception as e:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al obtener datos de eficiencia operativa: {str(e)}"
+            )
+
+
 
 def get_bill_payments_total(db, id_factura: int) -> float:
     """

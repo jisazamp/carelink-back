@@ -15,6 +15,7 @@ class UpdateUserMedicalRecordRequestDTO(BaseModel):
     continencia: Optional[str] = None
     cuidado_personal: Optional[str] = None
     discapacidades: Optional[str] = None
+    id_profesional: Optional[int] = None
     limitaciones: Optional[str] = None
     emer_medica: Optional[str] = None
     eps: Optional[str] = None
@@ -43,3 +44,4 @@ class UpdateUserMedicalRecordRequestDTO(BaseModel):
     tipo_de_sueno: Optional[str] = None
     tipo_sangre: Optional[str] = None
     diagnosticos: Optional[str] = None
+    porte_clinico: Optional[str] = None

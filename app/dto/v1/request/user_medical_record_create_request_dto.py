@@ -24,6 +24,7 @@ class CreateUserMedicalRecordCreateRequestDTO(BaseModel):
     frecuencia_cardiaca: float
     historial_cirugias: str
     id_usuario: int
+    id_profesional: int | None
     limitaciones: str
     maltratado: str
     maltrato: str
@@ -44,6 +45,7 @@ class CreateUserMedicalRecordCreateRequestDTO(BaseModel):
     tipo_de_sueno: str
     tipo_sangre: str
     diagnosticos: str
+    porte_clinico: str | None = None
 
 
 class CreateUserAssociatedMedicinesRequestDTO(BaseModel):

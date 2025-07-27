@@ -29,3 +29,4 @@ class UserCreateRequestDTO(BaseModel):
     url_imagen: str | None = None
     profesion: str | None = None
     tipo_usuario: str | None = None
+    visitas_domiciliarias: bool = False
