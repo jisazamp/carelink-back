@@ -63,6 +63,7 @@ from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO
 from app.dto.v1.response.home_visit import VisitaDomiciliariaResponseDTO, VisitaDomiciliariaConProfesionalResponseDTO
+from app.dto.v1.response.user_flow import UserFlowResponseDTO
 from app.dto.v1.request.home_visit import VisitaDomiciliariaCreateDTO, VisitaDomiciliariaUpdateDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.dto.v1.response.vaccines_per_user import (
@@ -3909,4 +3910,30 @@ async def add_pagos_to_factura(
         raise HTTPException(
             status_code=500,
             detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@router.get("/user-flow", response_model=Response[UserFlowResponseDTO])
+async def get_user_flow(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[UserFlowResponseDTO]:
+    """
+    Obtiene los datos del flujo de usuarios para el dashboard.
+    Incluye estadísticas y lista de usuarios con visitas domiciliarias = false.
+    """
+    try:
+        result = crud.get_user_flow_data()
+        return Response[UserFlowResponseDTO](
+            data=result,
+            status_code=HTTPStatus.OK,
+            message="Datos del flujo de usuarios obtenidos exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        return Response[UserFlowResponseDTO](
+            data=None,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            message=f"Error al obtener datos del flujo de usuarios: {str(e)}",
+            error=None,
         )
