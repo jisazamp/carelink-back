@@ -964,9 +964,10 @@ class CareLinkCrud:
 
     def _get_upcoming_activities(self) -> List[ActividadesGrupales]:
         return self.__carelink_session.execute(
-            select(ActividadesGrupales).where(
-                ActividadesGrupales.fecha >= date.today()
-            )
+            select(ActividadesGrupales)
+            .where(ActividadesGrupales.fecha >= date.today())
+            .order_by(ActividadesGrupales.fecha.asc())
+            .limit(10)
         ).scalars().all()
 
     def upload_file_to_s3(self, file, bucket_name, object_name):
