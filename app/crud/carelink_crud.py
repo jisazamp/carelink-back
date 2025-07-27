@@ -599,15 +599,33 @@ class CareLinkCrud:
     def _calculate_service_total(
         self, service: ServiciosPorContrato, contract_start_year: int
     ) -> float:
+        # Intentar obtener la tarifa del servicio, si no existe usar el precio del servicio contratado
         service_rate = self._get_service_rate(service.id_servicio, contract_start_year)
-        return service_rate.tarifa * service.cantidad
+        if service_rate is None:
+            # Si no hay tarifa configurada, usar el precio del servicio contratado
+            # Para servicios por contrato, asumimos cantidad = 1 (un día de servicio)
+            return float(service.precio_por_dia)
+        # Para servicios por contrato, asumimos cantidad = 1 (un día de servicio)
+        return service_rate.precio_por_dia
 
     def _calculate_contract_bill_total(self, contract_id: int) -> float:
         services = self._get_contract_services(contract_id)
-        return sum(
-            self._calculate_service_total(service, contract_start_year=2024)
-            for service in services
-        )
+        total = 0.0
+        
+        for service in services:
+            # Obtener las fechas de servicio para este servicio contratado
+            fechas_servicio = self._get_service_dates(service)
+            num_fechas = len(fechas_servicio)
+            
+            # Calcular el total para este servicio: precio por día * número de fechas
+            precio_por_dia = float(service.precio_por_dia)
+            total_servicio = precio_por_dia * num_fechas
+            total += total_servicio
+            
+            print(f"🔍 Servicio {service.id_servicio}: {precio_por_dia} x {num_fechas} fechas = {total_servicio}")
+        
+        print(f"💰 Total del contrato {contract_id}: {total}")
+        return total
 
     def calculate_partial_bill(
         self, service_ids: list[int], quantities: list[int], year: int
@@ -615,7 +633,10 @@ class CareLinkCrud:
         total = 0
         for service_id, quantity in zip(service_ids, quantities):
             rate = self._get_service_rate(service_id, year)
-            total += rate.tarifa * quantity
+            if rate is None:
+                # Si no hay tarifa configurada, usar un precio por defecto o lanzar error
+                raise ValueError(f"No se encontró tarifa configurada para el servicio {service_id} en el año {year}")
+            total += rate.precio_por_dia * quantity
         return total
 
     def create_contract_bill(self, contract_id: int) -> Facturas:
@@ -638,12 +659,48 @@ class CareLinkCrud:
             fecha_inicio=contract_data.fecha_inicio,
             fecha_fin=contract_data.fecha_fin,
             facturar_contrato=contract_data.facturar_contrato,
-            estado=contract_data.estado,
         )
         self.__carelink_session.add(contract)
         self.__carelink_session.commit()
         self.__carelink_session.refresh(contract)
-        return {"id_contrato": contract.id_contrato}
+        
+        # Crear servicios por contrato
+        servicios_por_contrato = []
+        for servicio_data in contract_data.servicios:
+            servicio_contratado = ServiciosPorContrato(
+                id_contrato=contract.id_contrato,
+                id_servicio=servicio_data.id_servicio,
+                fecha=servicio_data.fecha,
+                descripcion=servicio_data.descripcion,
+                precio_por_dia=servicio_data.precio_por_dia
+            )
+            self.__carelink_session.add(servicio_contratado)
+            self.__carelink_session.commit()
+            self.__carelink_session.refresh(servicio_contratado)
+            
+            # Crear fechas de servicio
+            for fecha_servicio_data in servicio_data.fechas_servicio:
+                fecha_servicio = FechasServicio(
+                    id_servicio_contratado=servicio_contratado.id_servicio_contratado,
+                    fecha=fecha_servicio_data.fecha
+                )
+                self.__carelink_session.add(fecha_servicio)
+            
+            self.__carelink_session.commit()
+            
+            # Agregar a la lista de servicios por contrato
+            servicios_por_contrato.append({
+                'id_servicio_contratado': servicio_contratado.id_servicio_contratado,
+                'id_servicio': servicio_contratado.id_servicio,
+                'fecha': servicio_contratado.fecha,
+                'descripcion': servicio_contratado.descripcion,
+                'precio_por_dia': servicio_contratado.precio_por_dia
+            })
+        
+        return {
+            'contrato': contract,
+            'servicios_por_contrato': servicios_por_contrato
+        }
 
     def create_user_medical_record(
         self, user_id: int, record: MedicalRecord
@@ -893,7 +950,7 @@ class CareLinkCrud:
 
     def _get_activity_by_id(self, id: int) -> ActividadesGrupales:
         activity = self.__carelink_session.execute(
-            select(ActividadesGrupales).where(ActividadesGrupales.id_actividad == id)
+            select(ActividadesGrupales).where(ActividadesGrupales.id == id)
         ).scalar_one_or_none()
         if not activity:
             raise EntityNotFoundError(f"Actividad con ID {id} no encontrada")
@@ -905,7 +962,7 @@ class CareLinkCrud:
     def _get_upcoming_activities(self) -> List[ActividadesGrupales]:
         return self.__carelink_session.execute(
             select(ActividadesGrupales).where(
-                ActividadesGrupales.fecha_actividad >= date.today()
+                ActividadesGrupales.fecha >= date.today()
             )
         ).scalars().all()
 
