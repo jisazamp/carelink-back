@@ -584,6 +584,11 @@ class CareLinkCrud:
     def _get_payment_types(self) -> list[TipoPago]:
         return self.__carelink_session.execute(select(TipoPago)).scalars().all()
 
+    def get_payments_by_factura(self, factura_id: int) -> list[Pagos]:
+        return self.__carelink_session.execute(
+            select(Pagos).where(Pagos.id_factura == factura_id)
+        ).scalars().all()
+
     def get_bill_by_id(self, bill_id: int) -> Facturas:
         return self.__carelink_session.execute(
             select(Facturas).where(Facturas.id_factura == bill_id)

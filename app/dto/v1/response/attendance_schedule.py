@@ -58,4 +58,22 @@ class CronogramaAsistenciaPacienteResponseDTO(BaseModel):
     transporte_info: Optional[dict] = None
 
     class Config:
+        orm_mode = True
+
+
+class AsistenciaDiariaResponseDTO(BaseModel):
+    id_cronograma_paciente: int
+    id_usuario: int
+    nombres: str
+    apellidos: str
+    tipo_servicio: str
+    estado_asistencia: EstadoAsistenciaEnum
+    estado_texto: str
+    color_estado: str
+    requiere_transporte: bool
+    observaciones: Optional[str] = None
+    fecha_creacion: datetime
+    fecha_actualizacion: Optional[datetime]
+
+    class Config:
         orm_mode = True 

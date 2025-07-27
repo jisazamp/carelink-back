@@ -115,6 +115,7 @@ from app.dto.v1.response.attendance_schedule import (
     CronogramaAsistenciaResponseDTO,
     CronogramaAsistenciaPacienteResponseDTO,
     PacientePorFechaDTO,
+    AsistenciaDiariaResponseDTO,
 )
 # Nuevos imports para transporte
 from app.models.transporte import CronogramaTransporte
@@ -2925,7 +2926,14 @@ def update_factura(
             numero_factura=factura.numero_factura,
             id_contrato=factura.id_contrato,
             fecha_emision=factura.fecha_emision,
+            fecha_vencimiento=factura.fecha_vencimiento,
+            subtotal=float(factura.subtotal) if factura.subtotal is not None else None,
+            impuestos=float(factura.impuestos) if factura.impuestos is not None else None,
+            descuentos=float(factura.descuentos) if factura.descuentos is not None else None,
             total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
+            estado_factura=factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura,
+            observaciones=factura.observaciones,
+            pagos=[]
         )
         
         return Response[FacturaOut](
@@ -3697,4 +3705,208 @@ async def update_user_home_visit(
         raise HTTPException(
             status_code=500,
             detail=f"Error al actualizar visita domiciliaria: {str(e)}"
+        )
+
+
+@router.get("/asistencia/diaria", response_model=Response[List[AsistenciaDiariaResponseDTO]])
+def get_asistencia_diaria(
+    fecha: Optional[str] = None,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[AsistenciaDiariaResponseDTO]]:
+    """
+    Obtiene la asistencia del día actual (o fecha especificada) para el dashboard
+    """
+    try:
+        # Si no se especifica fecha, usar la fecha actual
+        if fecha:
+            fecha_consulta = datetime.strptime(fecha, "%Y-%m-%d").date()
+        else:
+            fecha_consulta = date.today()
+        
+        # Consultar cronogramas para la fecha especificada
+        cronogramas = (
+            db.query(CronogramaAsistencia)
+            .filter(CronogramaAsistencia.fecha == fecha_consulta)
+            .all()
+        )
+        
+        result = []
+        for cronograma in cronogramas:
+            # Obtener pacientes agendados para este cronograma con información completa
+            pacientes_agendados = (
+                db.query(
+                    CronogramaAsistenciaPacientes,
+                    User,
+                    Contratos
+                )
+                .join(User, CronogramaAsistenciaPacientes.id_usuario == User.id_usuario)
+                .join(Contratos, CronogramaAsistenciaPacientes.id_contrato == Contratos.id_contrato)
+                .filter(CronogramaAsistenciaPacientes.id_cronograma == cronograma.id_cronograma)
+                .all()
+            )
+            
+            for paciente_agendado, usuario, contrato in pacientes_agendados:
+                # Determinar el tipo de servicio basado en el contrato
+                tipo_servicio = contrato.tipo_contrato if contrato else "Sin servicio"
+                
+                # Mapear estado de asistencia a texto legible
+                estado_texto = {
+                    "PENDIENTE": "Pendiente",
+                    "ASISTIO": "Asistió",
+                    "NO_ASISTIO": "No asistió",
+                    "CANCELADO": "Cancelado",
+                    "REAGENDADO": "Reagendado"
+                }.get(paciente_agendado.estado_asistencia, paciente_agendado.estado_asistencia)
+                
+                # Color del estado
+                color_estado = {
+                    "PENDIENTE": "gray",
+                    "ASISTIO": "green",
+                    "NO_ASISTIO": "red",
+                    "CANCELADO": "orange",
+                    "REAGENDADO": "blue"
+                }.get(paciente_agendado.estado_asistencia, "default")
+                
+                result.append(
+                    AsistenciaDiariaResponseDTO(
+                        id_cronograma_paciente=paciente_agendado.id_cronograma_paciente,
+                        id_usuario=usuario.id_usuario,
+                        nombres=usuario.nombres,
+                        apellidos=usuario.apellidos,
+                        tipo_servicio=tipo_servicio,
+                        estado_asistencia=paciente_agendado.estado_asistencia,
+                        estado_texto=estado_texto,
+                        color_estado=color_estado,
+                        requiere_transporte=paciente_agendado.requiere_transporte,
+                        observaciones=paciente_agendado.observaciones,
+                        fecha_creacion=paciente_agendado.fecha_creacion,
+                        fecha_actualizacion=paciente_agendado.fecha_actualizacion
+                    )
+                )
+        
+        return Response[List[AsistenciaDiariaResponseDTO]](
+            data=result,
+            status_code=HTTPStatus.OK,
+            message=f"Asistencia del día {fecha_consulta} consultada exitosamente",
+            error=None,
+        )
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Formato de fecha inválido: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+@router.get("/pagos/factura/{factura_id}", response_model=Response[List[PaymentResponseDTO]])
+async def get_pagos_by_factura(
+    factura_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[List[PaymentResponseDTO]]:
+    """Obtiene todos los pagos de una factura específica"""
+    try:
+        # Verificar que la factura existe
+        bill = crud.get_bill_by_id(factura_id)
+        if not bill:
+            raise HTTPException(
+                status_code=404,
+                detail=f"La factura con ID {factura_id} no existe"
+            )
+        
+        # Obtener pagos de la factura
+        payments = crud.get_payments_by_factura(factura_id)
+        payments_response = [
+            PaymentResponseDTO.from_orm(payment) for payment in payments
+        ]
+        
+        return Response[List[PaymentResponseDTO]](
+            data=payments_response,
+            status_code=HTTPStatus.OK,
+            message=f"Pagos de la factura {factura_id} obtenidos exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+@router.post("/facturas/{factura_id}/pagos/", response_model=Response[dict])
+async def add_pagos_to_factura(
+    factura_id: int,
+    pagos: List[PagoCreate],
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[dict]:
+    """Agrega múltiples pagos a una factura específica"""
+    try:
+        # Verificar que la factura existe
+        bill = crud.get_bill_by_id(factura_id)
+        if not bill:
+            raise HTTPException(
+                status_code=404,
+                detail=f"La factura con ID {factura_id} no existe"
+            )
+        
+        # Validar métodos y tipos de pago
+        payment_methods = crud._get_payment_methods()
+        payment_types = crud._get_payment_types()
+        
+        for pago in pagos:
+            # Validar método de pago
+            if not any(pm.id_metodo_pago == pago.id_metodo_pago for pm in payment_methods):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El método de pago con ID {pago.id_metodo_pago} no existe"
+                )
+            
+            # Validar tipo de pago
+            if not any(pt.id_tipo_pago == pago.id_tipo_pago for pt in payment_types):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El tipo de pago con ID {pago.id_tipo_pago} no existe"
+                )
+        
+        # Crear los pagos
+        created_payments = []
+        for pago_data in pagos:
+            payment = Pagos(
+                id_factura=factura_id,
+                id_metodo_pago=pago_data.id_metodo_pago,
+                id_tipo_pago=pago_data.id_tipo_pago,
+                fecha_pago=pago_data.fecha_pago,
+                valor=pago_data.valor,
+            )
+            created_payment = crud.create_payment(payment)
+            created_payments.append(created_payment)
+        
+        # Actualizar el estado de la factura
+        crud.update_factura_status(factura_id)
+        
+        return Response[dict](
+            data={
+                "message": f"Se agregaron {len(created_payments)} pagos a la factura {factura_id}",
+                "pagos_creados": len(created_payments),
+                "factura_id": factura_id
+            },
+            status_code=HTTPStatus.CREATED,
+            message="Pagos agregados exitosamente",
+            error=None,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
         )
