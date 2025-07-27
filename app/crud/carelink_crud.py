@@ -1733,6 +1733,176 @@ class CareLinkCrud:
                 detail=f"Error al obtener datos de pagos mensuales: {str(e)}"
             )
 
+    def get_operational_efficiency_data(self):
+        """
+        Obtiene los datos de eficiencia operativa para el dashboard.
+        Combina múltiples métricas: asistencia, visitas domiciliarias, contratos y facturación.
+        """
+        from app.dto.v1.response.operational_efficiency import OperationalEfficiencyResponseDTO, MonthlyEfficiencyData
+        from datetime import datetime, date, timedelta
+        from sqlalchemy import and_, extract, func
+        from app.models.contracts import Contratos, Facturas, Pagos
+        from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes, EstadoAsistencia
+        from app.models.home_visit import VisitasDomiciliarias
+        
+        try:
+            # Calcular el mes actual
+            now = datetime.now()
+            current_month = now.month
+            current_year = now.year
+            
+            # Obtener datos mensuales para el gráfico (últimos 6 meses)
+            monthly_data = []
+            month_names = [
+                "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+                "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+            ]
+            
+            previous_month_efficiency = 0
+            current_month_efficiency = 0
+            
+            for i in range(6):
+                # Calcular mes y año
+                target_month = current_month - i
+                target_year = current_year
+                
+                if target_month <= 0:
+                    target_month += 12
+                    target_year -= 1
+                
+                # 1. Calcular tasa de asistencia del mes
+                total_scheduled = self.__carelink_session.query(CronogramaAsistenciaPacientes).join(
+                    CronogramaAsistencia
+                ).filter(
+                    and_(
+                        extract('year', CronogramaAsistencia.fecha) == target_year,
+                        extract('month', CronogramaAsistencia.fecha) == target_month
+                    )
+                ).count()
+                
+                total_attended = self.__carelink_session.query(CronogramaAsistenciaPacientes).join(
+                    CronogramaAsistencia
+                ).filter(
+                    and_(
+                        CronogramaAsistenciaPacientes.estado_asistencia == EstadoAsistencia.ASISTIO,
+                        extract('year', CronogramaAsistencia.fecha) == target_year,
+                        extract('month', CronogramaAsistencia.fecha) == target_month
+                    )
+                ).count()
+                
+                attendance_rate = (total_attended / total_scheduled * 100) if total_scheduled > 0 else 0
+                
+                # 2. Calcular cumplimiento de visitas domiciliarias
+                total_home_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                    and_(
+                        extract('year', VisitasDomiciliarias.fecha_visita) == target_year,
+                        extract('month', VisitasDomiciliarias.fecha_visita) == target_month
+                    )
+                ).count()
+                
+                completed_home_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                    and_(
+                        VisitasDomiciliarias.estado_visita == "REALIZADA",
+                        extract('year', VisitasDomiciliarias.fecha_visita) == target_year,
+                        extract('month', VisitasDomiciliarias.fecha_visita) == target_month
+                    )
+                ).count()
+                
+                home_visits_completion = (completed_home_visits / total_home_visits * 100) if total_home_visits > 0 else 0
+                
+                # 3. Calcular eficiencia en gestión de contratos
+                total_contracts = self.__carelink_session.query(Contratos).filter(
+                    and_(
+                        extract('year', Contratos.fecha_inicio) == target_year,
+                        extract('month', Contratos.fecha_inicio) == target_month
+                    )
+                ).count()
+                
+                active_contracts = self.__carelink_session.query(Contratos).filter(
+                    and_(
+                        Contratos.estado == "ACTIVO",
+                        extract('year', Contratos.fecha_inicio) == target_year,
+                        extract('month', Contratos.fecha_inicio) == target_month
+                    )
+                ).count()
+                
+                contract_management = (active_contracts / total_contracts * 100) if total_contracts > 0 else 0
+                
+                # 4. Calcular eficiencia en facturación
+                total_bills = self.__carelink_session.query(Facturas).filter(
+                    and_(
+                        extract('year', Facturas.fecha_emision) == target_year,
+                        extract('month', Facturas.fecha_emision) == target_month
+                    )
+                ).count()
+                
+                paid_bills = self.__carelink_session.query(Facturas).filter(
+                    and_(
+                        Facturas.estado_factura == "PAGADA",
+                        extract('year', Facturas.fecha_emision) == target_year,
+                        extract('month', Facturas.fecha_emision) == target_month
+                    )
+                ).count()
+                
+                billing_efficiency = (paid_bills / total_bills * 100) if total_bills > 0 else 0
+                
+                # 5. Calcular eficiencia general (promedio ponderado)
+                efficiency = (
+                    attendance_rate * 0.3 +  # 30% peso para asistencia
+                    home_visits_completion * 0.25 +  # 25% peso para visitas domiciliarias
+                    contract_management * 0.25 +  # 25% peso para contratos
+                    billing_efficiency * 0.2  # 20% peso para facturación
+                )
+                
+                monthly_data.append(MonthlyEfficiencyData(
+                    month=month_names[target_month - 1],
+                    efficiency=round(efficiency, 1),
+                    attendance_rate=round(attendance_rate, 1),
+                    home_visits_completion=round(home_visits_completion, 1),
+                    contract_management=round(contract_management, 1),
+                    billing_efficiency=round(billing_efficiency, 1)
+                ))
+                
+                # Actualizar para el siguiente mes
+                if i == 0:  # Mes actual
+                    current_month_efficiency = efficiency
+                elif i == 1:  # Mes anterior
+                    previous_month_efficiency = efficiency
+            
+            # Invertir la lista para mostrar en orden cronológico
+            monthly_data.reverse()
+            
+            # Calcular eficiencia general (promedio de los últimos 6 meses)
+            overall_efficiency = sum(item.efficiency for item in monthly_data) / len(monthly_data) if monthly_data else 0
+            
+            # Calcular porcentaje de crecimiento
+            growth_percentage = ((current_month_efficiency - previous_month_efficiency) / previous_month_efficiency * 100) if previous_month_efficiency > 0 else 0
+            
+            # Calcular métricas actuales para el mes actual
+            current_attendance_rate = monthly_data[-1].attendance_rate if monthly_data else 0
+            current_home_visits_completion = monthly_data[-1].home_visits_completion if monthly_data else 0
+            current_contract_management = monthly_data[-1].contract_management if monthly_data else 0
+            current_billing_efficiency = monthly_data[-1].billing_efficiency if monthly_data else 0
+            
+            return OperationalEfficiencyResponseDTO(
+                overall_efficiency=round(overall_efficiency, 1),
+                current_month_efficiency=round(current_month_efficiency, 1),
+                previous_month_efficiency=round(previous_month_efficiency, 1),
+                monthly_data=monthly_data,
+                attendance_rate=round(current_attendance_rate, 1),
+                home_visits_completion_rate=round(current_home_visits_completion, 1),
+                contract_management_rate=round(current_contract_management, 1),
+                billing_efficiency_rate=round(current_billing_efficiency, 1),
+                growth_percentage=round(growth_percentage, 1)
+            )
+            
+        except Exception as e:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al obtener datos de eficiencia operativa: {str(e)}"
+            )
+
 
 def get_bill_payments_total(db, id_factura: int) -> float:
     """

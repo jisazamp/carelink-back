@@ -66,6 +66,7 @@ from app.dto.v1.response.home_visit import VisitaDomiciliariaResponseDTO, Visita
 from app.dto.v1.response.user_flow import UserFlowResponseDTO
 from app.dto.v1.response.quarterly_visits import QuarterlyVisitsResponseDTO
 from app.dto.v1.response.monthly_payments import MonthlyPaymentsResponseDTO
+from app.dto.v1.response.operational_efficiency import OperationalEfficiencyResponseDTO
 from app.dto.v1.request.home_visit import VisitaDomiciliariaCreateDTO, VisitaDomiciliariaUpdateDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.dto.v1.response.vaccines_per_user import (
@@ -3989,5 +3990,31 @@ async def get_monthly_payments(
             data=None,
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             message=f"Error al obtener datos de pagos mensuales: {str(e)}",
+            error=None,
+        )
+
+
+@router.get("/operational-efficiency", response_model=Response[OperationalEfficiencyResponseDTO])
+async def get_operational_efficiency(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[OperationalEfficiencyResponseDTO]:
+    """
+    Obtiene los datos de eficiencia operativa para el dashboard.
+    Combina múltiples métricas: asistencia, visitas domiciliarias, contratos y facturación.
+    """
+    try:
+        result = crud.get_operational_efficiency_data()
+        return Response[OperationalEfficiencyResponseDTO](
+            data=result,
+            status_code=HTTPStatus.OK,
+            message="Datos de eficiencia operativa obtenidos exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        return Response[OperationalEfficiencyResponseDTO](
+            data=None,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            message=f"Error al obtener datos de eficiencia operativa: {str(e)}",
             error=None,
         )
