@@ -557,6 +557,7 @@ class CareLinkCrud:
             factura.estado = "PAGADA"
             self.__carelink_session.commit()
 
+
     def create_payment(self, payment_data: Pagos) -> Pagos:
         self.__carelink_session.add(payment_data)
         self.__carelink_session.commit()
@@ -2057,6 +2058,7 @@ class CareLinkCrud:
             )
 
 
+
 def get_bill_payments_total(db, id_factura: int) -> float:
     """
     Retorna el total de pagos asociados a una factura
@@ -2065,6 +2067,3 @@ def get_bill_payments_total(db, id_factura: int) -> float:
     pagos = db.query(Pagos).filter(Pagos.id_factura == id_factura).all()
     total = sum(float(pago.valor) for pago in pagos)
     return total
-
-
-

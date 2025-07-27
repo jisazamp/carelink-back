@@ -19,6 +19,7 @@ from app.dto.v1.request.medical_report import ReporteClinicoCreate, ReporteClini
 from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
 from app.dto.v1.request.rates import TarifasServicioUpdateRequestDTO
 from app.dto.v1.response.rates import TarifasServicioResponseDTO, TarifaServicioResponseDTO
+
 from app.dto.v1.request.user_create_request_dto import AuthorizedUserCreateRequestDTO
 from app.dto.v1.request.user_medical_record_create_request_dto import (
     CreateUserAssociatedCaresRequestDTO,
@@ -127,6 +128,7 @@ from app.dto.v1.response.attendance_schedule import (
     PacientePorFechaDTO,
     AsistenciaDiariaResponseDTO,
 )
+
 # Nuevos imports para transporte
 from app.models.transporte import CronogramaTransporte
 from app.dto.v1.request.transport_schedule import (
@@ -144,7 +146,7 @@ from app.security.jwt_utilities import (
     create_access_token,
     hash_password,
 )
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from functools import lru_cache
 from http import HTTPStatus
@@ -155,10 +157,16 @@ import json
 from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes
 from app.models.rates import TarifasServicioPorAnio
 from app.exceptions.exceptions_classes import EntityNotFoundError
-
+from enum import Enum
 
 token_auth_scheme = HTTPBearer()
 router = APIRouter()
+
+
+class Role(Enum):
+    ADMIN = "admin"
+    PROFESSIONAL = "profesional"
+    TRANSPORT = "transporte"
 
 
 @lru_cache()
@@ -192,10 +200,36 @@ def get_current_user(
     return user
 
 
+def require_role(required_role: str):
+    def role_checker(user: dict = Depends(get_current_user)):
+        if user.role != required_role:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tiene el rol requerido para realizar esta acción",
+            )
+        return user
+
+    return role_checker
+
+
+def require_roles(*allowed_roles: str):
+    def role_checker(user: dict = Depends(get_current_user)):
+        if user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes los suficientes permisos",
+            )
+        return user
+
+    return role_checker
+
+
 @router.get("/users", response_model=Response[List[UserResponseDTO]])
 async def list_users(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[UserResponseDTO]]:
     users = crud.list_users_without_home_visits()
     users_list = []
@@ -230,7 +264,9 @@ async def list_users_with_home_visits(
 async def list_user_by_id(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[UserResponseDTO]:
     user = crud.list_user_by_user_id(id)
     user_response = UserResponseDTO(**user.__dict__)
@@ -249,7 +285,9 @@ async def list_user_by_id(
 )
 async def get_family_members(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     family_members = crud._get_family_members()
     family_members_dto = [
@@ -271,7 +309,9 @@ async def get_family_members(
 async def get_family_member_by_id(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     family_member, parentesco = crud._get_family_member_by_id(id)
     family_member.parentesco = parentesco
@@ -293,7 +333,9 @@ async def get_family_member_by_id(
 async def get_user_family_members(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     family_members = crud._get_family_members_by_user_id(id)
     family_members_dto = [
@@ -315,7 +357,9 @@ async def get_user_family_members(
 async def get_user_medical_record(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     medical_record = crud.list_user_medical_record(id)
     medical_record_response = None
@@ -340,7 +384,9 @@ async def get_user_medical_record(
 async def get_record_medicines(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     medicines = crud._get_user_medicines_by_medical_record_id(id)
     result = [
@@ -362,7 +408,9 @@ async def get_record_medicines(
 async def get_record_interventions(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     interventions = crud._get_user_interventions_by_medical_record_id(id)
     result = [
@@ -382,7 +430,9 @@ async def get_record_interventions(
 async def get_record_cares(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     cares = crud._get_user_cares_by_medical_record_id(id)
     result = [CaresPerUserResponseDTO(**care.__dict__) for care in cares]
@@ -399,7 +449,9 @@ async def get_record_cares(
 async def get_record_vaccines(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     vaccines = crud._get_user_vaccines_by_medical_record_id(id)
     result = [VaccinesPerUserResponseDTO(**vaccine.__dict__) for vaccine in vaccines]
@@ -428,7 +480,9 @@ async def get_user_info(
 def get_reporte_clinico(
     reporte_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ReporteClinicoResponse]:
     report = crud._get_medical_report_by_id(reporte_id)
     report_dict = report.__dict__
@@ -453,7 +507,9 @@ def get_reporte_clinico(
 def get_medical_reports(
     user_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ReporteClinicoResponse]]:
     reports = crud._get_medical_reports_by_user_id(user_id)
     return Response[List[ReporteClinicoResponse]](
@@ -467,7 +523,9 @@ def get_medical_reports(
 @router.get("/professionals", response_model=Response[List[ProfessionalResponse]])
 async def get_professionals(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ProfessionalResponse]]:
     professionals = crud._get_professionals()
     response = [
@@ -484,7 +542,9 @@ async def get_professionals(
 async def get_clinical_evolutions(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ClinicalEvolutionResponse]]:
     evolutions = crud._get_clinical_evolutions_by_report_id(id)
     response = [
@@ -502,7 +562,9 @@ async def get_clinical_evolutions(
 async def get_clinical_evolution(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ClinicalEvolutionResponse]:
     evolution = crud._get_clinical_evolution_by_evolution_id(id)
     response = ClinicalEvolutionResponse.from_orm(evolution)
@@ -522,7 +584,9 @@ async def get_clinical_evolution(
 )
 async def get_activities(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ActivitiesResponse]]:
     activities = crud._get_activities()
     result = [ActivitiesResponse(**activity.__dict__) for activity in activities]
@@ -542,7 +606,9 @@ async def get_activities(
 async def get_activity_by_id(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ActivitiesResponse]:
     activity = crud._get_activity_by_id(id)
     result = ActivitiesResponse(**activity.__dict__)
@@ -561,7 +627,9 @@ async def get_activity_by_id(
 )
 async def get_activity_types(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[TypeOfActivityResponse]]:
     activity_types = crud._get_activity_types()
     result = [TypeOfActivityResponse(**type.__dict__) for type in activity_types]
@@ -576,6 +644,9 @@ async def get_activity_types(
 @router.get("/metodos_pago", response_model=Response[List[PaymentMethodResponseDTO]])
 async def get_payment_methods(
     crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[PaymentMethodResponseDTO]]:
     payment_methods = crud._get_payment_methods()
     payment_methods_response = [
@@ -592,6 +663,9 @@ async def get_payment_methods(
 @router.get("/tipos_pago", response_model=Response[List[PaymentTypeResponseDTO]])
 async def get_payment_types(
     crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[PaymentTypeResponseDTO]]:
     payment_types = crud._get_payment_types()
     payment_types_response = [
@@ -612,7 +686,9 @@ async def get_payment_types(
 )
 async def get_upcoming_activities(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ActivitiesResponse]]:
     activities = crud._get_upcoming_activities()
     result = [ActivitiesResponse(**activity.__dict__) for activity in activities]
@@ -628,7 +704,9 @@ async def get_upcoming_activities(
 async def register_payment(
     payment: CreateUserPaymentRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[PaymentResponseDTO]:
     try:
         # Validar que la factura existe
@@ -636,16 +714,18 @@ async def register_payment(
             bill = crud.get_bill_by_id(payment.id_factura)
         except EntityNotFoundError:
             raise HTTPException(
-                status_code=400, 
-                detail=f"La factura con ID {payment.id_factura} no existe"
+                status_code=400,
+                detail=f"La factura con ID {payment.id_factura} no existe",
             )
 
         # Validar que el método de pago existe
         payment_methods = crud._get_payment_methods()
-        if not any(pm.id_metodo_pago == payment.id_metodo_pago for pm in payment_methods):
+        if not any(
+            pm.id_metodo_pago == payment.id_metodo_pago for pm in payment_methods
+        ):
             raise HTTPException(
                 status_code=400,
-                detail=f"El método de pago con ID {payment.id_metodo_pago} no existe"
+                detail=f"El método de pago con ID {payment.id_metodo_pago} no existe",
             )
 
         # Validar que el tipo de pago existe
@@ -653,7 +733,7 @@ async def register_payment(
         if not any(pt.id_tipo_pago == payment.id_tipo_pago for pt in payment_types):
             raise HTTPException(
                 status_code=400,
-                detail=f"El tipo de pago con ID {payment.id_tipo_pago} no existe"
+                detail=f"El tipo de pago con ID {payment.id_tipo_pago} no existe",
             )
 
         # Crear el objeto de pago
@@ -671,6 +751,9 @@ async def register_payment(
         # Actualizar el estado de la factura según los pagos
         crud.update_factura_status(payment.id_factura)
 
+        # Actualizar el estado de la factura según los pagos
+        crud.update_factura_status(payment.id_factura)
+
         return Response[PaymentResponseDTO](
             data=PaymentResponseDTO.from_orm(payment_response),
             error=None,
@@ -685,14 +768,17 @@ async def register_payment(
         # Log del error para debugging
         print(f"Error inesperado en register_payment: {str(e)}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Error interno del servidor: {str(e)}"
+            status_code=500, detail=f"Error interno del servidor: {str(e)}"
         )
 
 
 @router.post("/calcular/factura", response_model=Response[float])
 async def calculate_partial_bill(
-    partial_bill: CalculatePartialBillRequestDTO, crud: CareLinkCrud = Depends(get_crud)
+    partial_bill: CalculatePartialBillRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[float]:
     try:
         total = crud.calculate_partial_bill(
@@ -776,22 +862,8 @@ async def create_users(
     user: str = Form(...),
     photo: Optional[UploadFile] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
-) -> Response[dict]:
-    """
-    Crea un nuevo usuario en el sistema.
-    
-    Si el campo 'visitas_domiciliarias' es True, también crea automáticamente
-    un registro en la tabla VisitasDomiciliarias con los datos del usuario.
-    
-    Args:
-        user: Datos del usuario en formato JSON
-        photo: Archivo de imagen opcional para la foto del usuario
-        
-    Returns:
-        Response con los datos del usuario creado y opcionalmente
-        los datos de la visita domiciliaria si fue creada.
-    """
+    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value)),
+) -> Response[UserResponseDTO]:
     try:
         user_data = UserCreateRequestDTO.parse_raw(user)
     except Exception as e:
@@ -869,7 +941,9 @@ async def create_family_members(
     family_member: CreateFamilyMemberRequestDTO,
     kinship: AssociateFamilyMemberRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     family_member_to_save = FamilyMember(**family_member.dict())
     crud.save_family_member(id, kinship, family_member_to_save)
@@ -884,7 +958,8 @@ async def create_family_members(
 
 @router.post("/login", response_model=Response[dict])
 async def login_user(
-    login_data: UserLoginRequestDTO, crud: CareLinkCrud = Depends(get_crud)
+    login_data: UserLoginRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
 ) -> Response[dict]:
     user = crud.authenticate_user(login_data.email, login_data.password)
     if not user:
@@ -893,9 +968,15 @@ async def login_user(
             detail="Usuario o contraseña incorrectos. Revise sus datos e intente de nuevo.",
         )
 
-    access_token = create_access_token(data={"sub": user.id})
+    access_token = create_access_token(
+        data={"sub": str(user.id), "role": str(user.role)}
+    )
     return Response[dict](
-        data={"access_token": access_token, "token_type": "bearer"},
+        data={
+            "access_token": access_token,
+            "token_type": "bearer",
+            "role": str(user.role),
+        },
         status_code=HTTPStatus.OK,
         message="Inicio de sesión exitoso",
         error=None,
@@ -912,7 +993,9 @@ async def create_user_record(
     vaccines: str = Form(None),
     attachments: Optional[List[UploadFile]] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     record_data = json.loads(record)
     medicines_data = json.loads(medicines) if medicines else []
@@ -957,7 +1040,9 @@ async def create_user_medical_record(
     id: int,
     record: CreateUserMedicalRecordCreateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[CreateUserMedicalRecordResponseDTO]:
     record_to_save = MedicalRecord(**record.dict())
     saved_record = crud.create_user_medical_record(id, record_to_save)
@@ -974,13 +1059,15 @@ async def create_user_medical_record(
 async def create_user(
     user: AuthorizedUserCreateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value)),
 ) -> Response[UserResponseDTO]:
     hashed_password = hash_password(user.password)
     user_to_save = AuthorizedUsers(**user.dict())
     user_to_save.password = hashed_password
     saved_user = crud.create_user(user_to_save)
-    access_token = create_access_token(data={"sub": str(saved_user.id)})
+    access_token = create_access_token(
+        data={"sub": str(saved_user.id), "role": str(saved_user.role)}
+    )
     saved_user.token = access_token
 
     return Response[CreateUserResponseDTO](
@@ -995,7 +1082,9 @@ async def create_user(
 def create_reporte_clinico(
     reporte: ReporteClinicoCreate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ReporteClinicoResponse]:
     report_to_save = ReportesClinicos(**reporte.dict())
     resulting_report = crud.save_medical_report(report_to_save)
@@ -1013,7 +1102,9 @@ def create_reporte_clinico(
 def create_clinical_evolution(
     evolution: ClinicalEvolutionCreate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ClinicalEvolutionResponse]:
     report_to_save = EvolucionesClinicas(**evolution.dict())
     resulting_report = crud.save_clinical_evolution(report_to_save)
@@ -1029,7 +1120,9 @@ def create_clinical_evolution(
 def create_activity(
     activity: ActividadesGrupalesCreate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ActivitiesResponse]:
     activity_to_save = ActividadesGrupales(**activity.dict())
     resulting_activity = crud.save_activity(activity_to_save)
@@ -1047,7 +1140,9 @@ async def update_user(
     user: str = Form(...),
     photo: Optional[UploadFile] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     try:
         user_data = UserCreateRequestDTO.parse_raw(user)
@@ -1072,7 +1167,9 @@ async def update_treatment(
     id: int,
     treatment: MedicinesPerUserUpdateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     treatment_to_update = MedicamentosPorUsuario(**treatment.__dict__)
     crud.update_medical_treatment(id, treatment_to_update)
@@ -1089,7 +1186,9 @@ async def update_nursing(
     id: int,
     treatment: CaresPerUserUpdateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     treatment_to_update = CuidadosEnfermeriaPorUsuario(**treatment.__dict__)
     crud.update_medical_nursing(id, treatment_to_update)
@@ -1108,7 +1207,9 @@ async def update_intervention(
     id: int,
     treatment: InterventionsPerUserUpdateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     treatment_to_update = IntervencionesPorUsuario(**treatment.__dict__)
     crud.update_medical_intervention(id, treatment_to_update)
@@ -1125,7 +1226,9 @@ async def update_vaccine(
     id: int,
     treatment: VaccinesPerUserUpdateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     treatment_to_update = VacunasPorUsuario(**treatment.__dict__)
     crud.update_medical_vaccine(id, treatment_to_update)
@@ -1148,7 +1251,9 @@ async def update_family_member(
     family_member: UpdateFamilyMemberRequestDTO,
     kinship: AssociateFamilyMemberRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     db_family_member = crud._get_family_member_by_id(family_member_id)
     if not db_family_member:
@@ -1187,7 +1292,9 @@ async def update_user_medical_record(
     interventions: List[CreateUserAssociatedInterventionsRequestDTO],
     vaccines: List[CreateUserAssociatedVaccinesRequestDTO],
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     update_data = record.dict(exclude_unset=True)
     medicines_to_save = [
@@ -1223,7 +1330,9 @@ def update_reporte_clinico(
     reporte_id: int,
     reporte: ReporteClinicoUpdate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ReporteClinicoResponse]:
     report_to_update = ReportesClinicos(**reporte.__dict__)
     result = crud.update_medical_record(reporte_id, report_to_update)
@@ -1242,7 +1351,9 @@ def update_evolution(
     evolution_id: int,
     evolution: ClinicalEvolutionUpdate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ClinicalEvolutionResponse]:
     report_to_update = EvolucionesClinicas(**evolution.__dict__)
     result = crud.update_clinical_evolution(evolution_id, report_to_update)
@@ -1259,7 +1370,9 @@ def update_activity(
     id: int,
     activity: ActividadesGrupalesUpdate,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ActivitiesResponse]:
     activity_to_update = ActividadesGrupales(**activity.__dict__)
     result = crud.update_activity(id, activity_to_update)
@@ -1275,7 +1388,9 @@ def update_activity(
 async def delete_payment(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[None]:
     crud.delete_payment(id)
     return Response[None](
@@ -1290,7 +1405,9 @@ async def delete_payment(
 async def delete_user(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user(id)
     return Response[object](
@@ -1305,7 +1422,9 @@ async def delete_user(
 async def delete_family_member(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_family_member(id)
     return Response[object](
@@ -1320,7 +1439,9 @@ async def delete_family_member(
 async def delete_record(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user_medical_record(id)
     return Response[object](
@@ -1340,7 +1461,9 @@ async def delete_vaccine(
     id: int,
     vaccine_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user_vaccine_by_record_id(id, vaccine_id)
     return Response[object](
@@ -1360,7 +1483,9 @@ async def delete_medicine(
     id: int,
     medicine_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user_medicines_by_record_id(id, medicine_id)
     return Response[object](
@@ -1380,7 +1505,9 @@ async def delete_care(
     id: int,
     care_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user_care_by_record_id(id, care_id)
     return Response[object](
@@ -1400,7 +1527,9 @@ async def delete_intervention(
     id: int,
     intervention_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_user_intervention_by_record_id(id, intervention_id)
     return Response[object](
@@ -1415,7 +1544,9 @@ async def delete_intervention(
 async def delete_evolution(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     crud.delete_clinical_evolution(id)
     return Response[object](
@@ -1430,7 +1561,9 @@ async def delete_evolution(
 async def delete_report(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     crud.delete_medical_report(id)
     return Response[object](
@@ -1449,7 +1582,9 @@ async def delete_report(
 async def delete_activity(
     id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     crud.delete_activity(id)
     return Response[object](
@@ -1465,7 +1600,9 @@ def get_tarifa_servicio(
     id_servicio: int,
     anio: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user)
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     """Obtener la tarifa de un servicio para un año específico"""
     try:
@@ -1474,7 +1611,7 @@ def get_tarifa_servicio(
             data={
                 "id_servicio": tarifa.id_servicio,
                 "anio": tarifa.anio,
-                "precio_por_dia": float(tarifa.precio_por_dia)
+                "precio_por_dia": float(tarifa.precio_por_dia),
             },
             message="Tarifa obtenida exitosamente",
             status_code=HTTPStatus.OK,
@@ -1482,15 +1619,17 @@ def get_tarifa_servicio(
         )
     except Exception as e:
         raise HTTPException(
-            status_code=404, 
-            detail=f"Tarifa no encontrada para el servicio {id_servicio} en el año {anio}"
+            status_code=404,
+            detail=f"Tarifa no encontrada para el servicio {id_servicio} en el año {anio}",
         )
 
 
 @router.get("/contratos", response_model=Response[List[ContratoResponseDTO]])
 def listar_todos_contratos(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user)
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[ContratoResponseDTO]]:
     """Obtener todos los contratos del sistema"""
     try:
@@ -1503,46 +1642,56 @@ def listar_todos_contratos(
         )
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al obtener contratos: {str(e)}"
+            status_code=500, detail=f"Error al obtener contratos: {str(e)}"
         )
 
 
 @router.post("/contratos/", response_model=Response[ContratoResponseDTO])
 def crear_contrato(
-    data: ContratoCreateDTO, 
+    data: ContratoCreateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user)
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ContratoResponseDTO]:
     try:
         # Usar la función CRUD actualizada que retorna contrato y servicios_por_contrato
         result = crud.create_contract(data)
-        contrato = result['contrato']
-        servicios_por_contrato = result['servicios_por_contrato']
-        
+        contrato = result["contrato"]
+        servicios_por_contrato = result["servicios_por_contrato"]
+
         # Obtener fechas de tiquetera y transporte para cronogramas
         fechas_tiquetera = set()
         fechas_transporte = set()
         servicios_db = []
-        
+
         # Construir servicios_db para la respuesta usando los datos del CRUD
         for servicio_contratado in servicios_por_contrato:
             # Buscar el servicio original en data.servicios para obtener fechas_servicio
-            servicio_original = next(s for s in data.servicios if s.id_servicio == servicio_contratado['id_servicio'])
-            
+            servicio_original = next(
+                s
+                for s in data.servicios
+                if s.id_servicio == servicio_contratado["id_servicio"]
+            )
+
             # Clasificar fechas para cronogramas
             for f in servicio_original.fechas_servicio:
-                if servicio_contratado['id_servicio'] == 1:
+                if servicio_contratado["id_servicio"] == 1:
                     fechas_tiquetera.add(f.fecha)
-                elif servicio_contratado['id_servicio'] == 2:
+                elif servicio_contratado["id_servicio"] == 2:
                     fechas_transporte.add(f.fecha)
-            
+
             # Para la respuesta
-            fechas_dto = [FechaServicioDTO(fecha=f.fecha) for f in servicio_original.fechas_servicio]
+            fechas_dto = [
+                FechaServicioDTO(fecha=f.fecha)
+                for f in servicio_original.fechas_servicio
+            ]
             servicios_db.append(
                 ServicioContratoDTO(
-                    id_servicio_contratado=servicio_contratado['id_servicio_contratado'],
-                    id_servicio=servicio_contratado['id_servicio'],
+                    id_servicio_contratado=servicio_contratado[
+                        "id_servicio_contratado"
+                    ],
+                    id_servicio=servicio_contratado["id_servicio"],
                     fecha=servicio_original.fecha,
                     descripcion=servicio_original.descripcion,
                     precio_por_dia=servicio_original.precio_por_dia,
@@ -1552,7 +1701,7 @@ def crear_contrato(
 
         # Procesar cronogramas de asistencia y transporte
         id_profesional_default = 1
-        
+
         # 🔴 VALIDACIÓN: Verificar que no haya doble agendamiento antes de procesar
         fechas_conflicto = []
         for fecha in fechas_tiquetera:
@@ -1561,26 +1710,29 @@ def crear_contrato(
                 crud._CareLinkCrud__carelink_session.query(CronogramaAsistencia)
                 .filter(
                     CronogramaAsistencia.fecha == fecha,
-                    CronogramaAsistencia.id_profesional == id_profesional_default
+                    CronogramaAsistencia.id_profesional == id_profesional_default,
                 )
                 .first()
             )
-            
+
             if cronograma_existente:
                 # Verificar si el paciente ya está agendado para esta fecha
                 paciente_ya_agendado = (
-                    crud._CareLinkCrud__carelink_session.query(CronogramaAsistenciaPacientes)
+                    crud._CareLinkCrud__carelink_session.query(
+                        CronogramaAsistenciaPacientes
+                    )
                     .filter(
-                        CronogramaAsistenciaPacientes.id_cronograma == cronograma_existente.id_cronograma,
-                        CronogramaAsistenciaPacientes.id_usuario == data.id_usuario
+                        CronogramaAsistenciaPacientes.id_cronograma
+                        == cronograma_existente.id_cronograma,
+                        CronogramaAsistenciaPacientes.id_usuario == data.id_usuario,
                     )
                     .first()
                 )
-                
+
                 if paciente_ya_agendado:
                     fecha_formateada = fecha.strftime("%d/%m/%Y")
                     fechas_conflicto.append(fecha_formateada)
-        
+
         # Si hay fechas en conflicto, lanzar error con todas las fechas
         if fechas_conflicto:
             fechas_str = ", ".join(fechas_conflicto)
@@ -1591,6 +1743,7 @@ def crear_contrato(
                        f"Por favor, revise la agenda y corrija las fechas antes de continuar."
             )
         
+
         # Si llegamos aquí, no hay conflictos de doble agendamiento
         for fecha in fechas_tiquetera:
             # Crear o buscar cronograma de asistencia
@@ -1598,7 +1751,7 @@ def crear_contrato(
                 crud._CareLinkCrud__carelink_session.query(CronogramaAsistencia)
                 .filter(
                     CronogramaAsistencia.fecha == fecha,
-                    CronogramaAsistencia.id_profesional == id_profesional_default
+                    CronogramaAsistencia.id_profesional == id_profesional_default,
                 )
                 .first()
             )
@@ -1606,7 +1759,7 @@ def crear_contrato(
                 cronograma_asistencia = CronogramaAsistencia(
                     id_profesional=id_profesional_default,
                     fecha=fecha,
-                    comentario=f"Generado automáticamente desde contrato {contrato.id_contrato}"
+                    comentario=f"Generado automáticamente desde contrato {contrato.id_contrato}",
                 )
                 crud._CareLinkCrud__carelink_session.add(cronograma_asistencia)
                 crud._CareLinkCrud__carelink_session.commit()
@@ -1622,7 +1775,7 @@ def crear_contrato(
                 id_contrato=contrato.id_contrato,
                 estado_asistencia="PENDIENTE",
                 requiere_transporte=requiere_transporte,
-                observaciones=None
+                observaciones=None,
             )
             crud._CareLinkCrud__carelink_session.add(paciente_cronograma)
             crud._CareLinkCrud__carelink_session.commit()
@@ -1636,7 +1789,7 @@ def crear_contrato(
                     hora_recogida=time(8, 0),
                     hora_entrega=time(17, 0),
                     estado="PENDIENTE",
-                    observaciones="Generado automáticamente desde contrato"
+                    observaciones="Generado automáticamente desde contrato",
                 )
                 crud._CareLinkCrud__carelink_session.add(cronograma_transporte)
                 crud._CareLinkCrud__carelink_session.commit()
@@ -1671,7 +1824,9 @@ def crear_contrato(
 async def list_contract_bill(
     contract_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[FacturaOut]:
     bill = crud.get_contract_bill(contract_id)
     bill_response = FacturaOut.from_orm(bill)
@@ -1685,7 +1840,11 @@ async def list_contract_bill(
 
 @router.get("/contratos/{id_usuario}", response_model=List[ContratoResponseDTO])
 def listar_contratos_por_usuario(
-    id_usuario: int, db: Session = Depends(get_carelink_db)
+    id_usuario: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     try:
         contratos = db.query(Contratos).filter(Contratos.id_usuario == id_usuario).all()
@@ -1745,7 +1904,13 @@ def listar_contratos_por_usuario(
 
 
 @router.get("/contrato/{id_contrato}", response_model=ContratoResponseDTO)
-def obtener_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
+def obtener_contrato(
+    id_contrato: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
     contrato = db.query(Contratos).filter(Contratos.id_contrato == id_contrato).first()
 
     if not contrato:
@@ -1793,6 +1958,9 @@ def actualizar_contrato(
     id_contrato: int,
     data: ContratoUpdateDTO,
     db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     contrato = db.query(Contratos).filter(Contratos.id_contrato == id_contrato).first()
 
@@ -1862,6 +2030,9 @@ def crear_fechas_servicio(
     id_servicio: int,
     fechas: List[FechaServicioDTO],
     db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     for fecha in fechas:
         nueva_fecha = FechasServicio(
@@ -1878,6 +2049,9 @@ def actualizar_fechas_servicio(
     id_servicio_contratado: int,
     fechas: List[FechaServicioDTO],
     db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     servicio = (
         db.query(ServiciosPorContrato)
@@ -1903,7 +2077,13 @@ def actualizar_fechas_servicio(
 
 
 @router.post("/pagos/")
-def crear_pago(data: PagoCreateDTO, db: Session = Depends(get_carelink_db)):
+def crear_pago(
+    data: PagoCreateDTO,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
     factura = db.query(Facturas).filter(Facturas.id_factura == data.id_factura).first()
     if not factura:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
@@ -1935,13 +2115,25 @@ def crear_pago(data: PagoCreateDTO, db: Session = Depends(get_carelink_db)):
 
 
 @router.get("/pagos/factura/{factura_id}", response_model=list[PagoResponseDTO])
-def get_pagos_by_factura(factura_id: int, db: Session = Depends(get_carelink_db)):
+def get_pagos_by_factura(
+    factura_id: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
     pagos = db.query(Pagos).filter(Pagos.id_factura == factura_id).all()
     return [PagoResponseDTO.from_orm(pago) for pago in pagos]
 
 
 @router.delete("/pagos/{id_pago}")
-def eliminar_pago(id_pago: int, db: Session = Depends(get_carelink_db)):
+def eliminar_pago(
+    id_pago: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
     pago = db.query(Pagos).filter(Pagos.id_pago == id_pago).first()
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
@@ -1956,30 +2148,21 @@ def eliminar_pago(id_pago: int, db: Session = Depends(get_carelink_db)):
 # ============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ============================================================================
 # ENDPOINTS DE CRONOGRAMA DE ASISTENCIA
 # ============================================================================
 
-@router.post("/cronograma_asistencia/crear", response_model=Response[CronogramaAsistenciaResponseDTO])
+
+@router.post(
+    "/cronograma_asistencia/crear",
+    response_model=Response[CronogramaAsistenciaResponseDTO],
+)
 def crear_cronograma_asistencia(
     cronograma_data: CronogramaAsistenciaCreateDTO,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[CronogramaAsistenciaResponseDTO]:
     """
     Crea un nuevo cronograma de asistencia
@@ -1990,11 +2173,11 @@ def crear_cronograma_asistencia(
             db.query(CronogramaAsistencia)
             .filter(
                 CronogramaAsistencia.fecha == cronograma_data.fecha,
-                CronogramaAsistencia.id_profesional == cronograma_data.id_profesional
+                CronogramaAsistencia.id_profesional == cronograma_data.id_profesional,
             )
             .first()
         )
-        
+
         if cronograma_existente:
             # Si ya existe, retornar el existente
             return Response[CronogramaAsistenciaResponseDTO](
@@ -2005,24 +2188,24 @@ def crear_cronograma_asistencia(
                     comentario=cronograma_existente.comentario,
                     fecha_creacion=cronograma_existente.fecha_creacion,
                     fecha_actualizacion=cronograma_existente.fecha_actualizacion,
-                    pacientes=[]
+                    pacientes=[],
                 ),
                 status_code=HTTPStatus.OK,
                 message="Cronograma existente recuperado",
                 error=None,
             )
-        
+
         # Crear nuevo cronograma
         nuevo_cronograma = CronogramaAsistencia(
             id_profesional=cronograma_data.id_profesional,
             fecha=cronograma_data.fecha,
-            comentario=cronograma_data.comentario
+            comentario=cronograma_data.comentario,
         )
-        
+
         db.add(nuevo_cronograma)
         db.commit()
         db.refresh(nuevo_cronograma)
-        
+
         return Response[CronogramaAsistenciaResponseDTO](
             data=CronogramaAsistenciaResponseDTO(
                 id_cronograma=nuevo_cronograma.id_cronograma,
@@ -2031,26 +2214,30 @@ def crear_cronograma_asistencia(
                 comentario=nuevo_cronograma.comentario,
                 fecha_creacion=nuevo_cronograma.fecha_creacion,
                 fecha_actualizacion=nuevo_cronograma.fecha_actualizacion,
-                pacientes=[]
+                pacientes=[],
             ),
             status_code=HTTPStatus.CREATED,
             message="Cronograma creado exitosamente",
             error=None,
         )
-        
+
     except Exception as e:
         db.rollback()
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al crear cronograma: {str(e)}"
+            status_code=500, detail=f"Error al crear cronograma: {str(e)}"
         )
 
 
-@router.post("/cronograma_asistencia/paciente/agregar", response_model=Response[CronogramaAsistenciaPacienteResponseDTO])
+@router.post(
+    "/cronograma_asistencia/paciente/agregar",
+    response_model=Response[CronogramaAsistenciaPacienteResponseDTO],
+)
 def agregar_paciente_cronograma(
     paciente_data: CronogramaAsistenciaPacienteCreateDTO,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
     """
     Agrega un paciente a un cronograma de asistencia existente
@@ -2062,61 +2249,62 @@ def agregar_paciente_cronograma(
             .filter(CronogramaAsistencia.id_cronograma == paciente_data.id_cronograma)
             .first()
         )
-        
+
         if not cronograma:
             raise HTTPException(
                 status_code=404,
-                detail=f"No se encontró el cronograma con ID {paciente_data.id_cronograma}"
+                detail=f"No se encontró el cronograma con ID {paciente_data.id_cronograma}",
             )
-        
+
         # 🔴 VALIDACIÓN: Verificar que el paciente ya está en el cronograma
         paciente_existente = (
             db.query(CronogramaAsistenciaPacientes)
             .filter(
-                CronogramaAsistenciaPacientes.id_cronograma == paciente_data.id_cronograma,
-                CronogramaAsistenciaPacientes.id_usuario == paciente_data.id_usuario
+                CronogramaAsistenciaPacientes.id_cronograma
+                == paciente_data.id_cronograma,
+                CronogramaAsistenciaPacientes.id_usuario == paciente_data.id_usuario,
             )
             .first()
         )
-        
+
         if paciente_existente:
             raise HTTPException(
                 status_code=400,
                 detail=f"El paciente ya está registrado en este cronograma para la fecha {cronograma.fecha}. "
-                       f"No se puede crear un doble agendamiento. "
-                       f"Paciente ID: {paciente_data.id_usuario}, "
-                       f"Estado actual: {paciente_existente.estado_asistencia}"
+                f"No se puede crear un doble agendamiento. "
+                f"Paciente ID: {paciente_data.id_usuario}, "
+                f"Estado actual: {paciente_existente.estado_asistencia}",
             )
-        
+
         # 🔴 VALIDACIÓN: Verificar que el contrato existe y pertenece al usuario
         contrato = (
             db.query(Contratos)
             .filter(
                 Contratos.id_contrato == paciente_data.id_contrato,
-                Contratos.id_usuario == paciente_data.id_usuario
+                Contratos.id_usuario == paciente_data.id_usuario,
             )
             .first()
         )
-        
+
         if not contrato:
             raise HTTPException(
                 status_code=400,
-                detail=f"El contrato {paciente_data.id_contrato} no existe o no pertenece al usuario {paciente_data.id_usuario}"
+                detail=f"El contrato {paciente_data.id_contrato} no existe o no pertenece al usuario {paciente_data.id_usuario}",
             )
-        
+
         # Agregar paciente al cronograma
         nuevo_paciente = CronogramaAsistenciaPacientes(
             id_cronograma=paciente_data.id_cronograma,
             id_usuario=paciente_data.id_usuario,
             id_contrato=paciente_data.id_contrato,
             estado_asistencia=paciente_data.estado_asistencia,
-            observaciones=paciente_data.observaciones
+            observaciones=paciente_data.observaciones,
         )
-        
+
         db.add(nuevo_paciente)
         db.commit()
         db.refresh(nuevo_paciente)
-        
+
         return Response[CronogramaAsistenciaPacienteResponseDTO](
             data=CronogramaAsistenciaPacienteResponseDTO(
                 id_cronograma_paciente=nuevo_paciente.id_cronograma_paciente,
@@ -2125,29 +2313,33 @@ def agregar_paciente_cronograma(
                 id_contrato=nuevo_paciente.id_contrato,
                 estado_asistencia=nuevo_paciente.estado_asistencia,
                 requiere_transporte=nuevo_paciente.requiere_transporte,
-                observaciones=nuevo_paciente.observaciones
+                observaciones=nuevo_paciente.observaciones,
             ),
             status_code=HTTPStatus.CREATED,
             message="Paciente agregado al cronograma exitosamente",
             error=None,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al agregar paciente al cronograma: {str(e)}"
+            status_code=500, detail=f"Error al agregar paciente al cronograma: {str(e)}"
         )
 
 
-@router.get("/cronograma_asistencia/rango/{fecha_inicio}/{fecha_fin}", response_model=Response[List[CronogramaAsistenciaResponseDTO]])
+@router.get(
+    "/cronograma_asistencia/rango/{fecha_inicio}/{fecha_fin}",
+    response_model=Response[List[CronogramaAsistenciaResponseDTO]],
+)
 def get_cronogramas_por_rango(
     fecha_inicio: str,
     fecha_fin: str,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[CronogramaAsistenciaResponseDTO]]:
     """
     Obtiene los cronogramas de asistencia en un rango de fechas
@@ -2156,44 +2348,60 @@ def get_cronogramas_por_rango(
         # Convertir fechas de string a date
         fecha_inicio_date = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
         fecha_fin_date = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
-        
+
         # Consultar cronogramas en el rango
         cronogramas = (
             db.query(CronogramaAsistencia)
             .filter(
                 CronogramaAsistencia.fecha >= fecha_inicio_date,
-                CronogramaAsistencia.fecha <= fecha_fin_date
+                CronogramaAsistencia.fecha <= fecha_fin_date,
             )
             .all()
         )
-        
+
         result = []
         for cronograma in cronogramas:
             # Obtener pacientes agendados para este cronograma
             pacientes_agendados = (
                 db.query(CronogramaAsistenciaPacientes, User)
                 .join(User, CronogramaAsistenciaPacientes.id_usuario == User.id_usuario)
-                .filter(CronogramaAsistenciaPacientes.id_cronograma == cronograma.id_cronograma)
+                .filter(
+                    CronogramaAsistenciaPacientes.id_cronograma
+                    == cronograma.id_cronograma
+                )
                 .all()
             )
-            
+
             pacientes_dto = []
             for paciente_agendado, usuario in pacientes_agendados:
                 # Obtener información de transporte si existe
                 transporte_info = None
                 if paciente_agendado.requiere_transporte:
-                    transporte = db.query(CronogramaTransporte).filter(
-                        CronogramaTransporte.id_cronograma_paciente == paciente_agendado.id_cronograma_paciente
-                    ).first()
+                    transporte = (
+                        db.query(CronogramaTransporte)
+                        .filter(
+                            CronogramaTransporte.id_cronograma_paciente
+                            == paciente_agendado.id_cronograma_paciente
+                        )
+                        .first()
+                    )
                     if transporte:
                         transporte_info = {
                             "id_transporte": transporte.id_transporte,
                             "direccion_recogida": transporte.direccion_recogida,
                             "direccion_entrega": transporte.direccion_entrega,
-                            "hora_recogida": str(transporte.hora_recogida) if transporte.hora_recogida else None,
-                            "hora_entrega": str(transporte.hora_entrega) if transporte.hora_entrega else None,
+                            "hora_recogida": (
+                                str(transporte.hora_recogida)
+                                if transporte.hora_recogida
+                                else None
+                            ),
+                            "hora_entrega": (
+                                str(transporte.hora_entrega)
+                                if transporte.hora_entrega
+                                else None
+                            ),
                             "estado": transporte.estado,
-                            "observaciones": transporte.observaciones
+                            "observaciones": transporte.observaciones,
                         }
                 pacientes_dto.append(
                     PacientePorFechaDTO(
@@ -2207,10 +2415,10 @@ def get_cronogramas_por_rango(
                         n_documento=usuario.n_documento,
                         transporte_info=transporte_info,
                         fecha_creacion=paciente_agendado.fecha_creacion,
-                        fecha_actualizacion=paciente_agendado.fecha_actualizacion
+                        fecha_actualizacion=paciente_agendado.fecha_actualizacion,
                     )
                 )
-            
+
             result.append(
                 CronogramaAsistenciaResponseDTO(
                     id_cronograma=cronograma.id_cronograma,
@@ -2219,34 +2427,37 @@ def get_cronogramas_por_rango(
                     comentario=cronograma.comentario,
                     fecha_creacion=cronograma.fecha_creacion,
                     fecha_actualizacion=cronograma.fecha_actualizacion,
-                    pacientes=pacientes_dto
+                    pacientes=pacientes_dto,
                 )
             )
-        
+
         return Response[List[CronogramaAsistenciaResponseDTO]](
             data=result,
             status_code=HTTPStatus.OK,
             message="Cronogramas consultados exitosamente",
             error=None,
         )
-        
+
     except ValueError as e:
         raise HTTPException(
-            status_code=400,
-            detail=f"Formato de fecha inválido: {str(e)}"
+            status_code=400, detail=f"Formato de fecha inválido: {str(e)}"
         )
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error interno del servidor: {str(e)}"
+            status_code=500, detail=f"Error interno del servidor: {str(e)}"
         )
 
 
-@router.get("/cronograma_asistencia/profesional/{id_profesional}", response_model=Response[List[CronogramaAsistenciaResponseDTO]])
+@router.get(
+    "/cronograma_asistencia/profesional/{id_profesional}",
+    response_model=Response[List[CronogramaAsistenciaResponseDTO]],
+)
 def get_cronogramas_por_profesional(
     id_profesional: int,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[CronogramaAsistenciaResponseDTO]]:
     """
     Obtiene los cronogramas de asistencia de un profesional específico
@@ -2258,34 +2469,50 @@ def get_cronogramas_por_profesional(
             .filter(CronogramaAsistencia.id_profesional == id_profesional)
             .all()
         )
-        
+
         result = []
         for cronograma in cronogramas:
             # Obtener pacientes agendados para este cronograma
             pacientes_agendados = (
                 db.query(CronogramaAsistenciaPacientes, User)
                 .join(User, CronogramaAsistenciaPacientes.id_usuario == User.id_usuario)
-                .filter(CronogramaAsistenciaPacientes.id_cronograma == cronograma.id_cronograma)
+                .filter(
+                    CronogramaAsistenciaPacientes.id_cronograma
+                    == cronograma.id_cronograma
+                )
                 .all()
             )
-            
+
             pacientes_dto = []
             for paciente_agendado, usuario in pacientes_agendados:
                 # Obtener información de transporte si existe
                 transporte_info = None
                 if paciente_agendado.requiere_transporte:
-                    transporte = db.query(CronogramaTransporte).filter(
-                        CronogramaTransporte.id_cronograma_paciente == paciente_agendado.id_cronograma_paciente
-                    ).first()
+                    transporte = (
+                        db.query(CronogramaTransporte)
+                        .filter(
+                            CronogramaTransporte.id_cronograma_paciente
+                            == paciente_agendado.id_cronograma_paciente
+                        )
+                        .first()
+                    )
                     if transporte:
                         transporte_info = {
                             "id_transporte": transporte.id_transporte,
                             "direccion_recogida": transporte.direccion_recogida,
                             "direccion_entrega": transporte.direccion_entrega,
-                            "hora_recogida": str(transporte.hora_recogida) if transporte.hora_recogida else None,
-                            "hora_entrega": str(transporte.hora_entrega) if transporte.hora_entrega else None,
+                            "hora_recogida": (
+                                str(transporte.hora_recogida)
+                                if transporte.hora_recogida
+                                else None
+                            ),
+                            "hora_entrega": (
+                                str(transporte.hora_entrega)
+                                if transporte.hora_entrega
+                                else None
+                            ),
                             "estado": transporte.estado,
-                            "observaciones": transporte.observaciones
+                            "observaciones": transporte.observaciones,
                         }
                 pacientes_dto.append(
                     PacientePorFechaDTO(
@@ -2299,10 +2526,10 @@ def get_cronogramas_por_profesional(
                         n_documento=usuario.n_documento,
                         transporte_info=transporte_info,
                         fecha_creacion=paciente_agendado.fecha_creacion,
-                        fecha_actualizacion=paciente_agendado.fecha_actualizacion
+                        fecha_actualizacion=paciente_agendado.fecha_actualizacion,
                     )
                 )
-            
+
             result.append(
                 CronogramaAsistenciaResponseDTO(
                     id_cronograma=cronograma.id_cronograma,
@@ -2311,83 +2538,105 @@ def get_cronogramas_por_profesional(
                     comentario=cronograma.comentario,
                     fecha_creacion=cronograma.fecha_creacion,
                     fecha_actualizacion=cronograma.fecha_actualizacion,
-                    pacientes=pacientes_dto
+                    pacientes=pacientes_dto,
                 )
             )
-        
+
         return Response[List[CronogramaAsistenciaResponseDTO]](
             data=result,
             status_code=HTTPStatus.OK,
             message="Cronogramas del profesional consultados exitosamente",
             error=None,
         )
-        
+
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error interno del servidor: {str(e)}"
+            status_code=500, detail=f"Error interno del servidor: {str(e)}"
         )
 
 
-@router.patch("/cronograma_asistencia/paciente/{id_cronograma_paciente}/estado", response_model=Response[CronogramaAsistenciaPacienteResponseDTO])
+@router.patch(
+    "/cronograma_asistencia/paciente/{id_cronograma_paciente}/estado",
+    response_model=Response[CronogramaAsistenciaPacienteResponseDTO],
+)
 def update_estado_asistencia(
     id_cronograma_paciente: int,
     estado_data: EstadoAsistenciaUpdateDTO,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
     """
-    Actualiza el estado de asistencia de un paciente y guarda observaciones. 
-    Si asiste o no asiste (sin justificación), descuenta día de tiquetera. 
+    Actualiza el estado de asistencia de un paciente y guarda observaciones.
+    Si asiste o no asiste (sin justificación), descuenta día de tiquetera.
     Si se agotan días, marca contrato como vencido y genera alerta.
     """
     try:
         paciente_cronograma = (
             db.query(CronogramaAsistenciaPacientes)
-            .filter(CronogramaAsistenciaPacientes.id_cronograma_paciente == id_cronograma_paciente)
+            .filter(
+                CronogramaAsistenciaPacientes.id_cronograma_paciente
+                == id_cronograma_paciente
+            )
             .first()
         )
         if not paciente_cronograma:
             raise HTTPException(
-                status_code=404,
-                detail="Paciente no encontrado en el cronograma"
+                status_code=404, detail="Paciente no encontrado en el cronograma"
             )
-        
+
         # 🔴 VALIDACIÓN: Solo se puede cambiar estado de registros "PENDIENTE"
         if paciente_cronograma.estado_asistencia != "PENDIENTE":
             raise HTTPException(
                 status_code=400,
-                detail=f"No se puede cambiar el estado de un paciente con estado '{paciente_cronograma.estado_asistencia}'. Solo se puede modificar registros con estado 'PENDIENTE'."
+                detail=f"No se puede cambiar el estado de un paciente con estado '{paciente_cronograma.estado_asistencia}'. Solo se puede modificar registros con estado 'PENDIENTE'.",
             )
-        
+
         estados_validos = ["PENDIENTE", "ASISTIO", "NO_ASISTIO", "CANCELADO"]
         if estado_data.estado_asistencia not in estados_validos:
             raise HTTPException(
                 status_code=400,
-                detail=f"Estado inválido. Estados válidos: {', '.join(estados_validos)}"
+                detail=f"Estado inválido. Estados válidos: {', '.join(estados_validos)}",
             )
         # Guardar observaciones
         paciente_cronograma.observaciones = estado_data.observaciones
         paciente_cronograma.estado_asistencia = estado_data.estado_asistencia
         db.commit()
         db.refresh(paciente_cronograma)
-        
+
         # 🔴 LÓGICA DE DESCUENTO DE DÍAS DE TIQUETERA
         # Se descuenta día tanto si ASISTE como si NO ASISTE (sin justificación)
         if estado_data.estado_asistencia in ["ASISTIO", "NO_ASISTIO"]:
-            contrato = db.query(Contratos).filter(Contratos.id_contrato == paciente_cronograma.id_contrato).first()
+            contrato = (
+                db.query(Contratos)
+                .filter(Contratos.id_contrato == paciente_cronograma.id_contrato)
+                .first()
+            )
             if contrato:
                 # Contar días consumidos (asistencias + no asistencias)
-                total_dias_consumidos = db.query(CronogramaAsistenciaPacientes).filter(
-                    CronogramaAsistenciaPacientes.id_contrato == contrato.id_contrato,
-                    CronogramaAsistenciaPacientes.estado_asistencia.in_(["ASISTIO", "NO_ASISTIO"])
-                ).count()
-                
+                total_dias_consumidos = (
+                    db.query(CronogramaAsistenciaPacientes)
+                    .filter(
+                        CronogramaAsistenciaPacientes.id_contrato
+                        == contrato.id_contrato,
+                        CronogramaAsistenciaPacientes.estado_asistencia.in_(
+                            ["ASISTIO", "NO_ASISTIO"]
+                        ),
+                    )
+                    .count()
+                )
+
                 # Contar total de días de la tiquetera (servicio 1)
-                total_tiquetera = db.query(CronogramaAsistenciaPacientes).filter(
-                    CronogramaAsistenciaPacientes.id_contrato == contrato.id_contrato
-                ).count()
-                
+                total_tiquetera = (
+                    db.query(CronogramaAsistenciaPacientes)
+                    .filter(
+                        CronogramaAsistenciaPacientes.id_contrato
+                        == contrato.id_contrato
+                    )
+                    .count()
+                )
+
                 # Si se agotaron todos los días, marcar contrato como vencido
                 if total_dias_consumidos >= total_tiquetera:
                     contrato.estado = "VENCIDO"
@@ -2402,7 +2651,7 @@ def update_estado_asistencia(
             requiere_transporte=paciente_cronograma.requiere_transporte,
             observaciones=paciente_cronograma.observaciones,
             fecha_creacion=paciente_cronograma.fecha_creacion,
-            fecha_actualizacion=paciente_cronograma.fecha_actualizacion
+            fecha_actualizacion=paciente_cronograma.fecha_actualizacion,
         )
         return Response[CronogramaAsistenciaPacienteResponseDTO](
             data=response_dto,
@@ -2414,17 +2663,21 @@ def update_estado_asistencia(
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error interno del servidor: {str(e)}"
+            status_code=500, detail=f"Error interno del servidor: {str(e)}"
         )
 
 
-@router.post("/cronograma_asistencia/paciente/{id_cronograma_paciente}/reagendar", response_model=Response[CronogramaAsistenciaPacienteResponseDTO])
+@router.post(
+    "/cronograma_asistencia/paciente/{id_cronograma_paciente}/reagendar",
+    response_model=Response[CronogramaAsistenciaPacienteResponseDTO],
+)
 def reagendar_asistencia_paciente(
     id_cronograma_paciente: int,
     estado_data: EstadoAsistenciaUpdateDTO,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
     """
     Reagenda la asistencia de un paciente SOLO si existe justificación (observaciones) y nueva fecha.
@@ -2432,84 +2685,96 @@ def reagendar_asistencia_paciente(
     try:
         paciente_cronograma = (
             db.query(CronogramaAsistenciaPacientes)
-            .filter(CronogramaAsistenciaPacientes.id_cronograma_paciente == id_cronograma_paciente)
+            .filter(
+                CronogramaAsistenciaPacientes.id_cronograma_paciente
+                == id_cronograma_paciente
+            )
             .first()
         )
         if not paciente_cronograma:
             raise HTTPException(
-                status_code=404,
-                detail="Paciente no encontrado en el cronograma"
+                status_code=404, detail="Paciente no encontrado en el cronograma"
             )
-        
+
         # 🔴 VALIDACIÓN POR REGISTRO INDIVIDUAL Y ESTADO
         # Solo se puede reagendar si el estado es "PENDIENTE"
-        if paciente_cronograma.estado_asistencia in ["REAGENDADO", "ASISTIO", "NO_ASISTIO", "CANCELADO"]:
+        if paciente_cronograma.estado_asistencia in [
+            "REAGENDADO",
+            "ASISTIO",
+            "NO_ASISTIO",
+            "CANCELADO",
+        ]:
             raise HTTPException(
                 status_code=400,
-                detail=f"No se puede reagendar un paciente que ya tiene estado '{paciente_cronograma.estado_asistencia}' en esta fecha. Solo se puede reagendar si el estado es 'PENDIENTE'."
+                detail=f"No se puede reagendar un paciente que ya tiene estado '{paciente_cronograma.estado_asistencia}' en esta fecha. Solo se puede reagendar si el estado es 'PENDIENTE'.",
             )
-        
+
         if not estado_data.observaciones or not estado_data.observaciones.strip():
             raise HTTPException(
                 status_code=400,
-                detail="No se puede reagendar sin justificación en observaciones."
+                detail="No se puede reagendar sin justificación en observaciones.",
             )
         if not estado_data.nueva_fecha:
             raise HTTPException(
                 status_code=400,
-                detail="Debe seleccionar una nueva fecha para reagendar."
+                detail="Debe seleccionar una nueva fecha para reagendar.",
             )
-        
+
         # 🔴 PASO 1: Obtener el id_profesional del cronograma original
-        cronograma_original = db.query(CronogramaAsistencia).filter_by(
-            id_cronograma=paciente_cronograma.id_cronograma
-        ).first()
+        cronograma_original = (
+            db.query(CronogramaAsistencia)
+            .filter_by(id_cronograma=paciente_cronograma.id_cronograma)
+            .first()
+        )
         id_profesional = cronograma_original.id_profesional
-        
+
         # 🔴 PASO 2: Buscar o crear cronograma para la nueva fecha
-        cronograma_nuevo = db.query(CronogramaAsistencia).filter_by(
-            id_profesional=id_profesional,
-            fecha=estado_data.nueva_fecha
-        ).first()
-        
+        cronograma_nuevo = (
+            db.query(CronogramaAsistencia)
+            .filter_by(id_profesional=id_profesional, fecha=estado_data.nueva_fecha)
+            .first()
+        )
+
         if not cronograma_nuevo:
             cronograma_nuevo = CronogramaAsistencia(
-                id_profesional=id_profesional,
-                fecha=estado_data.nueva_fecha
+                id_profesional=id_profesional, fecha=estado_data.nueva_fecha
             )
             db.add(cronograma_nuevo)
             db.commit()
             db.refresh(cronograma_nuevo)
-        
+
         # 🔴 PASO 3: Verificar que no esté ya agendado para la nueva fecha
-        agendado_existente = db.query(CronogramaAsistenciaPacientes).filter_by(
-            id_cronograma=cronograma_nuevo.id_cronograma,
-            id_usuario=paciente_cronograma.id_usuario
-        ).first()
-        
+        agendado_existente = (
+            db.query(CronogramaAsistenciaPacientes)
+            .filter_by(
+                id_cronograma=cronograma_nuevo.id_cronograma,
+                id_usuario=paciente_cronograma.id_usuario,
+            )
+            .first()
+        )
+
         if agendado_existente:
             raise HTTPException(
-                status_code=400,
-                detail="El paciente ya está agendado para esta fecha."
+                status_code=400, detail="El paciente ya está agendado para esta fecha."
             )
-        
+
         # 🔴 PASO 4: Crear nuevo registro para la nueva fecha
         nuevo_paciente_cronograma = CronogramaAsistenciaPacientes(
             id_cronograma=cronograma_nuevo.id_cronograma,
             id_usuario=paciente_cronograma.id_usuario,
             id_contrato=paciente_cronograma.id_contrato,
             estado_asistencia="PENDIENTE",
-            observaciones=""
+            observaciones="",
         )
         db.add(nuevo_paciente_cronograma)
         db.commit()
         db.refresh(nuevo_paciente_cronograma)
-        
+
         # 🔴 PASO 5: SOLO DESPUÉS de crear exitosamente el nuevo registro, cambiar estado del original
         paciente_cronograma.estado_asistencia = "REAGENDADO"
         paciente_cronograma.observaciones = estado_data.observaciones
         db.commit()
-        
+
         response_dto = CronogramaAsistenciaPacienteResponseDTO(
             id_cronograma_paciente=nuevo_paciente_cronograma.id_cronograma_paciente,
             id_cronograma=nuevo_paciente_cronograma.id_cronograma,
@@ -2519,7 +2784,7 @@ def reagendar_asistencia_paciente(
             requiere_transporte=nuevo_paciente_cronograma.requiere_transporte,
             observaciones=nuevo_paciente_cronograma.observaciones,
             fecha_creacion=nuevo_paciente_cronograma.fecha_creacion,
-            fecha_actualizacion=nuevo_paciente_cronograma.fecha_actualizacion
+            fecha_actualizacion=nuevo_paciente_cronograma.fecha_actualizacion,
         )
         return Response[CronogramaAsistenciaPacienteResponseDTO](
             data=response_dto,
@@ -2531,8 +2796,7 @@ def reagendar_asistencia_paciente(
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error interno del servidor: {str(e)}"
+            status_code=500, detail=f"Error interno del servidor: {str(e)}"
         )
 
 
@@ -2546,45 +2810,50 @@ def reagendar_asistencia_paciente(
 # ENDPOINTS DE FACTURACIÓN - IMPLEMENTACIÓN COMPLETA
 # ============================================================================
 
+
 @router.post("/facturas/", response_model=Response[FacturaOut])
 def create_factura(
-    factura_data: FacturaCreate, 
+    factura_data: FacturaCreate,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user)
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[FacturaOut]:
     """
     Crea una nueva factura con sus pagos asociados
-    
+
     Args:
         factura_data: Datos de la factura incluyendo pagos
         db: Sesión de base de datos
         _: Usuario autenticado
-        
+
     Returns:
         Response con la factura creada
-        
+
     Raises:
         HTTPException: Si el contrato no existe o hay errores de validación
     """
     try:
         # Validar que el contrato existe
-        contrato = db.query(Contratos).filter(
-            Contratos.id_contrato == factura_data.id_contrato
-        ).first()
-        
+        contrato = (
+            db.query(Contratos)
+            .filter(Contratos.id_contrato == factura_data.id_contrato)
+            .first()
+        )
+
         if not contrato:
             raise HTTPException(
-                status_code=404, 
-                detail=f"Contrato con ID {factura_data.id_contrato} no encontrado"
+                status_code=404,
+                detail=f"Contrato con ID {factura_data.id_contrato} no encontrado",
             )
-        
+
         # Validar que el contrato esté activo
         if contrato.estado != "ACTIVO":
             raise HTTPException(
                 status_code=400,
-                detail=f"El contrato {contrato.id_contrato} no está activo (estado: {contrato.estado})"
+                detail=f"El contrato {contrato.id_contrato} no está activo (estado: {contrato.estado})",
             )
-        
+
         # Crear la factura
         factura = Facturas(
             id_contrato=factura_data.id_contrato,
@@ -2594,79 +2863,83 @@ def create_factura(
             subtotal=factura_data.total,  # Por defecto igual al total
             impuestos=0.00,
             descuentos=0.00,
-            estado_factura=EstadoFactura.PENDIENTE
+            estado_factura=EstadoFactura.PENDIENTE,
         )
-        
+
         db.add(factura)
         db.flush()  # Para obtener el ID de la factura
-        
+
         # Procesar pagos si existen
         total_pagos = 0
         for pago_data in factura_data.pagos:
             # Validar método de pago
-            metodo_pago = db.query(MetodoPago).filter(
-                MetodoPago.id_metodo_pago == pago_data.id_metodo_pago
-            ).first()
-            
+            metodo_pago = (
+                db.query(MetodoPago)
+                .filter(MetodoPago.id_metodo_pago == pago_data.id_metodo_pago)
+                .first()
+            )
+
             if not metodo_pago:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Método de pago con ID {pago_data.id_metodo_pago} no existe"
+                    detail=f"Método de pago con ID {pago_data.id_metodo_pago} no existe",
                 )
-            
+
             # Validar tipo de pago
-            tipo_pago = db.query(TipoPago).filter(
-                TipoPago.id_tipo_pago == pago_data.id_tipo_pago
-            ).first()
-            
+            tipo_pago = (
+                db.query(TipoPago)
+                .filter(TipoPago.id_tipo_pago == pago_data.id_tipo_pago)
+                .first()
+            )
+
             if not tipo_pago:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Tipo de pago con ID {pago_data.id_tipo_pago} no existe"
+                    detail=f"Tipo de pago con ID {pago_data.id_tipo_pago} no existe",
                 )
-            
+
             # Crear el pago
             pago = Pagos(
                 id_factura=factura.id_factura,
                 id_metodo_pago=pago_data.id_metodo_pago,
                 id_tipo_pago=pago_data.id_tipo_pago,
                 fecha_pago=pago_data.fecha_pago,
-                valor=pago_data.valor
+                valor=pago_data.valor,
             )
-            
+
             db.add(pago)
             total_pagos += float(pago_data.valor)
-        
+
         # Validar que los pagos no excedan el total de la factura
         if total_pagos > float(factura_data.total):
             raise HTTPException(
                 status_code=400,
-                detail=f"El total de pagos ({total_pagos}) excede el total de la factura ({factura_data.total})"
+                detail=f"El total de pagos ({total_pagos}) excede el total de la factura ({factura_data.total})",
             )
-        
+
         # Actualizar estado de la factura si los pagos cubren el total
         if total_pagos >= float(factura_data.total):
             factura.estado_factura = EstadoFactura.PAGADA
-        
+
         db.commit()
         db.refresh(factura)
-        
+
         # Crear respuesta
         factura_response = FacturaOut(
             id_factura=factura.id_factura,
             numero_factura=factura.numero_factura,
             id_contrato=factura.id_contrato,
             fecha_emision=factura.fecha_emision,
-            total_factura=float(factura.total_factura)
+            total_factura=float(factura.total_factura),
         )
-        
+
         return Response[FacturaOut](
             data=factura_response,
             status_code=HTTPStatus.CREATED,
             message="Factura creada exitosamente",
-            error=None
+            error=None,
         )
-        
+
     except HTTPException:
         db.rollback()
         raise
@@ -2674,114 +2947,117 @@ def create_factura(
         db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Error interno del servidor al crear factura: {str(e)}"
+            detail=f"Error interno del servidor al crear factura: {str(e)}",
         )
 
 
 @router.post("/facturas/{factura_id}/pagos/", response_model=Response[dict])
 def add_pago_to_factura(
-    factura_id: int, 
-    pagos: List[PagoCreate], 
+    factura_id: int,
+    pagos: List[PagoCreate],
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user)
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[dict]:
     """
     Agrega uno o varios pagos a una factura existente
-    
+
     Args:
         factura_id: ID de la factura
         pagos: Lista de pagos a agregar
         db: Sesión de base de datos
         _: Usuario autenticado
-        
+
     Returns:
         Response con mensaje de confirmación
-        
+
     Raises:
         HTTPException: Si la factura no existe o hay errores de validación
     """
     try:
         # Validar que la factura existe
-        factura = db.query(Facturas).filter(
-            Facturas.id_factura == factura_id
-        ).first()
-        
+        factura = db.query(Facturas).filter(Facturas.id_factura == factura_id).first()
+
         if not factura:
             raise HTTPException(
-                status_code=404, 
-                detail=f"Factura con ID {factura_id} no encontrada"
+                status_code=404, detail=f"Factura con ID {factura_id} no encontrada"
             )
-        
+
         # Validar que la factura no esté cancelada o anulada
         if factura.estado_factura in [EstadoFactura.CANCELADA, EstadoFactura.ANULADA]:
             raise HTTPException(
                 status_code=400,
-                detail=f"No se pueden agregar pagos a una factura con estado {factura.estado_factura.value}"
+                detail=f"No se pueden agregar pagos a una factura con estado {factura.estado_factura.value}",
             )
-        
+
         # Calcular total de pagos existentes
         total_existente = sum(float(p.valor) for p in factura.pagos)
         total_nuevo = sum(float(p.valor) for p in pagos)
         total_factura = float(factura.total_factura)
-        
+
         # Validar que los nuevos pagos no excedan el total
         if total_existente + total_nuevo > total_factura:
             raise HTTPException(
                 status_code=400,
                 detail=f"Los pagos exceden el total de la factura. "
-                       f"Total factura: {total_factura}, "
-                       f"Pagos existentes: {total_existente}, "
-                       f"Nuevos pagos: {total_nuevo}"
+                f"Total factura: {total_factura}, "
+                f"Pagos existentes: {total_existente}, "
+                f"Nuevos pagos: {total_nuevo}",
             )
-        
+
         # Procesar cada pago
         for pago_data in pagos:
             # Validar método de pago
-            metodo_pago = db.query(MetodoPago).filter(
-                MetodoPago.id_metodo_pago == pago_data.id_metodo_pago
-            ).first()
-            
+            metodo_pago = (
+                db.query(MetodoPago)
+                .filter(MetodoPago.id_metodo_pago == pago_data.id_metodo_pago)
+                .first()
+            )
+
             if not metodo_pago:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Método de pago con ID {pago_data.id_metodo_pago} no existe"
+                    detail=f"Método de pago con ID {pago_data.id_metodo_pago} no existe",
                 )
-            
+
             # Validar tipo de pago
-            tipo_pago = db.query(TipoPago).filter(
-                TipoPago.id_tipo_pago == pago_data.id_tipo_pago
-            ).first()
-            
+            tipo_pago = (
+                db.query(TipoPago)
+                .filter(TipoPago.id_tipo_pago == pago_data.id_tipo_pago)
+                .first()
+            )
+
             if not tipo_pago:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Tipo de pago con ID {pago_data.id_tipo_pago} no existe"
+                    detail=f"Tipo de pago con ID {pago_data.id_tipo_pago} no existe",
                 )
-            
+
             # Crear el pago
             pago = Pagos(
                 id_factura=factura_id,
                 id_metodo_pago=pago_data.id_metodo_pago,
                 id_tipo_pago=pago_data.id_tipo_pago,
                 fecha_pago=pago_data.fecha_pago,
-                valor=pago_data.valor
+                valor=pago_data.valor,
             )
-            
+
             db.add(pago)
-        
+
         # Actualizar estado de la factura si los pagos cubren el total
         if total_existente + total_nuevo >= total_factura:
             factura.estado_factura = EstadoFactura.PAGADA
-        
+
         db.commit()
-        
+
         return Response[dict](
             data={"factura_id": factura_id, "pagos_agregados": len(pagos)},
             status_code=HTTPStatus.OK,
             message=f"Se agregaron {len(pagos)} pagos a la factura exitosamente",
-            error=None
+            error=None,
         )
-        
+
     except HTTPException:
         db.rollback()
         raise
@@ -2789,60 +3065,59 @@ def add_pago_to_factura(
         db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Error interno del servidor al agregar pagos: {str(e)}"
+            detail=f"Error interno del servidor al agregar pagos: {str(e)}",
         )
 
 
 @router.delete("/facturas/{factura_id}", response_model=Response[dict])
 def delete_factura(
-    factura_id: int, 
+    factura_id: int,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user)
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[dict]:
     """
     Elimina una factura y todos sus pagos asociados
-    
+
     Args:
         factura_id: ID de la factura a eliminar
         db: Sesión de base de datos
         _: Usuario autenticado
-        
+
     Returns:
         Response con mensaje de confirmación
-        
+
     Raises:
         HTTPException: Si la factura no existe o no se puede eliminar
     """
     try:
         # Validar que la factura existe
-        factura = db.query(Facturas).filter(
-            Facturas.id_factura == factura_id
-        ).first()
-        
+        factura = db.query(Facturas).filter(Facturas.id_factura == factura_id).first()
+
         if not factura:
             raise HTTPException(
-                status_code=404, 
-                detail=f"Factura con ID {factura_id} no encontrada"
+                status_code=404, detail=f"Factura con ID {factura_id} no encontrada"
             )
-        
+
         # Validar que la factura no esté pagada (opcional, según política de negocio)
         if factura.estado_factura == EstadoFactura.PAGADA:
             raise HTTPException(
                 status_code=400,
-                detail="No se puede eliminar una factura que ya ha sido pagada"
+                detail="No se puede eliminar una factura que ya ha sido pagada",
             )
-        
+
         # Eliminar la factura (los pagos se eliminan automáticamente por CASCADE)
         db.delete(factura)
         db.commit()
-        
+
         return Response[dict](
             data={"factura_id": factura_id},
             status_code=HTTPStatus.OK,
             message="Factura eliminada exitosamente",
-            error=None
+            error=None,
         )
-        
+
     except HTTPException:
         db.rollback()
         raise
@@ -2850,7 +3125,7 @@ def delete_factura(
         db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Error interno del servidor al eliminar factura: {str(e)}"
+            detail=f"Error interno del servidor al eliminar factura: {str(e)}",
         )
 
 
@@ -2859,77 +3134,76 @@ def update_factura(
     factura_id: int,
     factura_data: dict,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[FacturaOut]:
     """
     Actualiza una factura existente
-    
+
     Args:
         factura_id: ID de la factura a actualizar
         factura_data: Datos a actualizar
         db: Sesión de base de datos
         _: Usuario autenticado
-        
+
     Returns:
         Response con la factura actualizada
-        
+
     Raises:
         HTTPException: Si la factura no existe o hay errores de validación
     """
     try:
         # Validar que la factura existe
-        factura = db.query(Facturas).filter(
-            Facturas.id_factura == factura_id
-        ).first()
-        
+        factura = db.query(Facturas).filter(Facturas.id_factura == factura_id).first()
+
         if not factura:
             raise HTTPException(
-                status_code=404, 
-                detail=f"Factura con ID {factura_id} no encontrada"
+                status_code=404, detail=f"Factura con ID {factura_id} no encontrada"
             )
-        
+
         # Validar que la factura no esté pagada (para ciertos campos)
-        campos_restringidos = ['total_factura', 'subtotal', 'impuestos', 'descuentos']
+        campos_restringidos = ["total_factura", "subtotal", "impuestos", "descuentos"]
         if factura.estado_factura == EstadoFactura.PAGADA:
             for campo in campos_restringidos:
                 if campo in factura_data:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"No se puede modificar el campo '{campo}' en una factura pagada"
+                        detail=f"No se puede modificar el campo '{campo}' en una factura pagada",
                     )
-        
+
         # Actualizar campos permitidos
         campos_permitidos = {
-            'fecha_emision': 'fecha_emision',
-            'fecha_vencimiento': 'fecha_vencimiento',
-            'total_factura': 'total_factura',
-            'subtotal': 'subtotal',
-            'impuestos': 'impuestos',
-            'descuentos': 'descuentos',
-            'estado_factura': 'estado_factura',
-            'observaciones': 'observaciones'
+            "fecha_emision": "fecha_emision",
+            "fecha_vencimiento": "fecha_vencimiento",
+            "total_factura": "total_factura",
+            "subtotal": "subtotal",
+            "impuestos": "impuestos",
+            "descuentos": "descuentos",
+            "estado_factura": "estado_factura",
+            "observaciones": "observaciones",
         }
-        
+
         for campo_request, campo_modelo in campos_permitidos.items():
             if campo_request in factura_data:
                 valor = factura_data[campo_request]
-                
+
                 # Validaciones específicas
-                if campo_request == 'estado_factura':
+                if campo_request == "estado_factura":
                     try:
                         valor = EstadoFactura(valor)
                     except ValueError:
                         raise HTTPException(
                             status_code=400,
                             detail=f"Estado de factura inválido: {valor}. "
-                                   f"Estados válidos: {[e.value for e in EstadoFactura]}"
+                            f"Estados válidos: {[e.value for e in EstadoFactura]}",
                         )
-                
+
                 setattr(factura, campo_modelo, valor)
-        
+
         db.commit()
         db.refresh(factura)
-        
+
         # Crear respuesta
         factura_response = FacturaOut(
             id_factura=factura.id_factura,
@@ -2944,15 +3218,16 @@ def update_factura(
             estado_factura=factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura,
             observaciones=factura.observaciones,
             pagos=[]
+
         )
-        
+
         return Response[FacturaOut](
             data=factura_response,
             status_code=HTTPStatus.OK,
             message="Factura actualizada exitosamente",
             error=None,
         )
-        
+
     except HTTPException:
         db.rollback()
         raise
@@ -2960,14 +3235,16 @@ def update_factura(
         db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Error interno del servidor al actualizar factura: {str(e)}"
+            detail=f"Error interno del servidor al actualizar factura: {str(e)}",
         )
 
 
 @router.get("/facturas", response_model=Response[List[FacturaOut]])
 def get_all_facturas(
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[FacturaOut]]:
     facturas = db.query(Facturas).all()
     facturas_out = []
@@ -3000,51 +3277,58 @@ def get_all_facturas(
             observaciones=factura.observaciones,
             pagos=pagos_response
         ))
+
     return Response[List[FacturaOut]](
         data=facturas_out,
         status_code=200,
         message=f"Se encontraron {len(facturas_out)} facturas",
-        error=None
+        error=None,
     )
 
 
-@router.get("/contratos/{contrato_id}/facturas", response_model=Response[List[FacturaOut]])
+@router.get(
+    "/contratos/{contrato_id}/facturas", response_model=Response[List[FacturaOut]]
+)
 def read_facturas_by_contrato(
-    contrato_id: int, 
+    contrato_id: int,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user)
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[FacturaOut]]:
     """
     Obtiene todas las facturas asociadas a un contrato específico
-    
+
     Args:
         contrato_id: ID del contrato
         db: Sesión de base de datos
         _: Usuario autenticado
-        
+
     Returns:
         Response con lista de facturas del contrato
-        
+
     Raises:
         HTTPException: Si el contrato no existe o hay errores internos
     """
     try:
         # Validar que el contrato existe
-        contrato = db.query(Contratos).filter(
-            Contratos.id_contrato == contrato_id
-        ).first()
-        
+        contrato = (
+            db.query(Contratos).filter(Contratos.id_contrato == contrato_id).first()
+        )
+
         if not contrato:
             raise HTTPException(
-                status_code=404,
-                detail=f"Contrato con ID {contrato_id} no encontrado"
+                status_code=404, detail=f"Contrato con ID {contrato_id} no encontrado"
             )
-        
+
         # Obtener facturas del contrato
-        facturas = db.query(Facturas).filter(
-            Facturas.id_contrato == contrato_id
-        ).order_by(Facturas.fecha_creacion.desc()).all()
-        
+        facturas = (
+            db.query(Facturas)
+            .filter(Facturas.id_contrato == contrato_id)
+            .order_by(Facturas.fecha_creacion.desc())
+            .all()
+        )
+
         facturas_response = [
             FacturaOut(
                 id_factura=factura.id_factura,
@@ -3057,6 +3341,7 @@ def read_facturas_by_contrato(
                 descuentos=float(factura.descuentos) if factura.descuentos is not None else None,
                 total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
                 estado_factura=factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura,
+
                 observaciones=factura.observaciones,
                 pagos=[
                     PaymentResponseDTO(
@@ -3072,20 +3357,20 @@ def read_facturas_by_contrato(
             )
             for factura in facturas
         ]
-        
+
         return Response[List[FacturaOut]](
             data=facturas_response,
             status_code=HTTPStatus.OK,
             message=f"Se encontraron {len(facturas_response)} facturas para el contrato {contrato_id}",
             error=None,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error interno del servidor al obtener facturas del contrato: {str(e)}"
+            detail=f"Error interno del servidor al obtener facturas del contrato: {str(e)}",
         )
 
 
@@ -3094,20 +3379,22 @@ def create_contract_bill(
     contrato_id: int,
     factura_data: FacturaCreateWithDetails = None,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user)
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[FacturaOut]:
     """
     Crea una factura automáticamente para un contrato específico usando la lógica de negocio del CRUD
-    
+
     Args:
         contrato_id: ID del contrato
         factura_data: Datos de la factura (impuestos, descuentos, observaciones)
         crud: Instancia del CRUD
         _: Usuario autenticado
-        
+
     Returns:
         Response con la factura creada
-        
+
     Raises:
         HTTPException: Si el contrato no existe o hay errores en la creación
     """
@@ -3118,16 +3405,15 @@ def create_contract_bill(
         # Calcular subtotal (suma de servicios contratados)
         subtotal = crud._calculate_contract_bill_total(contrato_id)
         
+
         # Obtener datos de facturación del payload
         impuestos = float(factura_data.impuestos) if factura_data else 0
         descuentos = float(factura_data.descuentos) if factura_data else 0
         observaciones = factura_data.observaciones if factura_data else ""
-        
         # Calcular total: subtotal + impuestos - descuentos
         total_factura = subtotal + impuestos - descuentos
         if total_factura < 0:
             total_factura = 0
-        
         # Crear la factura con todos los campos
         bill = Facturas(
             id_contrato=contrato_id,
@@ -3150,7 +3436,6 @@ def create_contract_bill(
         bill.numero_factura = numero_factura
         crud._CareLinkCrud__carelink_session.commit()
         crud._CareLinkCrud__carelink_session.refresh(bill)
-        
         # Construir respuesta completa
         bill_response = FacturaOut(
             id_factura=bill.id_factura,
@@ -3165,26 +3450,30 @@ def create_contract_bill(
             estado_factura=bill.estado_factura.value if hasattr(bill.estado_factura, 'value') else bill.estado_factura,
             observaciones=bill.observaciones
         )
-        
+
         return Response[FacturaOut](
             data=bill_response,
             status_code=HTTPStatus.CREATED,
             message="Factura creada automáticamente para el contrato",
             error=None,
         )
-        
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al crear factura para el contrato: {str(e)}"
+            status_code=500, detail=f"Error al crear factura para el contrato: {str(e)}"
         )
 
 
 @router.get("/facturacion/completa")
-def get_facturacion_completa(db: Session = Depends(get_carelink_db)):
-    sql = text('''
+def get_facturacion_completa(
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
+    sql = text(
+        """
         SELECT
             f.id_factura,
             f.numero_factura,
@@ -3234,7 +3523,8 @@ def get_facturacion_completa(db: Session = Depends(get_carelink_db)):
             f.observaciones,
             f.fecha_creacion,
             f.fecha_actualizacion
-    ''')
+    """
+    )
     result = db.execute(sql)
     rows = [dict(row) for row in result.mappings()]
     return {"data": rows}
@@ -3243,7 +3533,9 @@ def get_facturacion_completa(db: Session = Depends(get_carelink_db)):
 @router.get("/tarifas-servicios", response_model=Response[TarifasServicioResponseDTO])
 async def get_all_service_rates(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[TarifasServicioResponseDTO]:
     """
     Obtener todas las tarifas de servicios por año con información del servicio
@@ -3290,7 +3582,9 @@ async def get_all_service_rates(
 async def update_service_rates(
     tarifas_data: TarifasServicioUpdateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[TarifasServicioResponseDTO]:
     """
     Actualizar múltiples tarifas de servicios por año
@@ -3338,7 +3632,6 @@ async def update_service_rates(
             message=f"Se actualizaron {len(tarifas_response)} tarifas de servicios exitosamente",
             error=None,
         )
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -3351,7 +3644,9 @@ async def update_service_rates(
 @router.get("/facturas/estadisticas")
 def get_facturas_estadisticas(
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     """
     Obtiene estadísticas calculadas de facturación
@@ -3359,7 +3654,6 @@ def get_facturas_estadisticas(
     try:
         # Obtener todas las facturas con sus pagos
         facturas = db.query(Facturas).all()
-        
         total_facturas = len(facturas)
         total_valor = 0
         valor_pendiente = 0
