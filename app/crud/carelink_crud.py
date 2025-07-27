@@ -948,6 +948,47 @@ class CareLinkCrud:
         """
         return self.__carelink_session.query(TarifasServicioPorAnio).all()
 
+    def update_service_rates(self, tarifas_data: List[dict]) -> List[TarifasServicioPorAnio]:
+        """
+        Actualiza múltiples tarifas de servicios por año.
+        
+        Args:
+            tarifas_data: Lista de diccionarios con los datos de las tarifas a actualizar
+                Cada diccionario debe contener: id, id_servicio, anio, precio_por_dia
+        
+        Returns:
+            Lista de objetos TarifasServicioPorAnio actualizados
+        """
+        updated_tarifas = []
+        
+        for tarifa_data in tarifas_data:
+            # Buscar la tarifa existente por ID
+            tarifa = self.__carelink_session.query(TarifasServicioPorAnio).filter(
+                TarifasServicioPorAnio.id == tarifa_data['id']
+            ).first()
+            
+            if not tarifa:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Tarifa con ID {tarifa_data['id']} no encontrada"
+                )
+            
+            # Actualizar los campos
+            tarifa.id_servicio = tarifa_data['id_servicio']
+            tarifa.anio = tarifa_data['anio']
+            tarifa.precio_por_dia = tarifa_data['precio_por_dia']
+            
+            updated_tarifas.append(tarifa)
+        
+        # Confirmar todos los cambios
+        self.__carelink_session.commit()
+        
+        # Refrescar los objetos para obtener los datos actualizados
+        for tarifa in updated_tarifas:
+            self.__carelink_session.refresh(tarifa)
+        
+        return updated_tarifas
+
     # Métodos para visitas domiciliarias
     def get_user_home_visits(self, user_id: int) -> List[VisitasDomiciliarias]:
         """Obtener todas las visitas domiciliarias de un usuario"""
@@ -1053,6 +1094,7 @@ class CareLinkCrud:
         """Obtener visitas domiciliarias con información del profesional asignado"""
         from sqlalchemy.orm import joinedload
         from datetime import datetime
+        from app.models.user import User
         
         # Primero, actualizar automáticamente el estado de las visitas vencidas
         self._update_expired_visits_status()
@@ -1065,6 +1107,16 @@ class CareLinkCrud:
         
         result = []
         for visita in visitas:
+            # Intentar obtener el usuario directamente si la relación no funciona
+            paciente_nombre = "Sin paciente"
+            if visita.usuario:
+                paciente_nombre = f"{visita.usuario.nombres} {visita.usuario.apellidos}"
+            elif visita.id_usuario:
+                # Buscar el usuario directamente en la base de datos
+                usuario_directo = self.__carelink_session.query(User).filter(User.id_usuario == visita.id_usuario).first()
+                if usuario_directo:
+                    paciente_nombre = f"{usuario_directo.nombres} {usuario_directo.apellidos}"
+            
             visita_dict = {
                 "id_visitadomiciliaria": visita.id_visitadomiciliaria,
                 "id_contrato": visita.id_contrato,
@@ -1078,7 +1130,8 @@ class CareLinkCrud:
                 "observaciones": visita.observaciones,
                 "fecha_creacion": visita.fecha_creacion,
                 "fecha_actualizacion": visita.fecha_actualizacion,
-                "profesional_asignado": None
+                "profesional_asignado": None,
+                "paciente_nombre": paciente_nombre
             }
             
             # Buscar si hay un profesional asignado
@@ -1111,6 +1164,16 @@ class CareLinkCrud:
         
         result = []
         for visita in visitas:
+            # Intentar obtener el usuario directamente si la relación no funciona
+            paciente_nombre = "Sin paciente"
+            if visita.usuario:
+                paciente_nombre = f"{visita.usuario.nombres} {visita.usuario.apellidos}"
+            elif visita.id_usuario:
+                # Buscar el usuario directamente en la base de datos
+                usuario_directo = self.__carelink_session.query(User).filter(User.id_usuario == visita.id_usuario).first()
+                if usuario_directo:
+                    paciente_nombre = f"{usuario_directo.nombres} {usuario_directo.apellidos}"
+            
             visita_dict = {
                 "id_visitadomiciliaria": visita.id_visitadomiciliaria,
                 "id_contrato": visita.id_contrato,
@@ -1125,7 +1188,7 @@ class CareLinkCrud:
                 "fecha_creacion": visita.fecha_creacion,
                 "fecha_actualizacion": visita.fecha_actualizacion,
                 "profesional_asignado": None,
-                "paciente_nombre": f"{visita.usuario.nombres} {visita.usuario.apellidos}" if visita.usuario else "Sin paciente"
+                "paciente_nombre": paciente_nombre
             }
             
             # Buscar si hay un profesional asignado
@@ -1156,8 +1219,6 @@ class CareLinkCrud:
             VisitasDomiciliarias.estado_visita == 'PENDIENTE'
         ).all()
         
-        print(f"🔍 Encontradas {len(pending_visits)} visitas pendientes")
-        
         expired_visits = []
         
         for visita in pending_visits:
@@ -1181,9 +1242,6 @@ class CareLinkCrud:
         
         if expired_visits:
             self.__carelink_session.commit()
-            print(f"✅ Se actualizaron {len(expired_visits)} visitas pendientes vencidas a estado REALIZADA")
-        else:
-            print("ℹ️ No se encontraron visitas pendientes vencidas para actualizar")
         
         # Procesar visitas reprogramadas por separado
         self._update_reprogrammed_visits_status()
@@ -1198,8 +1256,6 @@ class CareLinkCrud:
         reprogrammed_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
             VisitasDomiciliarias.estado_visita == 'REPROGRAMADA'
         ).all()
-        
-        print(f"🔍 Encontradas {len(reprogrammed_visits)} visitas reprogramadas")
         
         expired_reprogrammed_visits = []
         
@@ -1222,9 +1278,6 @@ class CareLinkCrud:
         
         if expired_reprogrammed_visits:
             self.__carelink_session.commit()
-            print(f"✅ Se actualizaron {len(expired_reprogrammed_visits)} visitas reprogramadas vencidas a estado REALIZADA")
-        else:
-            print("ℹ️ No se encontraron visitas reprogramadas vencidas para actualizar")
 
     def get_scheduled_home_visits_with_professionals(self) -> List[dict]:
         """Obtener solo las visitas domiciliarias programadas (futuras) con información del profesional asignado"""
@@ -1245,26 +1298,14 @@ class CareLinkCrud:
         
         # Filtrar visitas que realmente están en el futuro (considerando fecha y hora)
         result_visitas = []
-        print(f"🔍 Total de visitas encontradas: {len(visitas)}")
-        
         for visita in visitas:
-            print(f"🔍 Revisando visita {visita.id_visitadomiciliaria}: estado={visita.estado_visita}, fecha={visita.fecha_visita}, hora={visita.hora_visita}")
-            
             if visita.fecha_visita and visita.hora_visita:
                 visita_datetime = datetime.combine(visita.fecha_visita, visita.hora_visita)
-                print(f"🔍 Visita {visita.id_visitadomiciliaria}: datetime={visita_datetime}, ahora={now}, es_futura={visita_datetime > now}")
-                
                 if visita_datetime > now:
                     result_visitas.append(visita)
-                    print(f"✅ Visita {visita.id_visitadomiciliaria} agregada (futura)")
-                else:
-                    print(f"❌ Visita {visita.id_visitadomiciliaria} no agregada (pasada)")
             else:
                 # Si no tiene fecha/hora programada, incluirla (pendiente de programación)
                 result_visitas.append(visita)
-                print(f"✅ Visita {visita.id_visitadomiciliaria} agregada (pendiente de programación)")
-        
-        print(f"🔍 Total de visitas filtradas: {len(result_visitas)}")
         
         result = []
         for visita in result_visitas:

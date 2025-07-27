@@ -36,6 +36,7 @@ class VisitaDomiciliariaConProfesionalResponseDTO(BaseModel):
     fecha_creacion: datetime
     fecha_actualizacion: datetime
     profesional_asignado: Optional[str] = None  # Nombre del profesional asignado
+    paciente_nombre: Optional[str] = None  # Nombre completo del paciente
 
     class Config:
         orm_mode = True 

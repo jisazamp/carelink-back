@@ -3486,8 +3486,10 @@ async def get_user_home_visits(
     """Obtener todas las visitas domiciliarias de un usuario"""
     try:
         visitas = crud.get_home_visits_with_professionals(user_id)
+        # Convertir los datos del CRUD al DTO para asegurar la serialización correcta
+        visitas_dto = [VisitaDomiciliariaConProfesionalResponseDTO(**visita) for visita in visitas]
         return Response(
-            data=visitas,
+            data=visitas_dto,
             message="Visitas domiciliarias obtenidas exitosamente",
             status_code=200,
             error=None
@@ -3504,12 +3506,14 @@ async def get_all_home_visits(
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[List[VisitaDomiciliariaConProfesionalResponseDTO]]:
-    """Obtener todas las visitas domiciliarias programadas (futuras)"""
+    """Obtener todas las visitas domiciliarias (para permitir filtrado completo)"""
     try:
-        visitas = crud.get_scheduled_home_visits_with_professionals()
+        visitas = crud.get_all_home_visits_with_professionals()
+        # Convertir los datos del CRUD al DTO para asegurar la serialización correcta
+        visitas_dto = [VisitaDomiciliariaConProfesionalResponseDTO(**visita) for visita in visitas]
         return Response(
-            data=visitas,
-            message="Visitas domiciliarias programadas obtenidas exitosamente",
+            data=visitas_dto,
+            message="Visitas domiciliarias obtenidas exitosamente",
             status_code=200,
             error=None
         )
@@ -3528,8 +3532,10 @@ async def get_all_home_visits_history(
     """Obtener todas las visitas domiciliarias (historial completo)"""
     try:
         visitas = crud.get_all_home_visits_with_professionals()
+        # Convertir los datos del CRUD al DTO para asegurar la serialización correcta
+        visitas_dto = [VisitaDomiciliariaConProfesionalResponseDTO(**visita) for visita in visitas]
         return Response(
-            data=visitas,
+            data=visitas_dto,
             message="Historial de visitas domiciliarias obtenido exitosamente",
             status_code=200,
             error=None
