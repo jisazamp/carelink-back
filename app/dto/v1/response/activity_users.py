@@ -74,6 +74,5 @@ class AssignUsersToActivityDTO(BaseModel):
 
 
 class UpdateUserActivityStatusDTO(BaseModel):
-    id_actividad_usuario: int
     estado_participacion: str
     observaciones: Optional[str] = None 
