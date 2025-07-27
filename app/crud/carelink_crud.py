@@ -627,9 +627,7 @@ class CareLinkCrud:
             total_servicio = precio_por_dia * num_fechas
             total += total_servicio
             
-            print(f"🔍 Servicio {service.id_servicio}: {precio_por_dia} x {num_fechas} fechas = {total_servicio}")
         
-        print(f"💰 Total del contrato {contract_id}: {total}")
         return total
 
     def calculate_partial_bill(
@@ -1289,19 +1287,13 @@ class CareLinkCrud:
                 # Crear datetime combinando fecha y hora de la visita
                 visita_datetime = datetime.combine(visita.fecha_visita, visita.hora_visita)
                 
-                print(f"🔍 Revisando visita pendiente {visita.id_visitadomiciliaria}: {visita.fecha_visita} {visita.hora_visita} (datetime: {visita_datetime}) vs ahora: {now}")
                 
                 # Si la fecha y hora de la visita ya pasó, marcarla como vencida
                 if visita_datetime < now:  # Cambiado de <= a < para ser más preciso
-                    print(f"⏰ Visita pendiente {visita.id_visitadomiciliaria} vencida - marcando como REALIZADA")
                     visita.estado_visita = "REALIZADA"
                     visita.fecha_actualizacion = now
                     expired_visits.append(visita)
-                else:
-                    print(f"⏳ Visita pendiente {visita.id_visitadomiciliaria} aún no vencida - manteniendo PENDIENTE")
-            else:
-                print(f"📝 Visita pendiente {visita.id_visitadomiciliaria} sin fecha/hora programada - saltando")
-        
+   
         if expired_visits:
             self.__carelink_session.commit()
         
@@ -1329,14 +1321,9 @@ class CareLinkCrud:
                 
                 # Si la fecha y hora de la visita reprogramada ya pasó, marcarla como vencida
                 if visita_datetime < now:  # Cambiado de <= a < para ser más preciso
-                    print(f"⏰ Visita reprogramada {visita.id_visitadomiciliaria} vencida - marcando como REALIZADA")
                     visita.estado_visita = "REALIZADA"
                     visita.fecha_actualizacion = now
                     expired_reprogrammed_visits.append(visita)
-                else:
-                    print(f"⏳ Visita reprogramada {visita.id_visitadomiciliaria} aún no vencida - manteniendo REPROGRAMADA")
-            else:
-                print(f"📝 Visita reprogramada {visita.id_visitadomiciliaria} sin fecha/hora programada - saltando")
         
         if expired_reprogrammed_visits:
             self.__carelink_session.commit()
@@ -1511,6 +1498,239 @@ class CareLinkCrud:
             raise HTTPException(
                 status_code=500,
                 detail=f"Error al obtener datos del flujo de usuarios: {str(e)}"
+            )
+
+    def get_quarterly_visits_data(self):
+        """
+        Obtiene los datos de visitas del trimestre para el dashboard.
+        Incluye estadísticas trimestrales y datos mensuales para el gráfico.
+        """
+        from app.dto.v1.response.quarterly_visits import QuarterlyVisitsResponseDTO, MonthlyVisitData
+        from datetime import datetime, date, timedelta
+        from sqlalchemy import and_, extract, func
+        from app.models.home_visit import VisitasDomiciliarias
+        
+        try:
+            # Obtener datos de la tabla
+            total_visits = self.__carelink_session.query(VisitasDomiciliarias).count()
+            
+            # Calcular el trimestre actual
+            now = datetime.now()
+            current_month = now.month
+            current_year = now.year
+            
+            # Determinar el trimestre actual (Q1: Jan-Mar, Q2: Apr-Jun, Q3: Jul-Sep, Q4: Oct-Dec)
+            if current_month <= 3:
+                quarter_start_month = 1
+                quarter_end_month = 3
+                quarter_name = "Q1"
+            elif current_month <= 6:
+                quarter_start_month = 4
+                quarter_end_month = 6
+                quarter_name = "Q2"
+            elif current_month <= 9:
+                quarter_start_month = 7
+                quarter_end_month = 9
+                quarter_name = "Q3"
+            else:
+                quarter_start_month = 10
+                quarter_end_month = 12
+                quarter_name = "Q4"
+            
+            # Obtener visitas del trimestre actual
+            quarterly_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                and_(
+                    extract('year', VisitasDomiciliarias.fecha_visita) == current_year,
+                    extract('month', VisitasDomiciliarias.fecha_visita) >= quarter_start_month,
+                    extract('month', VisitasDomiciliarias.fecha_visita) <= quarter_end_month,
+                    VisitasDomiciliarias.fecha_visita.isnot(None)
+                )
+            ).all()
+            
+            total_quarterly_visits = len(quarterly_visits)
+            
+            # Calcular promedio de visitas por día del trimestre
+            if total_quarterly_visits > 0:
+                # Contar días del trimestre
+                quarter_start = date(current_year, quarter_start_month, 1)
+                if quarter_end_month == 12:
+                    quarter_end = date(current_year + 1, 1, 1) - timedelta(days=1)
+                else:
+                    quarter_end = date(current_year, quarter_end_month + 1, 1) - timedelta(days=1)
+                
+                days_in_quarter = (quarter_end - quarter_start).days + 1
+                average_daily_visits = round(total_quarterly_visits / days_in_quarter, 1)
+            else:
+                average_daily_visits = 0.0
+            
+            # Obtener datos mensuales para el gráfico (últimos 6 meses)
+            monthly_data = []
+            month_names = [
+                "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+                "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+            ]
+            
+            for i in range(6):
+                # Calcular mes y año
+                target_month = current_month - i
+                target_year = current_year
+                
+                if target_month <= 0:
+                    target_month += 12
+                    target_year -= 1
+                
+                # Contar visitas del mes
+                month_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                    and_(
+                        extract('year', VisitasDomiciliarias.fecha_visita) == target_year,
+                        extract('month', VisitasDomiciliarias.fecha_visita) == target_month
+                    )
+                ).count()
+                
+                monthly_data.append(MonthlyVisitData(
+                    month=month_names[target_month - 1],
+                    visits=month_visits
+                ))
+
+            
+            # Invertir la lista para mostrar en orden cronológico
+            monthly_data.reverse()
+            
+            # Obtener visitas del mes actual y anterior para calcular crecimiento
+            current_month_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                and_(
+                    extract('year', VisitasDomiciliarias.fecha_visita) == current_year,
+                    extract('month', VisitasDomiciliarias.fecha_visita) == current_month,
+                    VisitasDomiciliarias.fecha_visita.isnot(None)
+                )
+            ).count()
+            
+            # Calcular mes anterior
+            previous_month = current_month - 1
+            previous_year = current_year
+            if previous_month <= 0:
+                previous_month = 12
+                previous_year -= 1
+            
+            previous_month_visits = self.__carelink_session.query(VisitasDomiciliarias).filter(
+                and_(
+                    extract('year', VisitasDomiciliarias.fecha_visita) == previous_year,
+                    extract('month', VisitasDomiciliarias.fecha_visita) == previous_month,
+                    VisitasDomiciliarias.fecha_visita.isnot(None)
+                )
+            ).count()
+            
+            # Calcular porcentaje de crecimiento
+            if previous_month_visits > 0:
+                growth_percentage = round(((current_month_visits - previous_month_visits) / previous_month_visits) * 100, 1)
+            else:
+                growth_percentage = 0.0 if current_month_visits == 0 else 100.0
+            
+            return QuarterlyVisitsResponseDTO(
+                total_quarterly_visits=total_quarterly_visits,
+                average_daily_visits=average_daily_visits,
+                monthly_data=monthly_data,
+                current_month_visits=current_month_visits,
+                previous_month_visits=previous_month_visits,
+                growth_percentage=growth_percentage
+            )
+            
+        except Exception as e:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al obtener datos de visitas trimestrales: {str(e)}"
+            )
+
+    def get_monthly_payments_data(self):
+        """
+        Obtiene los datos de pagos mensuales para el dashboard.
+        Incluye estadísticas de pagos y metas basadas en el mes anterior.
+        """
+        from app.dto.v1.response.monthly_payments import MonthlyPaymentsResponseDTO, MonthlyPaymentData
+        from datetime import datetime, date, timedelta
+        from sqlalchemy import and_, extract, func
+        from app.models.contracts import Pagos, Facturas
+        
+        try:
+            # Calcular el mes actual
+            now = datetime.now()
+            current_month = now.month
+            current_year = now.year
+            
+            # Obtener datos mensuales para el gráfico (últimos 6 meses)
+            monthly_data = []
+            month_names = [
+                "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+                "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+            ]
+            
+            previous_month_payments = 0
+            current_month_payments = 0
+            total_payments = 0
+            
+            for i in range(6):
+                # Calcular mes y año
+                target_month = current_month - i
+                target_year = current_year
+                
+                if target_month <= 0:
+                    target_month += 12
+                    target_year -= 1
+                
+                # Obtener pagos del mes (suma de todos los pagos del mes)
+                month_payments = self.__carelink_session.query(func.sum(Pagos.valor)).filter(
+                    and_(
+                        extract('year', Pagos.fecha_pago) == target_year,
+                        extract('month', Pagos.fecha_pago) == target_month,
+                        Pagos.valor.isnot(None)
+                    )
+                ).scalar() or 0.0
+                
+                # Convertir a float si es Decimal
+                month_payments = float(month_payments)
+                
+                # Calcular meta del mes (el valor del mes anterior si es superior, sino mantener el actual)
+                if i == 0:  # Mes actual
+                    goal = previous_month_payments if previous_month_payments > month_payments else month_payments
+                    current_month_payments = month_payments
+                else:
+                    # Para meses anteriores, la meta es el valor del mes anterior
+                    goal = previous_month_payments if previous_month_payments > 0 else month_payments
+                
+                # Calcular porcentaje de cumplimiento
+                achievement_percentage = (month_payments / goal * 100) if goal > 0 else 0
+                
+                monthly_data.append(MonthlyPaymentData(
+                    month=month_names[target_month - 1],
+                    payments=month_payments,
+                    goal=goal,
+                    achievement_percentage=round(achievement_percentage, 1)
+                ))
+                
+                # Actualizar para el siguiente mes
+                previous_month_payments = month_payments
+                total_payments += month_payments
+            
+            # Invertir la lista para mostrar en orden cronológico
+            monthly_data.reverse()
+            
+            # Calcular porcentaje de cumplimiento general (promedio de los últimos 6 meses)
+            overall_goal_achievement = sum(item.achievement_percentage for item in monthly_data) / len(monthly_data) if monthly_data else 0
+            
+            return MonthlyPaymentsResponseDTO(
+                total_payments=total_payments,
+                current_month_payments=current_month_payments,
+                previous_month_payments=previous_month_payments,
+                monthly_data=monthly_data,
+                overall_goal_achievement=round(overall_goal_achievement, 1)
+            )
+            
+        except Exception as e:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al obtener datos de pagos mensuales: {str(e)}"
             )
 
 

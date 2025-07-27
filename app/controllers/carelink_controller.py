@@ -64,6 +64,8 @@ from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO
 from app.dto.v1.response.home_visit import VisitaDomiciliariaResponseDTO, VisitaDomiciliariaConProfesionalResponseDTO
 from app.dto.v1.response.user_flow import UserFlowResponseDTO
+from app.dto.v1.response.quarterly_visits import QuarterlyVisitsResponseDTO
+from app.dto.v1.response.monthly_payments import MonthlyPaymentsResponseDTO
 from app.dto.v1.request.home_visit import VisitaDomiciliariaCreateDTO, VisitaDomiciliariaUpdateDTO
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.dto.v1.response.vaccines_per_user import (
@@ -3935,5 +3937,57 @@ async def get_user_flow(
             data=None,
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             message=f"Error al obtener datos del flujo de usuarios: {str(e)}",
+            error=None,
+        )
+
+
+@router.get("/quarterly-visits", response_model=Response[QuarterlyVisitsResponseDTO])
+async def get_quarterly_visits(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[QuarterlyVisitsResponseDTO]:
+    """
+    Obtiene los datos de visitas del trimestre para el dashboard.
+    Incluye estadísticas trimestrales y datos mensuales para el gráfico.
+    """
+    try:
+        result = crud.get_quarterly_visits_data()
+        return Response[QuarterlyVisitsResponseDTO](
+            data=result,
+            status_code=HTTPStatus.OK,
+            message="Datos de visitas trimestrales obtenidos exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        return Response[QuarterlyVisitsResponseDTO](
+            data=None,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            message=f"Error al obtener datos de visitas trimestrales: {str(e)}",
+            error=None,
+        )
+
+
+@router.get("/monthly-payments", response_model=Response[MonthlyPaymentsResponseDTO])
+async def get_monthly_payments(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[MonthlyPaymentsResponseDTO]:
+    """
+    Obtiene los datos de pagos mensuales para el dashboard.
+    Incluye estadísticas de pagos y metas basadas en el mes anterior.
+    """
+    try:
+        result = crud.get_monthly_payments_data()
+        return Response[MonthlyPaymentsResponseDTO](
+            data=result,
+            status_code=HTTPStatus.OK,
+            message="Datos de pagos mensuales obtenidos exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        return Response[MonthlyPaymentsResponseDTO](
+            data=None,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            message=f"Error al obtener datos de pagos mensuales: {str(e)}",
             error=None,
         )
