@@ -914,38 +914,45 @@ async def create_user_record(
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
-    record_data = json.loads(record)
-    medicines_data = json.loads(medicines) if medicines else []
-    cares_data = json.loads(cares) if cares else []
-    interventions_data = json.loads(interventions) if interventions else []
-    vaccines_data = json.loads(vaccines) if vaccines else []
+    try:
+        record_data = json.loads(record)
+        medicines_data = json.loads(medicines) if medicines else []
+        cares_data = json.loads(cares) if cares else []
+        interventions_data = json.loads(interventions) if interventions else []
+        vaccines_data = json.loads(vaccines) if vaccines else []
 
-    record_to_save = MedicalRecord(**record_data)
-    medicines_to_save = [
-        MedicamentosPorUsuario(**medicine) for medicine in medicines_data
-    ]
-    cares_to_save = [CuidadosEnfermeriaPorUsuario(**care) for care in cares_data]
-    interventions_to_save = [
-        IntervencionesPorUsuario(**intervention) for intervention in interventions_data
-    ]
-    vaccines_to_save = [VacunasPorUsuario(**vaccine) for vaccine in vaccines_data]
+        record_to_save = MedicalRecord(**record_data)
+        medicines_to_save = [
+            MedicamentosPorUsuario(**medicine) for medicine in medicines_data
+        ]
+        cares_to_save = [CuidadosEnfermeriaPorUsuario(**care) for care in cares_data]
+        interventions_to_save = [
+            IntervencionesPorUsuario(**intervention) for intervention in interventions_data
+        ]
+        vaccines_to_save = [VacunasPorUsuario(**vaccine) for vaccine in vaccines_data]
 
-    crud.save_user_medical_record(
-        id,
-        record_to_save,
-        medicines_to_save,
-        cares_to_save,
-        interventions_to_save,
-        vaccines_to_save,
-        attachments,
-    )
+        crud.save_user_medical_record(
+            id,
+            record_to_save,
+            medicines_to_save,
+            cares_to_save,
+            interventions_to_save,
+            vaccines_to_save,
+            attachments,
+        )
 
-    return Response[object](
-        data={},
-        status_code=HTTPStatus.CREATED,
-        message="Historia clínica registrada de manera exitosa",
-        error=None,
-    )
+        return Response[object](
+            data={},
+            status_code=HTTPStatus.CREATED,
+            message="Historia clínica registrada de manera exitosa",
+            error=None,
+        )
+    except Exception as e:
+        print(f"Error creating medical record: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
 
 
 @router.post(
@@ -1217,8 +1224,33 @@ async def update_user_medical_record(
 
 
 @router.patch(
-    "/medical_reports/{reporte_id}", response_model=Response[ReporteClinicoResponse]
+    "/users/{id}/medical_record/{record_id}/simplified",
+    status_code=200,
+    response_model=Response[object],
 )
+async def update_user_medical_record_simplified(
+    id: int,
+    record_id: int,
+    record: UpdateUserMedicalRecordRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[object]:
+    """Endpoint para actualizar historias clínicas simplificadas (solo el registro principal)"""
+    update_data = record.dict(exclude_unset=True)
+    crud.update_user_medical_record_simplified(
+        id,
+        record_id,
+        update_data,
+    )
+    return Response[object](
+        data={},
+        message="Historia clínica simplificada actualizada con éxito",
+        status_code=200,
+        error=None,
+    )
+
+
+@router.patch("/medical_reports/{reporte_id}", response_model=Response[ReporteClinicoResponse])
 def update_reporte_clinico(
     reporte_id: int,
     reporte: ReporteClinicoUpdate,

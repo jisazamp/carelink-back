@@ -443,6 +443,24 @@ class CareLinkCrud:
         self.__carelink_session.refresh(db_record)
         return db_record
 
+    def update_user_medical_record_simplified(
+        self,
+        user_id: int,
+        record_id: int,
+        update_data: dict,
+    ) -> MedicalRecord:
+        """Actualizar solo el registro principal de la historia clínica sin medicamentos, cuidados, etc."""
+        self._get_user_by_id(user_id)
+        db_record = self._get_medical_record_by_id(record_id)
+
+        for key, value in update_data.items():
+            if hasattr(db_record, key):
+                setattr(db_record, key, value)
+
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(db_record)
+        return db_record
+
     def update_medical_record(
         self, report_id: int, report: ReportesClinicos
     ) -> ReportesClinicos:
