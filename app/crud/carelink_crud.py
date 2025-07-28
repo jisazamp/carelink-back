@@ -172,7 +172,7 @@ class CareLinkCrud:
         return visita
 
     def save_family_member(self, id: int, kinship, family_member: FamilyMember):
-        self._get_user_by_id(id)
+        user = self._get_user_by_id(id)
         kinship_string = kinship.dict()["parentezco"]
         self.__carelink_session.add(family_member)
         self.__carelink_session.flush()
@@ -184,6 +184,15 @@ class CareLinkCrud:
             }
         )
         self.__carelink_session.add(associate_family)
+        
+        # Actualizar los campos de localización del usuario con los datos del acudiente
+        if family_member.telefono:
+            user.telefono = family_member.telefono
+        if family_member.email:
+            user.email = family_member.email
+        if family_member.direccion:
+            user.direccion = family_member.direccion
+            
         self.__carelink_session.commit()
 
     def save_user_medical_record(
@@ -321,10 +330,22 @@ class CareLinkCrud:
         kinship,
         db_family_member: FamilyMember,
     ) -> FamilyMember:
+        # Obtener el usuario para actualizar sus campos de localización
+        user = self._get_user_by_id(user_id)
+        
         for key, value in family_member.__dict__.items():
             if key != "_sa_instance_state" and value is not None:
                 if hasattr(db_family_member, key):
                     setattr(db_family_member, key, value)
+        
+        # Actualizar los campos de localización del usuario con los datos del acudiente
+        if family_member.telefono:
+            user.telefono = family_member.telefono
+        if family_member.email:
+            user.email = family_member.email
+        if family_member.direccion:
+            user.direccion = family_member.direccion
+            
         self.__carelink_session.commit()
         self.__carelink_session.refresh(db_family_member)
         return db_family_member
