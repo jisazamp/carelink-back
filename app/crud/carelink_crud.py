@@ -741,6 +741,60 @@ class CareLinkCrud:
             )
         ).scalar_one_or_none()
 
+    def _get_user_guardian_info(self, user_id: int) -> dict:
+        """Obtener información del acudiente principal del usuario"""
+        try:
+            # Obtener el primer acudiente asociado al usuario
+            guardian_relation = self.__carelink_session.execute(
+                select(FamiliaresYAcudientesPorUsuario)
+                .options(joinedload(FamiliaresYAcudientesPorUsuario.acudiente))
+                .where(FamiliaresYAcudientesPorUsuario.id_usuario == user_id)
+                .limit(1)
+            ).scalar_one_or_none()
+            
+            if guardian_relation and guardian_relation.acudiente:
+                guardian = guardian_relation.acudiente
+                return {
+                    "nombre_completo": f"{guardian.nombres} {guardian.apellidos}",
+                    "telefono": guardian.telefono or "No especificado",
+                    "documento": guardian.n_documento or "No especificado",
+                    "parentesco": guardian_relation.parentesco or "No especificado"
+                }
+            else:
+                return {
+                    "nombre_completo": "No especificado",
+                    "telefono": "No especificado", 
+                    "documento": "No especificado",
+                    "parentesco": "No especificado"
+                }
+        except Exception as e:
+            print(f"Error obteniendo información del acudiente: {e}")
+            return {
+                "nombre_completo": "No especificado",
+                "telefono": "No especificado",
+                "documento": "No especificado", 
+                "parentesco": "No especificado"
+            }
+
+    def _get_service_price_by_name(self, service_name: str, year: int) -> float:
+        """Obtener precio por día de un servicio basado en su nombre"""
+        try:
+            # Buscar el servicio por nombre
+            service = self.__carelink_session.execute(
+                select(Servicios).where(Servicios.nombre.ilike(f"%{service_name}%"))
+            ).scalar_one_or_none()
+            
+            if service:
+                # Obtener la tarifa para ese servicio y año
+                rate = self._get_service_rate(service.id_servicio, year)
+                if rate:
+                    return float(rate.precio_por_dia)
+            
+            return 0.0
+        except Exception as e:
+            print(f"Error obteniendo precio del servicio {service_name}: {e}")
+            return 0.0
+
     def _get_contract_services(self, contract_id: int) -> list[ServiciosPorContrato]:
         return self.__carelink_session.execute(
             select(ServiciosPorContrato).where(

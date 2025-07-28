@@ -4139,6 +4139,9 @@ async def download_contract(
         medical_record = crud._get_user_medical_record_by_user_id(user_id)
         eps_info = medical_record.eps if medical_record else "No especificado"
         
+        # Obtener información del acudiente
+        guardian_info = crud._get_user_guardian_info(user_id)
+        
         # Calcular edad
         from datetime import datetime
         birth_date = datetime.strptime(str(user.fecha_nacimiento), "%Y-%m-%d")
@@ -4149,6 +4152,24 @@ async def download_contract(
         # Preparar datos para el template
         # Usar la cantidad proporcionada o un valor por defecto
         dias_por_tiquetera = str(quantity) if quantity is not None else "20"
+        
+        # Obtener precios dinámicos según el tipo de contrato
+        current_year = datetime.now().year
+        valor_dia = 0.0
+        valor_total = 0.0
+        
+        if contract_type == "transporte":
+            # Obtener precio del servicio de transporte
+            valor_dia = crud._get_service_price_by_name("transporte", current_year)
+            if quantity and valor_dia > 0:
+                valor_total = valor_dia * quantity
+            else:
+                valor_dia = 50000  # Valor por defecto
+                valor_total = valor_dia * (quantity or 20)
+        else:
+            # Para centro de día, usar valores por defecto
+            valor_dia = 50000
+            valor_total = valor_dia * (quantity or 20)
         
         context = {
             "fecha_de_impresion": datetime.now().strftime("%d/%m/%Y"),
@@ -4165,8 +4186,11 @@ async def download_contract(
             "Barrio_del_paciente": "No especificado",
             "Telefono_del_paciente": user.telefono or "No especificado",
             "Email_del_paciente": user.email or "No especificado",
-            "valor_dia": "$50,000",
-            "valor_total": "$1,000,000",
+            "nombre_del_acudiente": guardian_info["nombre_completo"],
+            "telefono_del_acudiente": guardian_info["telefono"],
+            "documento_del_acudiente": guardian_info["documento"],
+            "valor_dia": f"${valor_dia:,.0f}",
+            "valor_total": f"${valor_total:,.0f}",
             "fecha_de_firma": datetime.now().strftime("%d/%m/%Y"),
         }
         
