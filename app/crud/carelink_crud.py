@@ -171,9 +171,41 @@ class CareLinkCrud:
 
         return visita
 
+    def _check_existing_acudiente(self, user_id: int) -> bool:
+        """Check if user already has an acudiente (family member with acudiente=1)"""
+        existing_acudiente = self.__carelink_session.query(FamilyMember).join(
+            FamiliaresYAcudientesPorUsuario,
+            FamilyMember.id_acudiente == FamiliaresYAcudientesPorUsuario.id_acudiente
+        ).filter(
+            FamiliaresYAcudientesPorUsuario.id_usuario == user_id,
+            FamilyMember.acudiente == True,
+            FamilyMember.is_deleted == False
+        ).first()
+        
+        return existing_acudiente is not None
+
     def save_family_member(self, id: int, kinship, family_member: FamilyMember):
         user = self._get_user_by_id(id)
         kinship_string = kinship.dict()["parentezco"]
+        
+        # Check if trying to mark as acudiente and user already has one
+        if family_member.acudiente and self._check_existing_acudiente(id):
+            raise ValueError("El usuario ya tiene un acudiente registrado. Solo puede tener un acudiente por usuario.")
+        
+        # If marking as acudiente, unmark any existing acudiente
+        if family_member.acudiente:
+            existing_acudiente = self.__carelink_session.query(FamilyMember).join(
+                FamiliaresYAcudientesPorUsuario,
+                FamilyMember.id_acudiente == FamiliaresYAcudientesPorUsuario.id_acudiente
+            ).filter(
+                FamiliaresYAcudientesPorUsuario.id_usuario == id,
+                FamilyMember.acudiente == True,
+                FamilyMember.is_deleted == False
+            ).first()
+            
+            if existing_acudiente:
+                existing_acudiente.acudiente = False
+        
         self.__carelink_session.add(family_member)
         self.__carelink_session.flush()
         associate_family = FamiliaresYAcudientesPorUsuario(
@@ -185,13 +217,14 @@ class CareLinkCrud:
         )
         self.__carelink_session.add(associate_family)
         
-        # Actualizar los campos de localización del usuario con los datos del acudiente
-        if family_member.telefono:
-            user.telefono = family_member.telefono
-        if family_member.email:
-            user.email = family_member.email
-        if family_member.direccion:
-            user.direccion = family_member.direccion
+        # Actualizar los campos de localización del usuario SOLO si es acudiente
+        if family_member.acudiente:
+            if family_member.telefono:
+                user.telefono = family_member.telefono
+            if family_member.email:
+                user.email = family_member.email
+            if family_member.direccion:
+                user.direccion = family_member.direccion
             
         self.__carelink_session.commit()
 
@@ -333,18 +366,44 @@ class CareLinkCrud:
         # Obtener el usuario para actualizar sus campos de localización
         user = self._get_user_by_id(user_id)
         
+        # Check if trying to mark as acudiente and user already has one (excluding current family member)
+        if family_member.acudiente and not db_family_member.acudiente:
+            # Solo verificar si ya existe otro acudiente cuando se está convirtiendo en acudiente
+            existing_acudiente = self.__carelink_session.query(FamilyMember).join(
+                FamiliaresYAcudientesPorUsuario,
+                FamilyMember.id_acudiente == FamiliaresYAcudientesPorUsuario.id_acudiente
+            ).filter(
+                FamiliaresYAcudientesPorUsuario.id_usuario == user_id,
+                FamilyMember.acudiente == True,
+                FamilyMember.is_deleted == False,
+                FamilyMember.id_acudiente != db_family_member.id_acudiente
+            ).first()
+            
+            # Si existe otro acudiente, desactivarlo antes de activar el actual
+            if existing_acudiente:
+                existing_acudiente.acudiente = False
+        
+        # Check if this family member was previously an acudiente and is being unmarked
+        was_previous_acudiente = db_family_member.acudiente and not family_member.acudiente
+        
         for key, value in family_member.__dict__.items():
             if key != "_sa_instance_state" and value is not None:
                 if hasattr(db_family_member, key):
                     setattr(db_family_member, key, value)
         
-        # Actualizar los campos de localización del usuario con los datos del acudiente
-        if family_member.telefono:
-            user.telefono = family_member.telefono
-        if family_member.email:
-            user.email = family_member.email
-        if family_member.direccion:
-            user.direccion = family_member.direccion
+        # Actualizar los campos de localización del usuario SOLO si es acudiente
+        if family_member.acudiente:
+            if family_member.telefono:
+                user.telefono = family_member.telefono
+            if family_member.email:
+                user.email = family_member.email
+            if family_member.direccion:
+                user.direccion = family_member.direccion
+        # Si era acudiente y ahora no lo es, limpiar los datos de localización del usuario
+        elif was_previous_acudiente:
+            user.telefono = None
+            user.email = None
+            user.direccion = None
             
         self.__carelink_session.commit()
         self.__carelink_session.refresh(db_family_member)

@@ -878,15 +878,26 @@ async def create_family_members(
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
-    family_member_to_save = FamilyMember(**family_member.dict())
-    crud.save_family_member(id, kinship, family_member_to_save)
+    try:
+        family_member_to_save = FamilyMember(**family_member.dict())
+        crud.save_family_member(id, kinship, family_member_to_save)
 
-    return Response[object](
-        data={},
-        status_code=HTTPStatus.CREATED,
-        message="Acudiente registrado de manera exitosa",
-        error=None,
-    )
+        return Response[object](
+            data={},
+            status_code=HTTPStatus.CREATED,
+            message="Acudiente registrado de manera exitosa",
+            error=None,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
 
 
 @router.post("/login", response_model=Response[dict])
@@ -1164,27 +1175,38 @@ async def update_family_member(
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ):
-    db_family_member = crud._get_family_member_by_id(family_member_id)
-    if not db_family_member:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail="Acudiente no encontrado"
+    try:
+        db_family_member = crud._get_family_member_by_id(family_member_id)
+        if not db_family_member:
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND, detail="Acudiente no encontrado"
+            )
+
+        family_member_to_update = FamilyMember(**family_member.dict())
+
+        family_member_updated = crud._update_family_member(
+            user_id=id,
+            family_member=family_member_to_update,
+            kinship=kinship,
+            db_family_member=db_family_member[0],
         )
 
-    family_member_to_update = FamilyMember(**family_member.dict())
-
-    family_member_updated = crud._update_family_member(
-        user_id=id,
-        family_member=family_member_to_update,
-        kinship=kinship,
-        db_family_member=db_family_member[0],
-    )
-
-    return Response[FamilyMemberResponseDTO](
-        data=family_member_updated.__dict__,
-        status_code=HTTPStatus.OK,
-        message="Acudiente actualizado de manera exitosa",
-        error=None,
-    )
+        return Response[FamilyMemberResponseDTO](
+            data=family_member_updated.__dict__,
+            status_code=HTTPStatus.OK,
+            message="Acudiente actualizado de manera exitosa",
+            error=None,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
 
 
 @router.patch(
