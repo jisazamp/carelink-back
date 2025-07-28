@@ -1,6 +1,10 @@
 from sqlalchemy import func, text
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
+import os
+import tempfile
+from docxtpl import DocxTemplate
+from datetime import datetime
 from app.dto.v1.request.activities import (
     ActividadesGrupalesCreate,
     ActividadesGrupalesUpdate,
@@ -145,6 +149,7 @@ from app.security.jwt_utilities import (
     hash_password,
 )
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from functools import lru_cache
 from http import HTTPStatus
@@ -168,8 +173,8 @@ def get_crud(
     return CareLinkCrud(carelink_db)
 
 
-def get_payload(token: str = Depends(token_auth_scheme)):
-    payload = decode_access_token(token.credentials)
+def get_payload(credentials: HTTPAuthorizationCredentials = Depends(token_auth_scheme)):
+    payload = decode_access_token(credentials.credentials)
     return payload
 
 
@@ -4111,6 +4116,86 @@ async def get_users_for_activity_date(
             message=f"Error al obtener usuarios disponibles: {str(e)}",
             error=None,
         )
+
+
+@router.get("/users/{user_id}/download-contract/{contract_type}")
+async def download_contract(
+    user_id: int,
+    contract_type: str,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    """Descargar contrato de Word con información renderizada"""
+    try:
+        # Obtener información del usuario
+        user = crud._get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        
+        # Obtener información del registro médico del usuario para EPS
+        medical_record = crud._get_user_medical_record_by_user_id(user_id)
+        eps_info = medical_record.eps if medical_record else "No especificado"
+        
+        # Calcular edad
+        from datetime import datetime
+        birth_date = datetime.strptime(str(user.fecha_nacimiento), "%Y-%m-%d")
+        age = datetime.now().year - birth_date.year
+        if datetime.now().month < birth_date.month or (datetime.now().month == birth_date.month and datetime.now().day < birth_date.day):
+            age -= 1
+        
+        # Preparar datos para el template
+        context = {
+            "fecha_de_impresion": datetime.now().strftime("%d/%m/%Y"),
+            "ID_del_paciente_en_base_datos": user.id_usuario,
+            "Nombre_Paciente": f"{user.nombres} {user.apellidos}",
+            "Numero_identificación": user.n_documento,
+            "Fecha_Nacimiento": user.fecha_nacimiento.strftime("%d/%m/%Y"),
+            "Convenio_Con_Empresas": eps_info,
+            "Sexo_Paciente": user.genero,
+            "Edad_Años_Meses": f"{age} años",
+            "Numero_de_días_por_tiquetera": "20",  # Valor por defecto
+            "Nombre_del_paciente": f"{user.nombres} {user.apellidos}",
+            "Dirección_del_paciente": user.direccion or "No especificada",
+            "Barrio_del_paciente": "No especificado",
+            "Telefono_del_paciente": user.telefono or "No especificado",
+            "Email_del_paciente": user.email or "No especificado",
+            "valor_dia": "$50,000",
+            "valor_total": "$1,000,000",
+            "fecha_de_firma": datetime.now().strftime("%d/%m/%Y"),
+        }
+        
+        # Determinar qué template usar
+        if contract_type == "centro-dia":
+            template_path = "app/static/templates/CONTRATO CENTRO DE DIA-1752465077348-949936205 (1).docx"
+        elif contract_type == "transporte":
+            template_path = "app/static/templates/CONTRATO DE TRANSPORTE-1752467433320-608946576 (2).docx"
+        else:
+            raise HTTPException(status_code=400, detail="Tipo de contrato no válido")
+        
+        # Verificar que el archivo existe
+        if not os.path.exists(template_path):
+            raise HTTPException(status_code=404, detail="Template de contrato no encontrado")
+        
+        # Generar el documento
+        doc = DocxTemplate(template_path)
+        doc.render(context)
+        
+        # Crear archivo temporal
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp_file:
+            doc.save(tmp_file.name)
+            tmp_file_path = tmp_file.name
+        
+        # Generar nombre del archivo
+        filename = f"contrato_{contract_type}_{user.nombres}_{user.apellidos}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+        
+        return FileResponse(
+            path=tmp_file_path,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al generar contrato: {str(e)}")
 
 
 @router.post("/activities/{activity_id}/users", response_model=Response[dict])
