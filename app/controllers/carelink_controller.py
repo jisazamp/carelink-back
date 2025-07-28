@@ -5,6 +5,8 @@ import os
 import tempfile
 from docxtpl import DocxTemplate
 from datetime import datetime
+from typing import Optional
+from fastapi import Query
 from app.dto.v1.request.activities import (
     ActividadesGrupalesCreate,
     ActividadesGrupalesUpdate,
@@ -4122,6 +4124,7 @@ async def get_users_for_activity_date(
 async def download_contract(
     user_id: int,
     contract_type: str,
+    quantity: Optional[int] = Query(None, description="Cantidad de días para el contrato"),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ):
@@ -4144,6 +4147,9 @@ async def download_contract(
             age -= 1
         
         # Preparar datos para el template
+        # Usar la cantidad proporcionada o un valor por defecto
+        dias_por_tiquetera = str(quantity) if quantity is not None else "20"
+        
         context = {
             "fecha_de_impresion": datetime.now().strftime("%d/%m/%Y"),
             "ID_del_paciente_en_base_datos": user.id_usuario,
@@ -4153,7 +4159,7 @@ async def download_contract(
             "Convenio_Con_Empresas": eps_info,
             "Sexo_Paciente": user.genero,
             "Edad_Años_Meses": f"{age} años",
-            "Numero_de_días_por_tiquetera": "20",  # Valor por defecto
+            "Numero_de_días_por_tiquetera": dias_por_tiquetera,
             "Nombre_del_paciente": f"{user.nombres} {user.apellidos}",
             "Dirección_del_paciente": user.direccion or "No especificada",
             "Barrio_del_paciente": "No especificado",
