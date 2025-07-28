@@ -1016,7 +1016,7 @@ class CareLinkCrud:
     ) -> EvolucionesClinicas:
         evolution = self.__carelink_session.execute(
             select(EvolucionesClinicas).where(
-                EvolucionesClinicas.id_evolucionclinica == evolution_id
+                EvolucionesClinicas.id_TipoReporte == evolution_id
             )
         ).scalar_one_or_none()
         if not evolution:
