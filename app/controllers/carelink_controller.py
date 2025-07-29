@@ -5,6 +5,7 @@ from app.dto.v1.request.activities import (
     ActividadesGrupalesCreate,
     ActividadesGrupalesUpdate,
 )
+from app.dto.v1.request.authorized_users import AuthorizedUserUpdate, RoleEnum
 from app.dto.v1.request.bill import CalculatePartialBillRequestDTO
 from app.dto.v1.request.clinical_evolution import (
     ClinicalEvolutionCreate,
@@ -15,10 +16,14 @@ from app.dto.v1.request.family_member_create_request_dto import (
     CreateFamilyMemberRequestDTO,
     UpdateFamilyMemberRequestDTO,
 )
+from app.dto.v1.response.authorized_user import AuthorizedUser as AuthorizedUserDTO
 from app.dto.v1.request.medical_report import ReporteClinicoCreate, ReporteClinicoUpdate
 from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
 from app.dto.v1.request.rates import TarifasServicioUpdateRequestDTO
-from app.dto.v1.response.rates import TarifasServicioResponseDTO, TarifaServicioResponseDTO
+from app.dto.v1.response.rates import (
+    TarifasServicioResponseDTO,
+    TarifaServicioResponseDTO,
+)
 
 from app.dto.v1.request.user_create_request_dto import AuthorizedUserCreateRequestDTO
 from app.dto.v1.request.user_medical_record_create_request_dto import (
@@ -63,18 +68,24 @@ from app.dto.v1.response.payment_method import (
 from app.dto.v1.response.professional import ProfessionalResponse
 from app.dto.v1.response.user_info import UserInfo
 from app.dto.v1.response.user import UserResponseDTO
-from app.dto.v1.response.home_visit import VisitaDomiciliariaResponseDTO, VisitaDomiciliariaConProfesionalResponseDTO
+from app.dto.v1.response.home_visit import (
+    VisitaDomiciliariaResponseDTO,
+    VisitaDomiciliariaConProfesionalResponseDTO,
+)
 from app.dto.v1.response.user_flow import UserFlowResponseDTO
 from app.dto.v1.response.quarterly_visits import QuarterlyVisitsResponseDTO
 from app.dto.v1.response.monthly_payments import MonthlyPaymentsResponseDTO
 from app.dto.v1.response.operational_efficiency import OperationalEfficiencyResponseDTO
-from app.dto.v1.request.home_visit import VisitaDomiciliariaCreateDTO, VisitaDomiciliariaUpdateDTO
+from app.dto.v1.request.home_visit import (
+    VisitaDomiciliariaCreateDTO,
+    VisitaDomiciliariaUpdateDTO,
+)
 from app.dto.v1.response.family_members_by_user import FamilyMembersByUserResponseDTO
 from app.dto.v1.response.activity_users import (
     ActivityWithUsersDTO,
     UserForActivityDTO,
     AssignUsersToActivityDTO,
-    UpdateUserActivityStatusDTO
+    UpdateUserActivityStatusDTO,
 )
 from app.dto.v1.response.vaccines_per_user import (
     VaccinesPerUserResponseDTO,
@@ -89,6 +100,7 @@ from app.models.interventions_per_user import IntervencionesPorUsuario
 from app.models.medical_record import MedicalRecord
 from app.models.medical_report import ReportesClinicos
 from app.models.medicines_per_user import MedicamentosPorUsuario
+from app.models.professional import Profesionales
 from app.models.user import User
 from app.models.contracts import (
     Contratos,
@@ -154,7 +166,10 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, date, time
 import json
-from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes
+from app.models.attendance_schedule import (
+    CronogramaAsistencia,
+    CronogramaAsistenciaPacientes,
+)
 from app.models.rates import TarifasServicioPorAnio
 from app.exceptions.exceptions_classes import EntityNotFoundError
 from enum import Enum
@@ -747,7 +762,7 @@ async def register_payment(
 
         # Crear el pago usando el CRUD
         payment_response = crud.create_payment(payment_data)
-        
+
         # Actualizar el estado de la factura según los pagos
         crud.update_factura_status(payment.id_factura)
 
@@ -802,14 +817,14 @@ async def calculate_total_factura(
 ) -> Response[float]:
     """
     Calcula el total de factura incluyendo impuestos y descuentos
-    
+
     Args:
         payload: Diccionario con subtotal, impuestos y descuentos
         crud: Instancia del CRUD
-        
+
     Returns:
         Response con el total calculado
-        
+
     Raises:
         HTTPException: Si hay errores en el cálculo
     """
@@ -817,31 +832,28 @@ async def calculate_total_factura(
         subtotal = float(payload.get("subtotal", 0))
         impuestos = float(payload.get("impuestos", 0))
         descuentos = float(payload.get("descuentos", 0))
-        
+
         # Validar que los valores no sean negativos
         if subtotal < 0:
             raise HTTPException(
-                status_code=400,
-                detail="El subtotal no puede ser negativo"
+                status_code=400, detail="El subtotal no puede ser negativo"
             )
         if impuestos < 0:
             raise HTTPException(
-                status_code=400,
-                detail="Los impuestos no pueden ser negativos"
+                status_code=400, detail="Los impuestos no pueden ser negativos"
             )
         if descuentos < 0:
             raise HTTPException(
-                status_code=400,
-                detail="Los descuentos no pueden ser negativos"
+                status_code=400, detail="Los descuentos no pueden ser negativos"
             )
-        
+
         # Calcular total: subtotal + impuestos - descuentos
         total_factura = subtotal + impuestos - descuentos
-        
+
         # Asegurar que el total no sea negativo
         if total_factura < 0:
             total_factura = 0
-        
+
         return Response[float](
             data=total_factura,
             message="Total de factura calculado correctamente",
@@ -852,8 +864,7 @@ async def calculate_total_factura(
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al calcular total de factura: {str(e)}"
+            status_code=500, detail=f"Error al calcular total de factura: {str(e)}"
         )
 
 
@@ -872,14 +883,14 @@ async def create_users(
     user_to_save = User(**user_data.dict())
 
     saved_user = crud.save_user(user_to_save, photo)
-    
+
     # Si el usuario requiere visitas domiciliarias, crear el registro correspondiente
     home_visit_response = None
     if saved_user.visitas_domiciliarias:
         user_dict = user_data.dict()
         home_visit = crud.create_home_visit(saved_user.id_usuario, user_dict)
         home_visit_response = VisitaDomiciliariaResponseDTO.from_orm(home_visit)
-        
+
     # Crear manualmente el diccionario con los campos necesarios
     user_dict = {
         "id_usuario": saved_user.id_usuario,
@@ -909,16 +920,13 @@ async def create_users(
         "url_imagen": saved_user.url_imagen,
         "profesion": saved_user.profesion,
         "tipo_usuario": saved_user.tipo_usuario,
-        "visitas_domiciliarias": saved_user.visitas_domiciliarias
+        "visitas_domiciliarias": saved_user.visitas_domiciliarias,
     }
     user_response = UserResponseDTO(**user_dict)
-    
+
     # Preparar la respuesta con información adicional si se creó visita domiciliaria
-    response_data = {
-        "user": user_response,
-        "home_visit": home_visit_response
-    }
-    
+    response_data = {"user": user_response, "home_visit": home_visit_response}
+
     message = "Usuario creado de manera exitosa"
     if home_visit_response:
         message += " con visita domiciliaria programada"
@@ -1055,22 +1063,71 @@ async def create_user_medical_record(
     )
 
 
-@router.post("/create", status_code=201, response_model=Response[CreateUserResponseDTO])
+@router.get(
+    "/professional/{user_id}",
+    status_code=201,
+    response_model=Response[ProfessionalResponse],
+)
+async def list_professional_by_user_id(
+    user_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+) -> Response[ProfessionalResponse]:
+    professional = crud._get_professional_by_user_id(user_id)
+    professional_response = ProfessionalResponse.from_orm(professional)
+    return Response[ProfessionalResponse](
+        message="Profesional consultado de manera exitosa",
+        status_code=HTTPStatus.OK,
+        error=None,
+        data=professional_response,
+    )
+
+
+@router.post("/create", status_code=201, response_model=Response[AuthorizedUserDTO])
 async def create_user(
     user: AuthorizedUserCreateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value)),
-) -> Response[UserResponseDTO]:
+) -> Response[AuthorizedUserDTO]:
     hashed_password = hash_password(user.password)
-    user_to_save = AuthorizedUsers(**user.dict())
+    user_to_save = AuthorizedUsers(**user.dict(exclude={"professional_user"}))
     user_to_save.password = hashed_password
+    user_to_save.is_deleted = False
     saved_user = crud.create_user(user_to_save)
+
+    if user.role == RoleEnum.profesional:
+        if not user.professional_user:
+            raise HTTPException(
+                status_code=422,
+                detail="Professional data is required for professional role.",
+            )
+        professional_data = user.professional_user
+        professional_to_save = Profesionales(
+            id_user=saved_user.id,
+            direccion=professional_data.home_address,
+            apellidos=professional_data.last_name,
+            cargo=professional_data.charge,
+            e_mail=professional_data.email,
+            especialidad=professional_data.specialty,
+            estado="Activo",
+            fecha_ingreso=professional_data.entry_date,
+            fecha_nacimiento=professional_data.birthdate,
+            n_documento=professional_data.document_number,
+            nombres=professional_data.first_name,
+            profesion=professional_data.profession,
+            t_profesional=professional_data.professional_id_number,
+            telefono=professional_data.phone_number,
+        )
+        crud.create_professional_user(professional_to_save)
+
     access_token = create_access_token(
         data={"sub": str(saved_user.id), "role": str(saved_user.role)}
     )
     saved_user.token = access_token
 
-    return Response[CreateUserResponseDTO](
+    return Response[AuthorizedUserDTO](
         data=saved_user.__dict__,
         status_code=HTTPStatus.CREATED,
         message="User created successfully",
@@ -1739,10 +1796,9 @@ def crear_contrato(
             raise HTTPException(
                 status_code=400,
                 detail=f"El paciente ya tiene servicios agendados en las siguientes fechas: {fechas_str}. "
-                       f"No se puede crear un doble agendamiento. "
-                       f"Por favor, revise la agenda y corrija las fechas antes de continuar."
+                f"No se puede crear un doble agendamiento. "
+                f"Por favor, revise la agenda y corrija las fechas antes de continuar.",
             )
-        
 
         # Si llegamos aquí, no hay conflictos de doble agendamiento
         for fecha in fechas_tiquetera:
@@ -3212,13 +3268,22 @@ def update_factura(
             fecha_emision=factura.fecha_emision,
             fecha_vencimiento=factura.fecha_vencimiento,
             subtotal=float(factura.subtotal) if factura.subtotal is not None else None,
-            impuestos=float(factura.impuestos) if factura.impuestos is not None else None,
-            descuentos=float(factura.descuentos) if factura.descuentos is not None else None,
-            total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
-            estado_factura=factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura,
+            impuestos=(
+                float(factura.impuestos) if factura.impuestos is not None else None
+            ),
+            descuentos=(
+                float(factura.descuentos) if factura.descuentos is not None else None
+            ),
+            total_factura=(
+                float(factura.total_factura) if factura.total_factura else 0.0
+            ),
+            estado_factura=(
+                factura.estado_factura.value
+                if hasattr(factura.estado_factura, "value")
+                else factura.estado_factura
+            ),
             observaciones=factura.observaciones,
-            pagos=[]
-
+            pagos=[],
         )
 
         return Response[FacturaOut](
@@ -3258,25 +3323,43 @@ def get_all_facturas(
                 id_metodo_pago=pago.id_metodo_pago,
                 id_tipo_pago=pago.id_tipo_pago,
                 fecha_pago=pago.fecha_pago,
-                valor=float(pago.valor) if pago.valor else 0.0
+                valor=float(pago.valor) if pago.valor else 0.0,
             )
             for pago in pagos
         ]
-        
-        facturas_out.append(FacturaOut(
-            id_factura=factura.id_factura,
-            numero_factura=factura.numero_factura,
-            id_contrato=factura.id_contrato,
-            fecha_emision=factura.fecha_emision,
-            fecha_vencimiento=factura.fecha_vencimiento,
-            subtotal=float(factura.subtotal) if factura.subtotal is not None else None,
-            impuestos=float(factura.impuestos) if factura.impuestos is not None else None,
-            descuentos=float(factura.descuentos) if factura.descuentos is not None else None,
-            total_factura=float(factura.total_factura) if factura.total_factura is not None else None,
-            estado_factura=factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura,
-            observaciones=factura.observaciones,
-            pagos=pagos_response
-        ))
+
+        facturas_out.append(
+            FacturaOut(
+                id_factura=factura.id_factura,
+                numero_factura=factura.numero_factura,
+                id_contrato=factura.id_contrato,
+                fecha_emision=factura.fecha_emision,
+                fecha_vencimiento=factura.fecha_vencimiento,
+                subtotal=(
+                    float(factura.subtotal) if factura.subtotal is not None else None
+                ),
+                impuestos=(
+                    float(factura.impuestos) if factura.impuestos is not None else None
+                ),
+                descuentos=(
+                    float(factura.descuentos)
+                    if factura.descuentos is not None
+                    else None
+                ),
+                total_factura=(
+                    float(factura.total_factura)
+                    if factura.total_factura is not None
+                    else None
+                ),
+                estado_factura=(
+                    factura.estado_factura.value
+                    if hasattr(factura.estado_factura, "value")
+                    else factura.estado_factura
+                ),
+                observaciones=factura.observaciones,
+                pagos=pagos_response,
+            )
+        )
 
     return Response[List[FacturaOut]](
         data=facturas_out,
@@ -3336,12 +3419,25 @@ def read_facturas_by_contrato(
                 id_contrato=factura.id_contrato,
                 fecha_emision=factura.fecha_emision,
                 fecha_vencimiento=factura.fecha_vencimiento,
-                subtotal=float(factura.subtotal) if factura.subtotal is not None else None,
-                impuestos=float(factura.impuestos) if factura.impuestos is not None else None,
-                descuentos=float(factura.descuentos) if factura.descuentos is not None else None,
-                total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
-                estado_factura=factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura,
-
+                subtotal=(
+                    float(factura.subtotal) if factura.subtotal is not None else None
+                ),
+                impuestos=(
+                    float(factura.impuestos) if factura.impuestos is not None else None
+                ),
+                descuentos=(
+                    float(factura.descuentos)
+                    if factura.descuentos is not None
+                    else None
+                ),
+                total_factura=(
+                    float(factura.total_factura) if factura.total_factura else 0.0
+                ),
+                estado_factura=(
+                    factura.estado_factura.value
+                    if hasattr(factura.estado_factura, "value")
+                    else factura.estado_factura
+                ),
                 observaciones=factura.observaciones,
                 pagos=[
                     PaymentResponseDTO(
@@ -3350,10 +3446,12 @@ def read_facturas_by_contrato(
                         id_metodo_pago=pago.id_metodo_pago,
                         id_tipo_pago=pago.id_tipo_pago,
                         fecha_pago=pago.fecha_pago,
-                        valor=float(pago.valor) if pago.valor else 0.0
+                        valor=float(pago.valor) if pago.valor else 0.0,
                     )
-                    for pago in db.query(Pagos).filter(Pagos.id_factura == factura.id_factura).all()
-                ]
+                    for pago in db.query(Pagos)
+                    .filter(Pagos.id_factura == factura.id_factura)
+                    .all()
+                ],
             )
             for factura in facturas
         ]
@@ -3401,10 +3499,9 @@ def create_contract_bill(
     try:
         # Obtener el contrato para usar fecha_fin como fecha_vencimiento
         contrato = crud._get_contract_by_id(contrato_id)
-        
+
         # Calcular subtotal (suma de servicios contratados)
         subtotal = crud._calculate_contract_bill_total(contrato_id)
-        
 
         # Obtener datos de facturación del payload
         impuestos = float(factura_data.impuestos) if factura_data else 0
@@ -3424,13 +3521,13 @@ def create_contract_bill(
             descuentos=descuentos,
             total_factura=total_factura,
             estado_factura=EstadoFactura.PENDIENTE,  # Estado inicial
-            observaciones=observaciones
+            observaciones=observaciones,
         )
-        
+
         crud._CareLinkCrud__carelink_session.add(bill)
         crud._CareLinkCrud__carelink_session.commit()
         crud._CareLinkCrud__carelink_session.refresh(bill)
-        
+
         # Generar numero_factura basado en id_factura
         numero_factura = str(bill.id_factura).zfill(4)
         bill.numero_factura = numero_factura
@@ -3447,8 +3544,12 @@ def create_contract_bill(
             impuestos=float(bill.impuestos) if bill.impuestos is not None else None,
             descuentos=float(bill.descuentos) if bill.descuentos is not None else None,
             total_factura=float(bill.total_factura) if bill.total_factura else 0.0,
-            estado_factura=bill.estado_factura.value if hasattr(bill.estado_factura, 'value') else bill.estado_factura,
-            observaciones=bill.observaciones
+            estado_factura=(
+                bill.estado_factura.value
+                if hasattr(bill.estado_factura, "value")
+                else bill.estado_factura
+            ),
+            observaciones=bill.observaciones,
         )
 
         return Response[FacturaOut](
@@ -3542,39 +3643,46 @@ async def get_all_service_rates(
     """
     try:
         tarifas = crud.get_all_service_rates()
-        
+
         tarifas_response = []
         for tarifa in tarifas:
             # Obtener nombre del servicio
-            servicio = crud._CareLinkCrud__carelink_session.query(Servicios).filter(
-                Servicios.id_servicio == tarifa.id_servicio
-            ).first()
-            
+            servicio = (
+                crud._CareLinkCrud__carelink_session.query(Servicios)
+                .filter(Servicios.id_servicio == tarifa.id_servicio)
+                .first()
+            )
+
             nombre_servicio = servicio.nombre if servicio else "Servicio no encontrado"
-            
+
             tarifas_response.append(
                 TarifaServicioResponseDTO(
                     id=tarifa.id,
                     id_servicio=tarifa.id_servicio,
-                    anio=tarifa.anio.year if hasattr(tarifa.anio, 'year') else tarifa.anio,
+                    anio=(
+                        tarifa.anio.year
+                        if hasattr(tarifa.anio, "year")
+                        else tarifa.anio
+                    ),
                     precio_por_dia=tarifa.precio_por_dia,
-                    nombre_servicio=nombre_servicio
+                    nombre_servicio=nombre_servicio,
                 )
             )
-        
-        response_data = TarifasServicioResponseDTO(TarifasServicioPorAnio=tarifas_response)
-        
+
+        response_data = TarifasServicioResponseDTO(
+            TarifasServicioPorAnio=tarifas_response
+        )
+
         return Response[TarifasServicioResponseDTO](
             data=response_data,
             status_code=HTTPStatus.OK,
             message=f"Se obtuvieron {len(tarifas_response)} tarifas de servicios",
             error=None,
         )
-        
+
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al obtener tarifas de servicios: {str(e)}"
+            status_code=500, detail=f"Error al obtener tarifas de servicios: {str(e)}"
         )
 
 
@@ -3593,39 +3701,47 @@ async def update_service_rates(
         # Convertir DTOs a diccionarios para el CRUD
         tarifas_dict = [
             {
-                'id': tarifa.id,
-                'id_servicio': tarifa.id_servicio,
-                'anio': tarifa.anio,
-                'precio_por_dia': float(tarifa.precio_por_dia)
+                "id": tarifa.id,
+                "id_servicio": tarifa.id_servicio,
+                "anio": tarifa.anio,
+                "precio_por_dia": float(tarifa.precio_por_dia),
             }
             for tarifa in tarifas_data.TarifasServicioPorAnio
         ]
-        
+
         # Actualizar tarifas
         updated_tarifas = crud.update_service_rates(tarifas_dict)
-        
+
         # Construir respuesta
         tarifas_response = []
         for tarifa in updated_tarifas:
             # Obtener nombre del servicio
-            servicio = crud._CareLinkCrud__carelink_session.query(Servicios).filter(
-                Servicios.id_servicio == tarifa.id_servicio
-            ).first()
-            
+            servicio = (
+                crud._CareLinkCrud__carelink_session.query(Servicios)
+                .filter(Servicios.id_servicio == tarifa.id_servicio)
+                .first()
+            )
+
             nombre_servicio = servicio.nombre if servicio else "Servicio no encontrado"
-            
+
             tarifas_response.append(
                 TarifaServicioResponseDTO(
                     id=tarifa.id,
                     id_servicio=tarifa.id_servicio,
-                    anio=tarifa.anio.year if hasattr(tarifa.anio, 'year') else tarifa.anio,
+                    anio=(
+                        tarifa.anio.year
+                        if hasattr(tarifa.anio, "year")
+                        else tarifa.anio
+                    ),
                     precio_por_dia=tarifa.precio_por_dia,
-                    nombre_servicio=nombre_servicio
+                    nombre_servicio=nombre_servicio,
                 )
             )
-        
-        response_data = TarifasServicioResponseDTO(TarifasServicioPorAnio=tarifas_response)
-        
+
+        response_data = TarifasServicioResponseDTO(
+            TarifasServicioPorAnio=tarifas_response
+        )
+
         return Response[TarifasServicioResponseDTO](
             data=response_data,
             status_code=HTTPStatus.OK,
@@ -3637,7 +3753,7 @@ async def update_service_rates(
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error al actualizar tarifas de servicios: {str(e)}"
+            detail=f"Error al actualizar tarifas de servicios: {str(e)}",
         )
 
 
@@ -3662,29 +3778,33 @@ def get_facturas_estadisticas(
         vencidas = 0
         canceladas = 0
         anuladas = 0
-        
+
         for factura in facturas:
             total_factura = float(factura.total_factura) if factura.total_factura else 0
             total_valor += total_factura
-            
+
             # Calcular total pagado
             pagos = db.query(Pagos).filter(Pagos.id_factura == factura.id_factura).all()
             total_pagado = sum(float(pago.valor) for pago in pagos if pago.valor)
             valor_pendiente += max(0, total_factura - total_pagado)
-            
+
             # Contar por estado
-            estado = factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura
-            if estado == 'PAGADA':
+            estado = (
+                factura.estado_factura.value
+                if hasattr(factura.estado_factura, "value")
+                else factura.estado_factura
+            )
+            if estado == "PAGADA":
                 pagadas += 1
-            elif estado == 'PENDIENTE':
+            elif estado == "PENDIENTE":
                 pendientes += 1
-            elif estado == 'VENCIDA':
+            elif estado == "VENCIDA":
                 vencidas += 1
-            elif estado == 'CANCELADA':
+            elif estado == "CANCELADA":
                 canceladas += 1
-            elif estado == 'ANULADA':
+            elif estado == "ANULADA":
                 anuladas += 1
-        
+
         return {
             "total": total_facturas,
             "pagadas": pagadas,
@@ -3694,22 +3814,29 @@ def get_facturas_estadisticas(
             "anuladas": anuladas,
             "totalValor": total_valor,
             "valorPendiente": valor_pendiente,
-            "valorPagado": total_valor - valor_pendiente
+            "valorPagado": total_valor - valor_pendiente,
         }
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error al calcular estadísticas de facturación: {str(e)}"
+            detail=f"Error al calcular estadísticas de facturación: {str(e)}",
         )
 
 
-@router.get("/facturas/{id_factura}/pagos/total", response_model=BillPaymentsTotalResponseDTO)
-def get_bill_payments_total_endpoint(id_factura: int, db: Session = Depends(get_carelink_db), _: AuthorizedUsers = Depends(get_current_user)):
+@router.get(
+    "/facturas/{id_factura}/pagos/total", response_model=BillPaymentsTotalResponseDTO
+)
+def get_bill_payments_total_endpoint(
+    id_factura: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
     """
     Retorna el total de pagos asociados a una factura
     """
     from app.crud.carelink_crud import get_bill_payments_total
+
     total = get_bill_payments_total(db, id_factura)
     return BillPaymentsTotalResponseDTO(id_factura=id_factura, total_pagado=total)
 
@@ -3726,32 +3853,30 @@ async def generate_factura_pdf(
     try:
         # Obtener todos los datos necesarios
         factura_data = crud.get_complete_factura_data_for_pdf(id_factura)
-        
+
         if not factura_data:
             raise HTTPException(
-                status_code=404,
-                detail=f"Factura con ID {id_factura} no encontrada"
+                status_code=404, detail=f"Factura con ID {id_factura} no encontrada"
             )
-        
+
         # Generar el PDF
         pdf_bytes = crud.generate_factura_pdf(factura_data)
-        
+
         # Devolver el PDF como archivo descargable
         from fastapi.responses import Response
+
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
             headers={
                 "Content-Disposition": f"attachment; filename=factura_{id_factura}.pdf"
-            }
+            },
         )
-        
+
     except Exception as e:
         print(f"Error generando PDF de factura {id_factura}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generando PDF: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error generando PDF: {str(e)}")
+
 
 @router.delete("/contratos/{id_contrato}", status_code=204)
 def eliminar_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
@@ -3761,35 +3886,47 @@ def eliminar_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
     - Desasocia (pone id_contrato en NULL) los demás cronogramas.
     """
     try:
-        contrato = db.query(Contratos).filter(Contratos.id_contrato == id_contrato).first()
+        contrato = (
+            db.query(Contratos).filter(Contratos.id_contrato == id_contrato).first()
+        )
         if not contrato:
             raise HTTPException(status_code=404, detail="Contrato no encontrado")
         # Desasociar facturas
-        db.query(Facturas).filter(Facturas.id_contrato == id_contrato).update({"id_contrato": None})
+        db.query(Facturas).filter(Facturas.id_contrato == id_contrato).update(
+            {"id_contrato": None}
+        )
         # Eliminar cronogramas PENDIENTE
         db.query(CronogramaAsistenciaPacientes).filter(
             CronogramaAsistenciaPacientes.id_contrato == id_contrato,
-            CronogramaAsistenciaPacientes.estado_asistencia == "PENDIENTE"
+            CronogramaAsistenciaPacientes.estado_asistencia == "PENDIENTE",
         ).delete()
         # Desasociar los demás cronogramas
         db.query(CronogramaAsistenciaPacientes).filter(
             CronogramaAsistenciaPacientes.id_contrato == id_contrato,
-            CronogramaAsistenciaPacientes.estado_asistencia != "PENDIENTE"
+            CronogramaAsistenciaPacientes.estado_asistencia != "PENDIENTE",
         ).update({"id_contrato": None})
         # Eliminar el contrato
         db.delete(contrato)
         db.commit()
-        return {"ok": True, "message": "Contrato eliminado, facturas desasociadas y cronogramas gestionados"}
+        return {
+            "ok": True,
+            "message": "Contrato eliminado, facturas desasociadas y cronogramas gestionados",
+        }
     except HTTPException:
         db.rollback()
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error al eliminar contrato: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error al eliminar contrato: {str(e)}"
+        )
 
 
 # Endpoints para visitas domiciliarias
-@router.get("/users/{user_id}/home-visits", response_model=Response[List[VisitaDomiciliariaConProfesionalResponseDTO]])
+@router.get(
+    "/users/{user_id}/home-visits",
+    response_model=Response[List[VisitaDomiciliariaConProfesionalResponseDTO]],
+)
 async def get_user_home_visits(
     user_id: int,
     crud: CareLinkCrud = Depends(get_crud),
@@ -3799,21 +3936,25 @@ async def get_user_home_visits(
     try:
         visitas = crud.get_home_visits_with_professionals(user_id)
         # Convertir los datos del CRUD al DTO para asegurar la serialización correcta
-        visitas_dto = [VisitaDomiciliariaConProfesionalResponseDTO(**visita) for visita in visitas]
+        visitas_dto = [
+            VisitaDomiciliariaConProfesionalResponseDTO(**visita) for visita in visitas
+        ]
         return Response(
             data=visitas_dto,
             message="Visitas domiciliarias obtenidas exitosamente",
             status_code=200,
-            error=None
+            error=None,
         )
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al obtener visitas domiciliarias: {str(e)}"
+            status_code=500, detail=f"Error al obtener visitas domiciliarias: {str(e)}"
         )
 
 
-@router.get("/home-visits", response_model=Response[List[VisitaDomiciliariaConProfesionalResponseDTO]])
+@router.get(
+    "/home-visits",
+    response_model=Response[List[VisitaDomiciliariaConProfesionalResponseDTO]],
+)
 async def get_all_home_visits(
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
@@ -3822,21 +3963,25 @@ async def get_all_home_visits(
     try:
         visitas = crud.get_all_home_visits_with_professionals()
         # Convertir los datos del CRUD al DTO para asegurar la serialización correcta
-        visitas_dto = [VisitaDomiciliariaConProfesionalResponseDTO(**visita) for visita in visitas]
+        visitas_dto = [
+            VisitaDomiciliariaConProfesionalResponseDTO(**visita) for visita in visitas
+        ]
         return Response(
             data=visitas_dto,
             message="Visitas domiciliarias obtenidas exitosamente",
             status_code=200,
-            error=None
+            error=None,
         )
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al obtener visitas domiciliarias: {str(e)}"
+            status_code=500, detail=f"Error al obtener visitas domiciliarias: {str(e)}"
         )
 
 
-@router.get("/home-visits/all", response_model=Response[List[VisitaDomiciliariaConProfesionalResponseDTO]])
+@router.get(
+    "/home-visits/all",
+    response_model=Response[List[VisitaDomiciliariaConProfesionalResponseDTO]],
+)
 async def get_all_home_visits_history(
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
@@ -3845,21 +3990,25 @@ async def get_all_home_visits_history(
     try:
         visitas = crud.get_all_home_visits_with_professionals()
         # Convertir los datos del CRUD al DTO para asegurar la serialización correcta
-        visitas_dto = [VisitaDomiciliariaConProfesionalResponseDTO(**visita) for visita in visitas]
+        visitas_dto = [
+            VisitaDomiciliariaConProfesionalResponseDTO(**visita) for visita in visitas
+        ]
         return Response(
             data=visitas_dto,
             message="Historial de visitas domiciliarias obtenido exitosamente",
             status_code=200,
-            error=None
+            error=None,
         )
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error al obtener historial de visitas domiciliarias: {str(e)}"
+            detail=f"Error al obtener historial de visitas domiciliarias: {str(e)}",
         )
 
 
-@router.get("/home-visits/{visita_id}", response_model=Response[VisitaDomiciliariaResponseDTO])
+@router.get(
+    "/home-visits/{visita_id}", response_model=Response[VisitaDomiciliariaResponseDTO]
+)
 async def get_home_visit_by_id(
     visita_id: int,
     crud: CareLinkCrud = Depends(get_crud),
@@ -3872,18 +4021,20 @@ async def get_home_visit_by_id(
             data=VisitaDomiciliariaResponseDTO.from_orm(visita),
             message="Visita domiciliaria obtenida exitosamente",
             status_code=200,
-            error=None
+            error=None,
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al obtener visita domiciliaria: {str(e)}"
+            status_code=500, detail=f"Error al obtener visita domiciliaria: {str(e)}"
         )
 
 
-@router.post("/users/{user_id}/home-visits", response_model=Response[VisitaDomiciliariaResponseDTO])
+@router.post(
+    "/users/{user_id}/home-visits",
+    response_model=Response[VisitaDomiciliariaResponseDTO],
+)
 async def create_home_visit(
     user_id: int,
     visita_data: VisitaDomiciliariaCreateDTO,
@@ -3894,35 +4045,36 @@ async def create_home_visit(
     try:
         # Verificar que el usuario existe
         crud.list_user_by_user_id(user_id)
-        
+
         # Extraer el id_profesional_asignado si existe
         id_profesional_asignado = visita_data.id_profesional_asignado
-        
+
         # Crear la visita
         visita_dict = visita_data.dict()
         visita_dict["id_usuario"] = user_id
-        
+
         # Remover id_profesional_asignado del dict para no incluirlo en la tabla VisitasDomiciliarias
         visita_dict.pop("id_profesional_asignado", None)
-        
+
         visita = crud.create_home_visit_manual(visita_dict, id_profesional_asignado)
-        
+
         return Response(
             data=VisitaDomiciliariaResponseDTO.from_orm(visita),
             message="Visita domiciliaria creada exitosamente",
             status_code=201,
-            error=None
+            error=None,
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al crear visita domiciliaria: {str(e)}"
+            status_code=500, detail=f"Error al crear visita domiciliaria: {str(e)}"
         )
 
 
-@router.patch("/home-visits/{visita_id}", response_model=Response[VisitaDomiciliariaResponseDTO])
+@router.patch(
+    "/home-visits/{visita_id}", response_model=Response[VisitaDomiciliariaResponseDTO]
+)
 async def update_home_visit(
     visita_id: int,
     visita_data: VisitaDomiciliariaUpdateDTO,
@@ -3933,21 +4085,20 @@ async def update_home_visit(
     try:
         # Filtrar solo los campos que no son None
         update_data = {k: v for k, v in visita_data.dict().items() if v is not None}
-        
+
         visita = crud.update_home_visit(visita_id, update_data)
-        
+
         return Response(
             data=VisitaDomiciliariaResponseDTO.from_orm(visita),
             message="Visita domiciliaria actualizada exitosamente",
             status_code=200,
-            error=None
+            error=None,
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al actualizar visita domiciliaria: {str(e)}"
+            status_code=500, detail=f"Error al actualizar visita domiciliaria: {str(e)}"
         )
 
 
@@ -3960,22 +4111,24 @@ async def delete_home_visit(
     """Eliminar una visita domiciliaria"""
     try:
         crud.delete_home_visit(visita_id)
-        
+
         return Response(
             data={"deleted": True},
             message="Visita domiciliaria eliminada exitosamente",
-            success=True
+            success=True,
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al eliminar visita domiciliaria: {str(e)}"
+            status_code=500, detail=f"Error al eliminar visita domiciliaria: {str(e)}"
         )
 
 
-@router.put("/users/{user_id}/home-visits/{visita_id}", response_model=Response[VisitaDomiciliariaResponseDTO])
+@router.put(
+    "/users/{user_id}/home-visits/{visita_id}",
+    response_model=Response[VisitaDomiciliariaResponseDTO],
+)
 async def update_user_home_visit(
     user_id: int,
     visita_id: int,
@@ -3989,30 +4142,30 @@ async def update_user_home_visit(
         visita = crud.get_home_visit_by_id(visita_id)
         if visita.id_usuario != user_id:
             raise HTTPException(
-                status_code=403,
-                detail="La visita no pertenece al usuario especificado"
+                status_code=403, detail="La visita no pertenece al usuario especificado"
             )
-        
+
         # Filtrar solo los campos que no son None
         update_data = {k: v for k, v in visita_data.dict().items() if v is not None}
-        
+
         visita_actualizada = crud.update_home_visit(visita_id, update_data)
         return Response(
             data=VisitaDomiciliariaResponseDTO.from_orm(visita_actualizada),
             message="Visita domiciliaria actualizada exitosamente",
             status_code=200,
-            error=None
+            error=None,
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al actualizar visita domiciliaria: {str(e)}"
+            status_code=500, detail=f"Error al actualizar visita domiciliaria: {str(e)}"
         )
 
 
-@router.get("/asistencia/diaria", response_model=Response[List[AsistenciaDiariaResponseDTO]])
+@router.get(
+    "/asistencia/diaria", response_model=Response[List[AsistenciaDiariaResponseDTO]]
+)
 def get_asistencia_diaria(
     fecha: Optional[str] = None,
     db: Session = Depends(get_carelink_db),
@@ -4027,51 +4180,56 @@ def get_asistencia_diaria(
             fecha_consulta = datetime.strptime(fecha, "%Y-%m-%d").date()
         else:
             fecha_consulta = date.today()
-        
+
         # Consultar cronogramas para la fecha especificada
         cronogramas = (
             db.query(CronogramaAsistencia)
             .filter(CronogramaAsistencia.fecha == fecha_consulta)
             .all()
         )
-        
+
         result = []
         for cronograma in cronogramas:
             # Obtener pacientes agendados para este cronograma con información completa
             pacientes_agendados = (
-                db.query(
-                    CronogramaAsistenciaPacientes,
-                    User,
-                    Contratos
-                )
+                db.query(CronogramaAsistenciaPacientes, User, Contratos)
                 .join(User, CronogramaAsistenciaPacientes.id_usuario == User.id_usuario)
-                .join(Contratos, CronogramaAsistenciaPacientes.id_contrato == Contratos.id_contrato)
-                .filter(CronogramaAsistenciaPacientes.id_cronograma == cronograma.id_cronograma)
+                .join(
+                    Contratos,
+                    CronogramaAsistenciaPacientes.id_contrato == Contratos.id_contrato,
+                )
+                .filter(
+                    CronogramaAsistenciaPacientes.id_cronograma
+                    == cronograma.id_cronograma
+                )
                 .all()
             )
-            
+
             for paciente_agendado, usuario, contrato in pacientes_agendados:
                 # Determinar el tipo de servicio basado en el contrato
                 tipo_servicio = contrato.tipo_contrato if contrato else "Sin servicio"
-                
+
                 # Mapear estado de asistencia a texto legible
                 estado_texto = {
                     "PENDIENTE": "Pendiente",
                     "ASISTIO": "Asistió",
                     "NO_ASISTIO": "No asistió",
                     "CANCELADO": "Cancelado",
-                    "REAGENDADO": "Reagendado"
-                }.get(paciente_agendado.estado_asistencia, paciente_agendado.estado_asistencia)
-                
+                    "REAGENDADO": "Reagendado",
+                }.get(
+                    paciente_agendado.estado_asistencia,
+                    paciente_agendado.estado_asistencia,
+                )
+
                 # Color del estado
                 color_estado = {
                     "PENDIENTE": "gray",
                     "ASISTIO": "green",
                     "NO_ASISTIO": "red",
                     "CANCELADO": "orange",
-                    "REAGENDADO": "blue"
+                    "REAGENDADO": "blue",
                 }.get(paciente_agendado.estado_asistencia, "default")
-                
+
                 result.append(
                     AsistenciaDiariaResponseDTO(
                         id_cronograma_paciente=paciente_agendado.id_cronograma_paciente,
@@ -4085,29 +4243,30 @@ def get_asistencia_diaria(
                         requiere_transporte=paciente_agendado.requiere_transporte,
                         observaciones=paciente_agendado.observaciones,
                         fecha_creacion=paciente_agendado.fecha_creacion,
-                        fecha_actualizacion=paciente_agendado.fecha_actualizacion
+                        fecha_actualizacion=paciente_agendado.fecha_actualizacion,
                     )
                 )
-        
+
         return Response[List[AsistenciaDiariaResponseDTO]](
             data=result,
             status_code=HTTPStatus.OK,
             message=f"Asistencia del día {fecha_consulta} consultada exitosamente",
             error=None,
         )
-        
+
     except ValueError as e:
         raise HTTPException(
-            status_code=400,
-            detail=f"Formato de fecha inválido: {str(e)}"
+            status_code=400, detail=f"Formato de fecha inválido: {str(e)}"
         )
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error interno del servidor: {str(e)}"
+            status_code=500, detail=f"Error interno del servidor: {str(e)}"
         )
 
-@router.get("/pagos/factura/{factura_id}", response_model=Response[List[PaymentResponseDTO]])
+
+@router.get(
+    "/pagos/factura/{factura_id}", response_model=Response[List[PaymentResponseDTO]]
+)
 async def get_pagos_by_factura(
     factura_id: int,
     crud: CareLinkCrud = Depends(get_crud),
@@ -4119,30 +4278,29 @@ async def get_pagos_by_factura(
         bill = crud.get_bill_by_id(factura_id)
         if not bill:
             raise HTTPException(
-                status_code=404,
-                detail=f"La factura con ID {factura_id} no existe"
+                status_code=404, detail=f"La factura con ID {factura_id} no existe"
             )
-        
+
         # Obtener pagos de la factura
         payments = crud.get_payments_by_factura(factura_id)
         payments_response = [
             PaymentResponseDTO.from_orm(payment) for payment in payments
         ]
-        
+
         return Response[List[PaymentResponseDTO]](
             data=payments_response,
             status_code=HTTPStatus.OK,
             message=f"Pagos de la factura {factura_id} obtenidos exitosamente",
             error=None,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error interno del servidor: {str(e)}"
+            status_code=500, detail=f"Error interno del servidor: {str(e)}"
         )
+
 
 @router.post("/facturas/{factura_id}/pagos/", response_model=Response[dict])
 async def add_pagos_to_factura(
@@ -4157,29 +4315,30 @@ async def add_pagos_to_factura(
         bill = crud.get_bill_by_id(factura_id)
         if not bill:
             raise HTTPException(
-                status_code=404,
-                detail=f"La factura con ID {factura_id} no existe"
+                status_code=404, detail=f"La factura con ID {factura_id} no existe"
             )
-        
+
         # Validar métodos y tipos de pago
         payment_methods = crud._get_payment_methods()
         payment_types = crud._get_payment_types()
-        
+
         for pago in pagos:
             # Validar método de pago
-            if not any(pm.id_metodo_pago == pago.id_metodo_pago for pm in payment_methods):
+            if not any(
+                pm.id_metodo_pago == pago.id_metodo_pago for pm in payment_methods
+            ):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"El método de pago con ID {pago.id_metodo_pago} no existe"
+                    detail=f"El método de pago con ID {pago.id_metodo_pago} no existe",
                 )
-            
+
             # Validar tipo de pago
             if not any(pt.id_tipo_pago == pago.id_tipo_pago for pt in payment_types):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"El tipo de pago con ID {pago.id_tipo_pago} no existe"
+                    detail=f"El tipo de pago con ID {pago.id_tipo_pago} no existe",
                 )
-        
+
         # Crear los pagos
         created_payments = []
         for pago_data in pagos:
@@ -4192,27 +4351,26 @@ async def add_pagos_to_factura(
             )
             created_payment = crud.create_payment(payment)
             created_payments.append(created_payment)
-        
+
         # Actualizar el estado de la factura
         crud.update_factura_status(factura_id)
-        
+
         return Response[dict](
             data={
                 "message": f"Se agregaron {len(created_payments)} pagos a la factura {factura_id}",
                 "pagos_creados": len(created_payments),
-                "factura_id": factura_id
+                "factura_id": factura_id,
             },
             status_code=HTTPStatus.CREATED,
             message="Pagos agregados exitosamente",
             error=None,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error interno del servidor: {str(e)}"
+            status_code=500, detail=f"Error interno del servidor: {str(e)}"
         )
 
 
@@ -4294,7 +4452,9 @@ async def get_monthly_payments(
         )
 
 
-@router.get("/operational-efficiency", response_model=Response[OperationalEfficiencyResponseDTO])
+@router.get(
+    "/operational-efficiency", response_model=Response[OperationalEfficiencyResponseDTO]
+)
 async def get_operational_efficiency(
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
@@ -4324,7 +4484,10 @@ async def get_operational_efficiency(
 # ENDPOINTS PARA GESTIÓN DE USUARIOS EN ACTIVIDADES
 # ============================================================================
 
-@router.get("/activities/{activity_id}/users", response_model=Response[ActivityWithUsersDTO])
+
+@router.get(
+    "/activities/{activity_id}/users", response_model=Response[ActivityWithUsersDTO]
+)
 async def get_activity_with_users(
     activity_id: int,
     crud: CareLinkCrud = Depends(get_crud),
@@ -4348,7 +4511,10 @@ async def get_activity_with_users(
         )
 
 
-@router.get("/activities/users/available/{activity_date}", response_model=Response[List[UserForActivityDTO]])
+@router.get(
+    "/activities/users/available/{activity_date}",
+    response_model=Response[List[UserForActivityDTO]],
+)
 async def get_users_for_activity_date(
     activity_date: str,
     crud: CareLinkCrud = Depends(get_crud),
@@ -4357,9 +4523,10 @@ async def get_users_for_activity_date(
     """Obtener usuarios disponibles para una fecha específica basado en el cronograma"""
     try:
         from datetime import datetime
+
         date_obj = datetime.strptime(activity_date, "%Y-%m-%d").date()
         result = crud.get_users_for_activity_date(date_obj)
-        
+
         return Response[List[UserForActivityDTO]](
             data=result,
             status_code=HTTPStatus.OK,
@@ -4388,7 +4555,7 @@ async def assign_users_to_activity(
             activity_id=activity_id,
             user_ids=assign_data.usuarios_ids,
             estado_participacion=assign_data.estado_participacion,
-            observaciones=assign_data.observaciones
+            observaciones=assign_data.observaciones,
         )
         return Response[dict](
             data={"message": f"Se asignaron {len(result)} usuarios a la actividad"},
@@ -4430,7 +4597,9 @@ async def remove_users_from_activity(
         )
 
 
-@router.patch("/activities/users/{activity_user_id}/status", response_model=Response[dict])
+@router.patch(
+    "/activities/users/{activity_user_id}/status", response_model=Response[dict]
+)
 async def update_user_activity_status(
     activity_user_id: int,
     status_data: UpdateUserActivityStatusDTO,
@@ -4442,7 +4611,7 @@ async def update_user_activity_status(
         result = crud.update_user_activity_status(
             activity_user_id=activity_user_id,
             estado_participacion=status_data.estado_participacion,
-            observaciones=status_data.observaciones
+            observaciones=status_data.observaciones,
         )
         return Response[dict](
             data={"message": "Estado de participación actualizado"},
@@ -4457,3 +4626,76 @@ async def update_user_activity_status(
             message=f"Error al actualizar estado: {str(e)}",
             error=None,
         )
+
+
+@router.get("/usuarios/registrados", response_model=Response[List[AuthorizedUserDTO]])
+async def list_authorized_users(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value)),
+) -> Response[List[AuthorizedUserDTO]]:
+    users = crud._get_authorized_users()
+
+    response_users = [AuthorizedUserDTO.from_orm(user) for user in users]
+
+    return Response[List[AuthorizedUserDTO]](
+        data=response_users,
+        error=None,
+        message="Listado de usuarios restornado con éxito",
+        status_code=200,
+    )
+
+
+@router.get(
+    "/usuarios/registrados/{user_id}", response_model=Response[AuthorizedUserDTO]
+)
+async def list_authorized_user_by_id(
+    user_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value)),
+) -> Response[AuthorizedUserDTO]:
+    user = crud._get_authorized_user_by_id(user_id)
+    response_user = AuthorizedUserDTO.from_orm(user)
+    return Response[AuthorizedUserDTO](
+        data=response_user,
+        error=None,
+        message="Usuario retornado con éxito",
+        status_code=200,
+    )
+
+
+@router.put("/authorized-users/{user_id}", response_model=object)
+async def update_authorized_user_info(
+    user_id: int,
+    user_data: AuthorizedUserUpdate,
+    db: Session = Depends(get_carelink_db),
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value)),
+):
+    existing_user = crud._get_authorized_user_by_id(user_id)
+    if not existing_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    if user_data.role == RoleEnum.profesional:
+        missing_fields = [
+            field
+            for field in [
+                user_data.document_number,
+                user_data.professional_id_number,
+                user_data.birthdate,
+                user_data.entry_date,
+                user_data.profession,
+                user_data.specialty,
+                user_data.charge,
+                user_data.phone_number,
+                user_data.home_address,
+            ]
+            if field is None
+        ]
+        if missing_fields:
+            raise HTTPException(
+                status_code=422,
+                detail="Todos los campos profesionales son obligatorios para el rol 'profesional'",
+            )
+
+    updated_user = crud.update_authorized_user(user_id, user_data, db)
+    return updated_user
