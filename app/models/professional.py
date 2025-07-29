@@ -1,11 +1,12 @@
 from .base import Base
-from sqlalchemy import Column, Integer, String, Date, Enum
+from sqlalchemy import Column, Integer, String, Date, Enum, ForeignKey
 
 
 class Profesionales(Base):
     __tablename__ = "Profesionales"
 
     id_profesional = Column(Integer, primary_key=True, autoincrement=True)
+    id_user = Column(Integer, ForeignKey("users.id"))
     nombres = Column(String(35), nullable=False)
     apellidos = Column(String(35), nullable=False)
     n_documento = Column(String(25), unique=True, nullable=False)
