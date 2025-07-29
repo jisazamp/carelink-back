@@ -3246,7 +3246,8 @@ def create_contract_bill(
 
 @router.get("/facturacion/completa")
 def get_facturacion_completa(db: Session = Depends(get_carelink_db)):
-    sql = text('''
+    # Query para facturas de contratos
+    sql_contracts = text('''
         SELECT
             f.id_factura,
             f.numero_factura,
@@ -3269,12 +3270,15 @@ def get_facturacion_completa(db: Session = Depends(get_carelink_db)):
             f.fecha_creacion,
             f.fecha_actualizacion,
             COUNT(p.id_pago) AS cantidad_pagos,
-            COALESCE(SUM(p.valor), 0) AS total_pagado
+            COALESCE(SUM(p.valor), 0) AS total_pagado,
+            'CONTRATO' as tipo_factura,
+            NULL as id_visita_domiciliaria
         FROM
             Facturas f
             LEFT JOIN Contratos c ON f.id_contrato = c.id_contrato
             LEFT JOIN Usuarios u ON c.id_usuario = u.id_usuario
             LEFT JOIN Pagos p ON f.id_factura = p.id_factura
+        WHERE f.id_contrato IS NOT NULL
         GROUP BY
             f.id_factura,
             f.numero_factura,
@@ -3297,9 +3301,73 @@ def get_facturacion_completa(db: Session = Depends(get_carelink_db)):
             f.fecha_creacion,
             f.fecha_actualizacion
     ''')
-    result = db.execute(sql)
-    rows = [dict(row) for row in result.mappings()]
-    return {"data": rows}
+    
+    # Query para facturas de visitas domiciliarias
+    sql_home_visits = text('''
+        SELECT
+            f.id_factura,
+            f.numero_factura,
+            NULL as id_contrato,
+            'Visita Domiciliaria' as tipo_contrato,
+            NULL as fecha_inicio,
+            NULL as fecha_fin,
+            u.id_usuario,
+            u.nombres,
+            u.apellidos,
+            u.n_documento,
+            f.fecha_emision,
+            f.fecha_vencimiento,
+            f.total_factura,
+            f.subtotal,
+            f.impuestos,
+            f.descuentos,
+            f.estado_factura,
+            f.observaciones,
+            f.fecha_creacion,
+            f.fecha_actualizacion,
+            COUNT(p.id_pago) AS cantidad_pagos,
+            COALESCE(SUM(p.valor), 0) AS total_pagado,
+            'VISITA_DOMICILIARIA' as tipo_factura,
+            f.id_visita_domiciliaria
+        FROM
+            Facturas f
+            LEFT JOIN VisitasDomiciliarias vd ON f.id_visita_domiciliaria = vd.id_visitadomiciliaria
+            LEFT JOIN Usuarios u ON vd.id_usuario = u.id_usuario
+            LEFT JOIN Pagos p ON f.id_factura = p.id_factura
+        WHERE f.id_visita_domiciliaria IS NOT NULL
+        GROUP BY
+            f.id_factura,
+            f.numero_factura,
+            u.id_usuario,
+            u.nombres,
+            u.apellidos,
+            u.n_documento,
+            f.fecha_emision,
+            f.fecha_vencimiento,
+            f.total_factura,
+            f.subtotal,
+            f.impuestos,
+            f.descuentos,
+            f.estado_factura,
+            f.observaciones,
+            f.fecha_creacion,
+            f.fecha_actualizacion,
+            f.id_visita_domiciliaria
+    ''')
+    
+    # Ejecutar ambas queries y combinar resultados
+    result_contracts = db.execute(sql_contracts)
+    result_home_visits = db.execute(sql_home_visits)
+    
+    # Convertir a listas de diccionarios
+    contracts_rows = [dict(row) for row in result_contracts.mappings()]
+    home_visits_rows = [dict(row) for row in result_home_visits.mappings()]
+    
+    # Combinar y ordenar por fecha de creación
+    all_rows = contracts_rows + home_visits_rows
+    all_rows.sort(key=lambda x: x.get('fecha_creacion', ''), reverse=True)
+    
+    return {"data": all_rows}
 
 
 @router.get("/tarifas-servicios", response_model=Response[TarifasServicioResponseDTO])
