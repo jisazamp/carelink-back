@@ -1,7 +1,3 @@
-from app.dto.v1.request.authorized_users import (
-    AuthorizedUserUpdate,
-    AuthorizedUserUpdateDTO,
-)
 from app.dto.v1.request.contracts import ContratoCreateDTO
 from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
 from app.dto.v1.response.contracts import (
@@ -9,7 +5,7 @@ from app.dto.v1.response.contracts import (
     ServicioContratoDTO,
     FechaServicioDTO,
 )
-from app.exceptions.exceptions_classes import BusinessLogicError, EntityNotFoundError
+from app.exceptions.exceptions_classes import EntityNotFoundError
 from app.models.activities import ActividadesGrupales, TipoActividad
 from app.models.activity_users import ActividadesUsuarios
 from app.models.authorized_users import AuthorizedUsers
@@ -53,12 +49,10 @@ from datetime import date, datetime
 from fastapi import HTTPException, UploadFile, status
 from passlib.context import CryptContext
 from sqlalchemy import select, delete
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional, Tuple
 from sqlalchemy.sql import func
-
-from app.security.jwt_utilities import hash_password
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 INVALID_CHARS = ["#", "@", "$", "%", " ", "&", "|", "(", ")", "-", "+"]
@@ -96,134 +90,6 @@ class CareLinkCrud:
     def list_user_medical_record(self, id: int) -> MedicalRecord | None:
         self._get_user_by_id(id)
         return self._get_user_medical_record_by_user_id(id)
-
-    def list_authorized_users(self) -> List[AuthorizedUsers]:
-        return self._get_authorized_users()
-
-    def list_authorized_user_by_id(self, user_id: int) -> AuthorizedUsers | None:
-        return self._get_authorized_user_by_id(user_id)
-
-    def _get_professional_by_user_id(self, user_id) -> Profesionales:
-        professional = (
-            self.__carelink_session.query(Profesionales)
-            .filter(Profesionales.id_user == user_id)
-            .first()
-        )
-        if professional is None:
-            raise EntityNotFoundError("Profesional no encotrado")
-        return professional
-
-    def _get_authorized_users(self) -> List[AuthorizedUsers]:
-        return self.__carelink_session.query(AuthorizedUsers).all()
-
-    def _get_authorized_user_by_id(self, user_id: int) -> AuthorizedUsers | None:
-        user = (
-            self.__carelink_session.query(AuthorizedUsers)
-            .filter(AuthorizedUsers.id == user_id)
-            .first()
-        )
-        if user is None:
-            raise EntityNotFoundError("Usuario no encontrado")
-        return user
-
-    def update_authorized_user(
-        self, user_id: int, update_data: AuthorizedUserUpdate, db: Session
-    ) -> AuthorizedUsers:
-        user = db.query(AuthorizedUsers).filter(AuthorizedUsers.id == user_id).first()
-        if not user:
-            raise ValueError(f"User with ID {user_id} not found")
-
-        professional = (
-            db.query(Profesionales).filter(Profesionales.id_user == user_id).first()
-        )
-
-        user_fields = {"email", "first_name", "last_name", "role"}
-
-        data = update_data.dict(exclude_unset=True)
-
-        for field, value in data.items():
-            if field in user_fields:
-                setattr(user, field, value)
-
-        if "password" in data and data["password"]:
-            user.password = hash_password(data["password"])
-
-        professional_data = {
-            "nombres": data.get("first_name", user.first_name),
-            "apellidos": data.get("last_name", user.last_name),
-            "n_documento": data.get("document_number"),
-            "t_profesional": data.get("professional_id_number"),
-            "fecha_nacimiento": data.get("birthdate"),
-            "fecha_ingreso": data.get("entry_date"),
-            "profesion": data.get("profession"),
-            "especialidad": data.get("specialty"),
-            "cargo": data.get("charge"),
-            "telefono": data.get("phone_number"),
-            "e_mail": data.get("email", user.email),
-            "direccion": data.get("home_address"),
-            "estado": "Activo",
-        }
-
-        if any(v is not None for v in professional_data.values()):
-            if professional:
-                for field, value in professional_data.items():
-                    if value is not None:
-                        setattr(professional, field, value)
-            else:
-                new_professional = Profesionales(id_user=user_id, **professional_data)
-                db.add(new_professional)
-
-        db.commit()
-        db.refresh(user)
-        return user
-
-    # def update_authorized_user(
-    #     self, user_id: int, update_data: AuthorizedUserUpdate, db: Session
-    # ) -> AuthorizedUsers:
-    #     user = db.query(AuthorizedUsers).filter(AuthorizedUsers.id == user_id).first()
-    #     if not user:
-    #         raise ValueError(f"User with ID {user_id} not found")
-    #
-    #     professional = (
-    #         db.query(Profesionales).filter(Profesionales.id_user == user_id).first()
-    #     )
-    #
-    #     user_fields = {"email", "first_name", "last_name", "role", "password"}
-    #
-    #     data = update_data.dict(exclude_unset=True)
-    #
-    #     for field, value in data.items():
-    #         if field in user_fields:
-    #             setattr(user, field, value)
-    #
-    #     professional_data = {
-    #         "nombres": data.get("first_name", user.first_name),
-    #         "apellidos": data.get("last_name", user.last_name),
-    #         "n_documento": data.get("document_number"),
-    #         "t_profesional": data.get("professional_id_number"),
-    #         "fecha_nacimiento": data.get("birthdate"),
-    #         "fecha_ingreso": data.get("entry_date"),
-    #         "profesion": data.get("profession"),
-    #         "especialidad": data.get("specialty"),
-    #         "cargo": data.get("charge"),
-    #         "telefono": data.get("phone_number"),
-    #         "e_mail": data.get("email", user.email),
-    #         "direccion": data.get("home_address"),
-    #         "estado": "Activo",
-    #     }
-    #
-    #     if any(v is not None for v in professional_data.values()):
-    #         if professional:
-    #             for field, value in professional_data.items():
-    #                 if value is not None:
-    #                     setattr(professional, field, value)
-    #         else:
-    #             new_professional = Profesionales(id_user=user_id, **professional_data)
-    #             db.add(new_professional)
-    #
-    #     db.commit()
-    #     db.refresh(user)
-    #     return user
 
     def save_user(self, user: User, image: UploadFile | None) -> User:
         existing_user = self.__carelink_session.execute(
@@ -587,6 +453,24 @@ class CareLinkCrud:
         self.__carelink_session.refresh(db_record)
         return db_record
 
+    def update_user_medical_record_simplified(
+        self,
+        user_id: int,
+        record_id: int,
+        update_data: dict,
+    ) -> MedicalRecord:
+        """Actualizar solo el registro principal de la historia clínica sin medicamentos, cuidados, etc."""
+        self._get_user_by_id(user_id)
+        db_record = self._get_medical_record_by_id(record_id)
+
+        for key, value in update_data.items():
+            if hasattr(db_record, key):
+                setattr(db_record, key, value)
+
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(db_record)
+        return db_record
+
     def update_medical_record(
         self, report_id: int, report: ReportesClinicos
     ) -> ReportesClinicos:
@@ -893,6 +777,60 @@ class CareLinkCrud:
             )
         ).scalar_one_or_none()
 
+    def _get_user_guardian_info(self, user_id: int) -> dict:
+        """Obtener información del acudiente principal del usuario"""
+        try:
+            # Obtener el primer acudiente asociado al usuario
+            guardian_relation = self.__carelink_session.execute(
+                select(FamiliaresYAcudientesPorUsuario)
+                .options(joinedload(FamiliaresYAcudientesPorUsuario.acudiente))
+                .where(FamiliaresYAcudientesPorUsuario.id_usuario == user_id)
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if guardian_relation and guardian_relation.acudiente:
+                guardian = guardian_relation.acudiente
+                return {
+                    "nombre_completo": f"{guardian.nombres} {guardian.apellidos}",
+                    "telefono": guardian.telefono or "No especificado",
+                    "documento": guardian.n_documento or "No especificado",
+                    "parentesco": guardian_relation.parentesco or "No especificado",
+                }
+            else:
+                return {
+                    "nombre_completo": "No especificado",
+                    "telefono": "No especificado",
+                    "documento": "No especificado",
+                    "parentesco": "No especificado",
+                }
+        except Exception as e:
+            print(f"Error obteniendo información del acudiente: {e}")
+            return {
+                "nombre_completo": "No especificado",
+                "telefono": "No especificado",
+                "documento": "No especificado",
+                "parentesco": "No especificado",
+            }
+
+    def _get_service_price_by_name(self, service_name: str, year: int) -> float:
+        """Obtener precio por día de un servicio basado en su nombre"""
+        try:
+            # Buscar el servicio por nombre
+            service = self.__carelink_session.execute(
+                select(Servicios).where(Servicios.nombre.ilike(f"%{service_name}%"))
+            ).scalar_one_or_none()
+
+            if service:
+                # Obtener la tarifa para ese servicio y año
+                rate = self._get_service_rate(service.id_servicio, year)
+                if rate:
+                    return float(rate.precio_por_dia)
+
+            return 0.0
+        except Exception as e:
+            print(f"Error obteniendo precio del servicio {service_name}: {e}")
+            return 0.0
+
     def _get_contract_services(self, contract_id: int) -> list[ServiciosPorContrato]:
         return (
             self.__carelink_session.execute(
@@ -968,7 +906,87 @@ class CareLinkCrud:
             raise EntityNotFoundError(f"Usuario con ID {user_id} no encontrado")
         return user
 
-    def _get_authorized_user_info(self, user_id) -> AuthorizedUsers | None:
+    def list_authorized_users(self) -> List[AuthorizedUsers]:
+        return self._get_authorized_users()
+
+    def list_authorized_user_by_id(self, user_id: int) -> AuthorizedUsers | None:
+        return self._get_authorized_user_by_id(user_id)
+
+    def _get_professional_by_user_id(self, user_id) -> Profesionales:
+        professional = (
+            self.__carelink_session.query(Profesionales)
+            .filter(Profesionales.id_user == user_id)
+            .first()
+        )
+        if professional is None:
+            raise EntityNotFoundError("Profesional no encotrado")
+        return professional
+
+    def _get_authorized_users(self) -> List[AuthorizedUsers]:
+        return self.__carelink_session.query(AuthorizedUsers).all()
+
+    def _get_authorized_user_by_id(self, user_id: int) -> AuthorizedUsers | None:
+        user = (
+            self.__carelink_session.query(AuthorizedUsers)
+            .filter(AuthorizedUsers.id == user_id)
+            .first()
+        )
+        if user is None:
+            raise EntityNotFoundError("Usuario no encontrado")
+        return user
+
+    def update_authorized_user(
+        self, user_id: int, update_data: AuthorizedUserUpdate, db: Session
+    ) -> AuthorizedUsers:
+        user = db.query(AuthorizedUsers).filter(AuthorizedUsers.id == user_id).first()
+        if not user:
+            raise ValueError(f"User with ID {user_id} not found")
+
+        professional = (
+            db.query(Profesionales).filter(Profesionales.id_user == user_id).first()
+        )
+
+        user_fields = {"email", "first_name", "last_name", "role"}
+
+        data = update_data.dict(exclude_unset=True)
+
+        for field, value in data.items():
+            if field in user_fields:
+                setattr(user, field, value)
+
+        if "password" in data and data["password"]:
+            user.password = hash_password(data["password"])
+
+        professional_data = {
+            "nombres": data.get("first_name", user.first_name),
+            "apellidos": data.get("last_name", user.last_name),
+            "n_documento": data.get("document_number"),
+            "t_profesional": data.get("professional_id_number"),
+            "fecha_nacimiento": data.get("birthdate"),
+            "fecha_ingreso": data.get("entry_date"),
+            "profesion": data.get("profession"),
+            "especialidad": data.get("specialty"),
+            "cargo": data.get("charge"),
+            "telefono": data.get("phone_number"),
+            "e_mail": data.get("email", user.email),
+            "direccion": data.get("home_address"),
+            "estado": "Activo",
+        }
+
+        if any(v is not None for v in professional_data.values()):
+            if professional:
+                for field, value in professional_data.items():
+                    if value is not None:
+                        setattr(professional, field, value)
+            else:
+                new_professional = Profesionales(id_user=user_id, **professional_data)
+                db.add(new_professional)
+
+        db.commit()
+        db.refresh(user)
+        return user
+
+    def _get_authorized_user_info(self, user_id) -> AuthorizedUsers:
         return self.__carelink_session.execute(
             select(AuthorizedUsers).where(AuthorizedUsers.id == user_id)
         ).scalar_one_or_none()
@@ -978,9 +996,9 @@ class CareLinkCrud:
     ) -> List[FamiliaresYAcudientesPorUsuario]:
         return (
             self.__carelink_session.execute(
-                select(FamiliaresYAcudientesPorUsuario).where(
-                    FamiliaresYAcudientesPorUsuario.id_usuario == user_id
-                )
+                select(FamiliaresYAcudientesPorUsuario)
+                .options(joinedload(FamiliaresYAcudientesPorUsuario.acudiente))
+                .where(FamiliaresYAcudientesPorUsuario.id_usuario == user_id)
             )
             .scalars()
             .all()

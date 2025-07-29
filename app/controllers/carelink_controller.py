@@ -1,6 +1,12 @@
 from sqlalchemy import func, text
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
+import os
+import tempfile
+from docxtpl import DocxTemplate
+from datetime import datetime
+from typing import Optional
+from fastapi import Query
 from app.dto.v1.request.activities import (
     ActividadesGrupalesCreate,
     ActividadesGrupalesUpdate,
@@ -24,7 +30,6 @@ from app.dto.v1.response.rates import (
     TarifasServicioResponseDTO,
     TarifaServicioResponseDTO,
 )
-
 from app.dto.v1.request.user_create_request_dto import AuthorizedUserCreateRequestDTO
 from app.dto.v1.request.user_medical_record_create_request_dto import (
     CreateUserAssociatedCaresRequestDTO,
@@ -158,7 +163,8 @@ from app.security.jwt_utilities import (
     create_access_token,
     hash_password,
 )
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from functools import lru_cache
 from http import HTTPStatus
@@ -191,8 +197,8 @@ def get_crud(
     return CareLinkCrud(carelink_db)
 
 
-def get_payload(token: str = Depends(token_auth_scheme)):
-    payload = decode_access_token(token.credentials)
+def get_payload(credentials: HTTPAuthorizationCredentials = Depends(token_auth_scheme)):
+    payload = decode_access_token(credentials.credentials)
     return payload
 
 
@@ -769,6 +775,9 @@ async def register_payment(
         # Actualizar el estado de la factura según los pagos
         crud.update_factura_status(payment.id_factura)
 
+        # Actualizar el estado de la factura según los pagos
+        crud.update_factura_status(payment.id_factura)
+
         return Response[PaymentResponseDTO](
             data=PaymentResponseDTO.from_orm(payment_response),
             error=None,
@@ -873,8 +882,22 @@ async def create_users(
     user: str = Form(...),
     photo: Optional[UploadFile] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value)),
-) -> Response[UserResponseDTO]:
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[dict]:
+    """
+    Crea un nuevo usuario en el sistema.
+
+    Si el campo 'visitas_domiciliarias' es True, también crea automáticamente
+    un registro en la tabla VisitasDomiciliarias con los datos del usuario.
+
+    Args:
+        user: Datos del usuario en formato JSON
+        photo: Archivo de imagen opcional para la foto del usuario
+
+    Returns:
+        Response con los datos del usuario creado y opcionalmente
+        los datos de la visita domiciliaria si fue creada.
+    """
     try:
         user_data = UserCreateRequestDTO.parse_raw(user)
     except Exception as e:
@@ -1005,38 +1028,45 @@ async def create_user_record(
         require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
     ),
 ) -> Response[object]:
-    record_data = json.loads(record)
-    medicines_data = json.loads(medicines) if medicines else []
-    cares_data = json.loads(cares) if cares else []
-    interventions_data = json.loads(interventions) if interventions else []
-    vaccines_data = json.loads(vaccines) if vaccines else []
+    try:
+        record_data = json.loads(record)
+        medicines_data = json.loads(medicines) if medicines else []
+        cares_data = json.loads(cares) if cares else []
+        interventions_data = json.loads(interventions) if interventions else []
+        vaccines_data = json.loads(vaccines) if vaccines else []
 
-    record_to_save = MedicalRecord(**record_data)
-    medicines_to_save = [
-        MedicamentosPorUsuario(**medicine) for medicine in medicines_data
-    ]
-    cares_to_save = [CuidadosEnfermeriaPorUsuario(**care) for care in cares_data]
-    interventions_to_save = [
-        IntervencionesPorUsuario(**intervention) for intervention in interventions_data
-    ]
-    vaccines_to_save = [VacunasPorUsuario(**vaccine) for vaccine in vaccines_data]
+        record_to_save = MedicalRecord(**record_data)
+        medicines_to_save = [
+            MedicamentosPorUsuario(**medicine) for medicine in medicines_data
+        ]
+        cares_to_save = [CuidadosEnfermeriaPorUsuario(**care) for care in cares_data]
+        interventions_to_save = [
+            IntervencionesPorUsuario(**intervention)
+            for intervention in interventions_data
+        ]
+        vaccines_to_save = [VacunasPorUsuario(**vaccine) for vaccine in vaccines_data]
 
-    crud.save_user_medical_record(
-        id,
-        record_to_save,
-        medicines_to_save,
-        cares_to_save,
-        interventions_to_save,
-        vaccines_to_save,
-        attachments,
-    )
+        crud.save_user_medical_record(
+            id,
+            record_to_save,
+            medicines_to_save,
+            cares_to_save,
+            interventions_to_save,
+            vaccines_to_save,
+            attachments,
+        )
 
-    return Response[object](
-        data={},
-        status_code=HTTPStatus.CREATED,
-        message="Historia clínica registrada de manera exitosa",
-        error=None,
-    )
+        return Response[object](
+            data={},
+            status_code=HTTPStatus.CREATED,
+            message="Historia clínica registrada de manera exitosa",
+            error=None,
+        )
+    except Exception as e:
+        print(f"Error creating medical record: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error interno del servidor: {str(e)}"
+        )
 
 
 @router.post(
@@ -1375,6 +1405,33 @@ async def update_user_medical_record(
     return Response[object](
         data={},
         message="Historia clínica actualizada con éxito",
+        status_code=200,
+        error=None,
+    )
+
+
+@router.patch(
+    "/users/{id}/medical_record/{record_id}/simplified",
+    status_code=200,
+    response_model=Response[object],
+)
+async def update_user_medical_record_simplified(
+    id: int,
+    record_id: int,
+    record: UpdateUserMedicalRecordRequestDTO,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[object]:
+    """Endpoint para actualizar historias clínicas simplificadas (solo el registro principal)"""
+    update_data = record.dict(exclude_unset=True)
+    crud.update_user_medical_record_simplified(
+        id,
+        record_id,
+        update_data,
+    )
+    return Response[object](
+        data={},
+        message="Historia clínica simplificada actualizada con éxito",
         status_code=200,
         error=None,
     )
@@ -1789,7 +1846,6 @@ def crear_contrato(
                 if paciente_ya_agendado:
                     fecha_formateada = fecha.strftime("%d/%m/%Y")
                     fechas_conflicto.append(fecha_formateada)
-
         # Si hay fechas en conflicto, lanzar error con todas las fechas
         if fechas_conflicto:
             fechas_str = ", ".join(fechas_conflicto)
@@ -3360,7 +3416,6 @@ def get_all_facturas(
                 pagos=pagos_response,
             )
         )
-
     return Response[List[FacturaOut]](
         data=facturas_out,
         status_code=200,
@@ -3558,6 +3613,7 @@ def create_contract_bill(
             message="Factura creada automáticamente para el contrato",
             error=None,
         )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -3634,9 +3690,7 @@ def get_facturacion_completa(
 @router.get("/tarifas-servicios", response_model=Response[TarifasServicioResponseDTO])
 async def get_all_service_rates(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(
-        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
-    ),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[TarifasServicioResponseDTO]:
     """
     Obtener todas las tarifas de servicios por año con información del servicio
@@ -3690,9 +3744,7 @@ async def get_all_service_rates(
 async def update_service_rates(
     tarifas_data: TarifasServicioUpdateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(
-        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
-    ),
+    _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[TarifasServicioResponseDTO]:
     """
     Actualizar múltiples tarifas de servicios por año
@@ -3748,6 +3800,7 @@ async def update_service_rates(
             message=f"Se actualizaron {len(tarifas_response)} tarifas de servicios exitosamente",
             error=None,
         )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -3760,9 +3813,7 @@ async def update_service_rates(
 @router.get("/facturas/estadisticas")
 def get_facturas_estadisticas(
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(
-        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
-    ),
+    _: AuthorizedUsers = Depends(get_current_user),
 ):
     """
     Obtiene estadísticas calculadas de facturación
@@ -3770,6 +3821,7 @@ def get_facturas_estadisticas(
     try:
         # Obtener todas las facturas con sus pagos
         facturas = db.query(Facturas).all()
+
         total_facturas = len(facturas)
         total_valor = 0
         valor_pendiente = 0
@@ -4293,7 +4345,6 @@ async def get_pagos_by_factura(
             message=f"Pagos de la factura {factura_id} obtenidos exitosamente",
             error=None,
         )
-
     except HTTPException:
         raise
     except Exception as e:
@@ -4539,6 +4590,124 @@ async def get_users_for_activity_date(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             message=f"Error al obtener usuarios disponibles: {str(e)}",
             error=None,
+        )
+
+
+@router.get("/users/{user_id}/download-contract/{contract_type}")
+async def download_contract(
+    user_id: int,
+    contract_type: str,
+    quantity: Optional[int] = Query(
+        None, description="Cantidad de días para el contrato"
+    ),
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    """Descargar contrato de Word con información renderizada"""
+    try:
+        # Obtener información del usuario
+        user = crud._get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        # Obtener información del registro médico del usuario para EPS
+        medical_record = crud._get_user_medical_record_by_user_id(user_id)
+        eps_info = medical_record.eps if medical_record else "No especificado"
+
+        # Obtener información del acudiente
+        guardian_info = crud._get_user_guardian_info(user_id)
+
+        # Calcular edad
+        from datetime import datetime
+
+        birth_date = datetime.strptime(str(user.fecha_nacimiento), "%Y-%m-%d")
+        age = datetime.now().year - birth_date.year
+        if datetime.now().month < birth_date.month or (
+            datetime.now().month == birth_date.month
+            and datetime.now().day < birth_date.day
+        ):
+            age -= 1
+
+        # Preparar datos para el template
+        # Usar la cantidad proporcionada o un valor por defecto
+        dias_por_tiquetera = str(quantity) if quantity is not None else "20"
+
+        # Obtener precios dinámicos según el tipo de contrato
+        current_year = datetime.now().year
+        valor_dia = 0.0
+        valor_total = 0.0
+
+        if contract_type == "transporte":
+            # Obtener precio del servicio de transporte
+            valor_dia = crud._get_service_price_by_name("transporte", current_year)
+            if quantity and valor_dia > 0:
+                valor_total = valor_dia * quantity
+            else:
+                valor_dia = 50000  # Valor por defecto
+                valor_total = valor_dia * (quantity or 20)
+        else:
+            # Para centro de día, usar valores por defecto
+            valor_dia = 50000
+            valor_total = valor_dia * (quantity or 20)
+
+        context = {
+            "fecha_de_impresion": datetime.now().strftime("%d/%m/%Y"),
+            "ID_del_paciente_en_base_datos": user.id_usuario,
+            "Nombre_Paciente": f"{user.nombres} {user.apellidos}",
+            "Numero_identificación": user.n_documento,
+            "Fecha_Nacimiento": user.fecha_nacimiento.strftime("%d/%m/%Y"),
+            "Convenio_Con_Empresas": eps_info,
+            "Sexo_Paciente": user.genero,
+            "Edad_Años_Meses": f"{age} años",
+            "Numero_de_días_por_tiquetera": dias_por_tiquetera,
+            "Nombre_del_paciente": f"{user.nombres} {user.apellidos}",
+            "Dirección_del_paciente": user.direccion or "No especificada",
+            "Barrio_del_paciente": "No especificado",
+            "Telefono_del_paciente": user.telefono or "No especificado",
+            "Email_del_paciente": user.email or "No especificado",
+            "nombre_del_acudiente": guardian_info["nombre_completo"],
+            "telefono_del_acudiente": guardian_info["telefono"],
+            "documento_del_acudiente": guardian_info["documento"],
+            "valor_dia": f"${valor_dia:,.0f}",
+            "valor_total": f"${valor_total:,.0f}",
+            "fecha_de_firma": datetime.now().strftime("%d/%m/%Y"),
+        }
+
+        # Determinar qué template usar
+        if contract_type == "centro-dia":
+            template_path = "app/static/templates/CONTRATO CENTRO DE DIA-1752465077348-949936205 (1).docx"
+        elif contract_type == "transporte":
+            template_path = "app/static/templates/CONTRATO DE TRANSPORTE-1752467433320-608946576 (2).docx"
+        else:
+            raise HTTPException(status_code=400, detail="Tipo de contrato no válido")
+
+        # Verificar que el archivo existe
+        if not os.path.exists(template_path):
+            raise HTTPException(
+                status_code=404, detail="Template de contrato no encontrado"
+            )
+
+        # Generar el documento
+        doc = DocxTemplate(template_path)
+        doc.render(context)
+
+        # Crear archivo temporal
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_file:
+            doc.save(tmp_file.name)
+            tmp_file_path = tmp_file.name
+
+        # Generar nombre del archivo
+        filename = f"contrato_{contract_type}_{user.nombres}_{user.apellidos}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+
+        return FileResponse(
+            path=tmp_file_path,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error al generar contrato: {str(e)}"
         )
 
 
