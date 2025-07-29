@@ -37,7 +37,7 @@ from botocore.exceptions import NoCredentialsError
 from datetime import date, datetime
 from fastapi import HTTPException, UploadFile, status
 from passlib.context import CryptContext
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, text
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional, Tuple
@@ -81,19 +81,25 @@ class CareLinkCrud:
         return self._get_user_medical_record_by_user_id(id)
 
     def save_user(self, user: User, image: UploadFile | None) -> User:
-        existing_user = self.__carelink_session.execute(
-            select(User).where(
+        # Solo validar email duplicado si el email no es NULL
+        if user.email:
+            # Construir la consulta base
+            query = select(User).where(
                 User.email == user.email,
                 User.is_deleted == False,
-                User.id_usuario != user.id_usuario,
             )
-        ).scalar_one_or_none()
+            
+            # Solo excluir el usuario actual si tiene un ID válido
+            if user.id_usuario and user.id_usuario > 0:
+                query = query.where(User.id_usuario != user.id_usuario)
+            
+            existing_user = self.__carelink_session.execute(query).scalar_one_or_none()
 
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El correo electrónico ya está registrado para otro usuario.",
-            )
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="El correo electrónico ya está registrado para otro usuario.",
+                )
 
         try:
             user.is_deleted = False
@@ -125,17 +131,26 @@ class CareLinkCrud:
         """
         from datetime import datetime, date, time
 
+        # Verificar que el usuario tenga datos válidos para crear la visita
+        direccion = user_data.get("direccion")
+        telefono = user_data.get("telefono")
+        
+        # Si no hay dirección o teléfono, no crear la visita automáticamente
+        if not direccion or not telefono:
+            print(f"⚠️ Usuario {user_id} no tiene dirección o teléfono válidos. No se creará visita domiciliaria automática.")
+            # Retornar None para indicar que no se creó la visita
+            return None
+
         # Crear visita domiciliaria con datos básicos
-        # fecha_visita y hora_visita se dejan como NULL para que el usuario las complete
         visita_data = {
             "id_usuario": user_id,
             "id_contrato": None,  # Se asignará cuando se cree el contrato
             "fecha_visita": None,  # NULL - debe ser completado por el usuario
             "hora_visita": None,   # NULL - debe ser completado por el usuario
             "estado_visita": "PENDIENTE",
-            "direccion_visita": user_data.get("direccion", ""),
-            "telefono_visita": user_data.get("telefono", ""),
-            "valor_dia": 0.00,
+            "direccion_visita": direccion,
+            "telefono_visita": telefono,
+            "valor_dia": 25000.00,  # Valor por defecto
             "observaciones": f"Visita domiciliaria creada automáticamente para usuario {user_id} - Pendiente de programación",
             "fecha_creacion": datetime.utcnow(),
             "fecha_actualizacion": datetime.utcnow()
@@ -1519,61 +1534,58 @@ class CareLinkCrud:
         return result
 
     def get_all_home_visits_with_professionals(self) -> List[dict]:
-        """Obtener todas las visitas domiciliarias con información del profesional asignado"""
-        from sqlalchemy.orm import joinedload
+        """Obtener todas las visitas domiciliarias con información de profesionales"""
+        query = text("""
+            SELECT 
+                vd.id_visitadomiciliaria,
+                vd.id_usuario,
+                vd.fecha_visita,
+                vd.hora_visita,
+                vd.estado_visita,
+                vd.direccion_visita,
+                vd.telefono_visita,
+                vd.valor_dia,
+                vd.observaciones,
+                vd.fecha_creacion,
+                vd.fecha_actualizacion,
+                u.nombres,
+                u.apellidos,
+                u.n_documento,
+                u.telefono,
+                p.nombre_profesional,
+                p.especialidad,
+                vdp.estado_asignacion,
+                vdp.fecha_asignacion
+            FROM VisitasDomiciliarias vd
+            LEFT JOIN Usuarios u ON vd.id_usuario = u.id_usuario
+            LEFT JOIN VisitasDomiciliariasPorProfesional vdp ON vd.id_visitadomiciliaria = vdp.id_visitadomiciliaria
+            LEFT JOIN Profesionales p ON vdp.id_profesional = p.id_profesional
+            ORDER BY vd.fecha_creacion DESC
+        """)
         
-        # Primero, actualizar automáticamente el estado de las visitas vencidas
-        self._update_expired_visits_status()
+        result = self.__carelink_session.execute(query)
+        return [dict(row) for row in result.mappings()]
+
+    def _get_next_home_visit_invoice_number(self, year: int) -> str:
+        """Generar el siguiente número de factura secuencial para visitas domiciliarias"""
+        # Buscar la última factura de visitas domiciliarias del año
+        last_invoice = self.__carelink_session.query(Facturas).filter(
+            Facturas.numero_factura.like(f"FACT-VD-{year}-%"),
+            Facturas.id_visita_domiciliaria.isnot(None)
+        ).order_by(Facturas.numero_factura.desc()).first()
         
-        visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
-            joinedload(VisitasDomiciliarias.usuario)
-        ).order_by(VisitasDomiciliarias.fecha_visita.desc()).all()
+        if last_invoice and last_invoice.numero_factura:
+            # Extraer el número secuencial del último número de factura
+            try:
+                last_number = int(last_invoice.numero_factura.split('-')[-1])
+                next_number = last_number + 1
+            except (ValueError, IndexError):
+                next_number = 1
+        else:
+            next_number = 1
         
-        result = []
-        for visita in visitas:
-            # Intentar obtener el usuario directamente si la relación no funciona
-            paciente_nombre = "Sin paciente"
-            if visita.usuario:
-                paciente_nombre = f"{visita.usuario.nombres} {visita.usuario.apellidos}"
-            elif visita.id_usuario:
-                # Buscar el usuario directamente en la base de datos
-                usuario_directo = self.__carelink_session.query(User).filter(User.id_usuario == visita.id_usuario).first()
-                if usuario_directo:
-                    paciente_nombre = f"{usuario_directo.nombres} {usuario_directo.apellidos}"
-            
-            visita_dict = {
-                "id_visitadomiciliaria": visita.id_visitadomiciliaria,
-                "id_contrato": visita.id_contrato,
-                "id_usuario": visita.id_usuario,
-                "fecha_visita": visita.fecha_visita,
-                "hora_visita": visita.hora_visita,
-                "estado_visita": visita.estado_visita,
-                "direccion_visita": visita.direccion_visita,
-                "telefono_visita": visita.telefono_visita,
-                "valor_dia": visita.valor_dia,
-                "observaciones": visita.observaciones,
-                "fecha_creacion": visita.fecha_creacion,
-                "fecha_actualizacion": visita.fecha_actualizacion,
-                "profesional_asignado": None,
-                "paciente_nombre": paciente_nombre
-            }
-            
-            # Buscar si hay un profesional asignado
-            asignacion = self.__carelink_session.query(VisitasDomiciliariasPorProfesional).filter(
-                VisitasDomiciliariasPorProfesional.id_visitadomiciliaria == visita.id_visitadomiciliaria,
-                VisitasDomiciliariasPorProfesional.estado_asignacion == "ACTIVA"
-            ).first()
-            
-            if asignacion:
-                profesional = self.__carelink_session.query(Profesionales).filter(
-                    Profesionales.id_profesional == asignacion.id_profesional
-                ).first()
-                if profesional:
-                    visita_dict["profesional_asignado"] = f"{profesional.nombres} {profesional.apellidos} ({profesional.especialidad})"
-            
-            result.append(visita_dict)
-        
-        return result
+        # Formatear el número con ceros a la izquierda
+        return f"FACT-VD-{year}-{str(next_number).zfill(4)}"
 
     def _update_expired_visits_status(self):
         """Actualizar automáticamente el estado de las visitas vencidas a REALIZADA"""

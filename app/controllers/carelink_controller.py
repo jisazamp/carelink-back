@@ -813,7 +813,8 @@ async def create_users(
     if saved_user.visitas_domiciliarias:
         user_dict = user_data.dict()
         home_visit = crud.create_home_visit(saved_user.id_usuario, user_dict)
-        home_visit_response = VisitaDomiciliariaResponseDTO.from_orm(home_visit)
+        if home_visit:  # Solo crear respuesta si se creó la visita
+            home_visit_response = VisitaDomiciliariaResponseDTO.from_orm(home_visit)
         
     # Crear manualmente el diccionario con los campos necesarios
     user_dict = {
@@ -4331,4 +4332,85 @@ async def update_user_activity_status(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             message=f"Error al actualizar estado: {str(e)}",
             error=None,
+        )
+
+
+@router.post("/users/{user_id}/home-visits/bills", response_model=Response[FacturaOut])
+async def create_home_visit_bill(
+    user_id: int,
+    bill_data: dict,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+) -> Response[FacturaOut]:
+    """Crear una factura para una visita domiciliaria"""
+    try:
+        from datetime import datetime
+        from app.models.contracts import Facturas, EstadoFactura
+        
+        # Verificar que la visita domiciliaria existe
+        visita_id = bill_data.get("id_visita_domiciliaria")
+        if not visita_id:
+            raise HTTPException(
+                status_code=400,
+                detail="id_visita_domiciliaria es requerido"
+            )
+        
+        visita = crud.get_home_visit_by_id(visita_id)
+        if visita.id_usuario != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="La visita no pertenece al usuario especificado"
+            )
+        
+        # Generar número de factura secuencial
+        current_year = datetime.now().year
+        next_invoice_number = crud._get_next_home_visit_invoice_number(current_year)
+        
+        # Crear la factura
+        factura = Facturas(
+            id_contrato=None,  # Las visitas domiciliarias no tienen contrato
+            id_visita_domiciliaria=visita_id,
+            fecha_emision=bill_data.get("fecha_emision", datetime.now().date()),
+            fecha_vencimiento=bill_data.get("fecha_vencimiento"),
+            subtotal=bill_data.get("subtotal", 0),
+            impuestos=bill_data.get("impuestos", 0),
+            descuentos=bill_data.get("descuentos", 0),
+            total_factura=bill_data.get("total_factura", 0),
+            estado_factura=EstadoFactura.PENDIENTE,
+            observaciones=bill_data.get("observaciones", ""),
+            numero_factura=next_invoice_number
+        )
+        
+        crud._CareLinkCrud__carelink_session.add(factura)
+        crud._CareLinkCrud__carelink_session.commit()
+        crud._CareLinkCrud__carelink_session.refresh(factura)
+        
+        # Crear respuesta
+        factura_response = FacturaOut(
+            id_factura=factura.id_factura,
+            numero_factura=factura.numero_factura,
+            id_contrato=factura.id_contrato,
+            fecha_emision=factura.fecha_emision,
+            fecha_vencimiento=factura.fecha_vencimiento,
+            subtotal=float(factura.subtotal) if factura.subtotal is not None else None,
+            impuestos=float(factura.impuestos) if factura.impuestos is not None else None,
+            descuentos=float(factura.descuentos) if factura.descuentos is not None else None,
+            total_factura=float(factura.total_factura) if factura.total_factura else 0.0,
+            estado_factura=factura.estado_factura.value if hasattr(factura.estado_factura, 'value') else factura.estado_factura,
+            observaciones=factura.observaciones
+        )
+        
+        return Response[FacturaOut](
+            data=factura_response,
+            status_code=HTTPStatus.CREATED,
+            message="Factura de visita domiciliaria creada exitosamente",
+            error=None
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al crear factura de visita domiciliaria: {str(e)}"
         )
