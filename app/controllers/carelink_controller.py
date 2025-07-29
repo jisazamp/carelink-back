@@ -6,7 +6,7 @@ import tempfile
 from docxtpl import DocxTemplate
 from datetime import datetime
 from typing import Optional
-from fastapi import Query
+from fastapi import Query, status
 from app.dto.v1.request.activities import (
     ActividadesGrupalesCreate,
     ActividadesGrupalesUpdate,
@@ -162,6 +162,10 @@ import json
 from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes
 from app.models.rates import TarifasServicioPorAnio
 from app.exceptions.exceptions_classes import EntityNotFoundError
+import io
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font, Border, Side, Alignment, PatternFill
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 
 token_auth_scheme = HTTPBearer()
@@ -4481,4 +4485,294 @@ async def create_home_visit_bill(
         raise HTTPException(
             status_code=500,
             detail=f"Error al crear factura de visita domiciliaria: {str(e)}"
+        )
+
+@router.get("/users/template/excel")
+async def export_user_template(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    """
+    Genera y descarga una plantilla Excel para importación masiva de usuarios.
+    Solo incluye usuarios que NO están relacionados con visitas domiciliarias.
+    """
+    try:
+        # Crear un nuevo workbook
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Plantilla Usuarios"
+        
+        # Definir columnas
+        columns = [
+            "Tipo de usuario",
+            "N° Documento", 
+            "Nombres",
+            "Apellidos",
+            "Género",
+            "Fecha de nacimiento",
+            "Estado civil",
+            "Ocupación"
+        ]
+        
+        # Estilos para encabezados
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        # Escribir encabezados
+        for col_num, column in enumerate(columns, 1):
+            cell = worksheet.cell(row=1, column=col_num, value=column)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+            cell.border = border
+        
+        # Ajustar ancho de columnas
+        column_widths = [15, 15, 20, 20, 12, 15, 15, 20]
+        for col_num, width in enumerate(column_widths, 1):
+            worksheet.column_dimensions[chr(64 + col_num)].width = width
+        
+        # Agregar datos de ejemplo
+        example_data = [
+            ["Nuevo", "1234567890", "Juan", "Pérez", "Masculino", "1990-01-15", "Soltero", "Ingeniero"],
+            ["Recurrente", "0987654321", "María", "García", "Femenino", "1985-05-20", "Casado", "Médico"],
+            ["Nuevo", "1122334455", "Carlos", "López", "Masculino", "1995-12-10", "Soltero", "Abogado"]
+        ]
+        
+        for row_num, row_data in enumerate(example_data, 2):
+            for col_num, value in enumerate(row_data, 1):
+                cell = worksheet.cell(row=row_num, column=col_num, value=value)
+                cell.border = border
+        
+        # Agregar instrucciones
+        worksheet.cell(row=6, column=1, value="INSTRUCCIONES:")
+        worksheet.cell(row=7, column=1, value="1. Complete los datos en las filas correspondientes")
+        worksheet.cell(row=8, column=1, value="2. Tipo de usuario: 'Nuevo' o 'Recurrente'")
+        worksheet.cell(row=9, column=1, value="3. Género: 'Masculino', 'Femenino' o 'Neutro'")
+        worksheet.cell(row=10, column=1, value="4. Estado civil: 'Soltero', 'Casado', 'Divorciado', 'Viudo', 'Unión Libre'")
+        worksheet.cell(row=11, column=1, value="5. Fecha de nacimiento: formato YYYY-MM-DD")
+        worksheet.cell(row=12, column=1, value="6. Los campos marcados con * son obligatorios")
+        
+        # Guardar en un archivo temporal
+        import tempfile
+        import os
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+            workbook.save(tmp_file.name)
+            tmp_file_path = tmp_file.name
+        
+        return FileResponse(
+            tmp_file_path,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename="plantilla_usuarios_fundacion.xlsx"
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al generar la plantilla Excel: {str(e)}"
+        )
+
+@router.post("/users/import/excel")
+async def import_users_from_excel(
+    file: UploadFile = File(...),
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    """
+    Importa usuarios masivamente desde un archivo Excel.
+    Solo crea usuarios para asistencia a la fundación (NO visitas domiciliarias).
+    """
+    from datetime import datetime
+    
+    try:
+        # Validar tipo de archivo
+        if not file.filename.endswith('.xlsx'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El archivo debe ser un archivo Excel (.xlsx)"
+            )
+        
+        # Leer el archivo Excel con openpyxl
+        workbook = load_workbook(file.file)
+        worksheet = workbook.active
+        
+        # Obtener encabezados de la primera fila
+        headers = []
+        for cell in worksheet[1]:
+            headers.append(cell.value)
+        
+        # Validar columnas requeridas
+        required_columns = [
+            "Tipo de usuario",
+            "N° Documento", 
+            "Nombres",
+            "Apellidos",
+            "Género",
+            "Fecha de nacimiento",
+            "Estado civil",
+            "Ocupación"
+        ]
+        
+        missing_columns = [col for col in required_columns if col not in headers]
+        if missing_columns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Columnas faltantes en el archivo: {', '.join(missing_columns)}"
+            )
+        
+        # Procesar cada fila
+        results = {
+            "success": [],
+            "errors": [],
+            "total_processed": 0,
+            "total_success": 0,
+            "total_errors": 0
+        }
+        
+        # Procesar filas desde la segunda (saltando encabezados)
+        for row_num in range(2, worksheet.max_row + 1):
+            results["total_processed"] += 1
+            
+            try:
+                # Obtener valores de la fila
+                row_data = {}
+                for col_num, header in enumerate(headers, 1):
+                    cell_value = worksheet.cell(row=row_num, column=col_num).value
+                    row_data[header] = cell_value
+                
+                # Validar datos requeridos
+                if not row_data.get("Nombres") or not row_data.get("Apellidos") or not row_data.get("N° Documento"):
+                    results["errors"].append({
+                        "row": row_num,
+                        "error": "Los campos Nombres, Apellidos y N° Documento son obligatorios"
+                    })
+                    results["total_errors"] += 1
+                    continue
+                
+                # Validar tipo de usuario
+                tipo_usuario_raw = str(row_data.get("Tipo de usuario", "")).strip() or "Nuevo"
+                tipo_usuario = tipo_usuario_raw.title()  # Convierte "NUEVO" a "Nuevo"
+                if tipo_usuario not in ["Nuevo", "Recurrente"]:
+                    results["errors"].append({
+                        "row": row_num,
+                        "error": f"Tipo de usuario '{tipo_usuario_raw}' no válido. Debe ser 'Nuevo' o 'Recurrente'"
+                    })
+                    results["total_errors"] += 1
+                    continue
+                
+                # Validar género
+                genero_raw = str(row_data.get("Género", "")).strip() or "Masculino"
+                genero = genero_raw.title()  # Convierte "MASCULINO" a "Masculino"
+                if genero not in ["Masculino", "Femenino", "Neutro"]:
+                    results["errors"].append({
+                        "row": row_num,
+                        "error": f"Género '{genero_raw}' no válido. Debe ser 'Masculino', 'Femenino' o 'Neutro'"
+                    })
+                    results["total_errors"] += 1
+                    continue
+                
+                # Validar estado civil
+                estado_civil_raw = str(row_data.get("Estado civil", "")).strip() or "Soltero"
+                estado_civil = estado_civil_raw.title()  # Convierte "SOLTERO" a "Soltero"
+                if estado_civil not in ["Soltero", "Casado", "Divorciado", "Viudo", "Unión Libre"]:
+                    results["errors"].append({
+                        "row": row_num,
+                        "error": f"Estado civil '{estado_civil_raw}' no válido"
+                    })
+                    results["total_errors"] += 1
+                    continue
+                
+                # Validar fecha de nacimiento
+                fecha_nacimiento = row_data.get("Fecha de nacimiento")
+                if not fecha_nacimiento:
+                    results["errors"].append({
+                        "row": row_num,
+                        "error": "La fecha de nacimiento es obligatoria"
+                    })
+                    results["total_errors"] += 1
+                    continue
+                
+                # Convertir fecha si es necesario
+                if isinstance(fecha_nacimiento, str):
+                    try:
+                        fecha_nacimiento = datetime.strptime(fecha_nacimiento, "%Y-%m-%d").date()
+                    except:
+                        results["errors"].append({
+                            "row": row_num,
+                            "error": "Formato de fecha de nacimiento inválido. Use YYYY-MM-DD"
+                        })
+                        results["total_errors"] += 1
+                        continue
+                else:
+                    # Si es un objeto datetime de Excel
+                    fecha_nacimiento = fecha_nacimiento.date()
+                
+                # Crear objeto usuario
+                user_data = {
+                    "nombres": str(row_data["Nombres"]).strip(),
+                    "apellidos": str(row_data["Apellidos"]).strip(),
+                    "n_documento": str(row_data["N° Documento"]).strip(),
+                    "genero": genero,
+                    "fecha_nacimiento": fecha_nacimiento,
+                    "estado_civil": estado_civil,
+                    "ocupacion_quedesempeño": str(row_data.get("Ocupación", "")).strip() or "",
+                    "tipo_usuario": tipo_usuario,
+                    "visitas_domiciliarias": False,  # IMPORTANTE: Solo usuarios para fundación
+                    "estado": "ACTIVO",
+                    "escribe": False,
+                    "lee": False,
+                    "ha_estado_en_otro_centro": False,
+                    "proteccion_exequial": False,
+                    "is_deleted": False,
+                    "fecha_registro": datetime.utcnow(),
+                    "direccion": None,  # No requerido para usuarios de fundación
+                    "telefono": None,   # No requerido para usuarios de fundación
+                    "email": None,      # No requerido para usuarios de fundación
+                    "nucleo_familiar": "Nuclear",
+                    "grado_escolaridad": None,
+                    "lugar_nacimiento": None,
+                    "lugar_procedencia": None,
+                    "origen_otrocentro": None,
+                    "regimen_seguridad_social": None,
+                    "tipo_afiliacion": None,
+                    "profesion": str(row_data.get("Ocupación", "")).strip() or "",
+                    "url_imagen": None
+                }
+                
+                # Crear usuario usando el CRUD existente
+                user = User(**user_data)
+                saved_user = crud.save_user(user, None)  # Sin foto
+                
+                results["success"].append({
+                    "row": row_num,
+                    "user_id": saved_user.id_usuario,
+                    "nombre": f"{saved_user.nombres} {saved_user.apellidos}"
+                })
+                results["total_success"] += 1
+                
+            except Exception as e:
+                results["errors"].append({
+                    "row": row_num,
+                    "error": f"Error al procesar fila: {str(e)}"
+                })
+                results["total_errors"] += 1
+        
+        return Response[dict](
+            data=results,
+            status_code=HTTPStatus.OK,
+            message=f"Importación completada. {results['total_success']} usuarios creados, {results['total_errors']} errores.",
+            error=None,
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al procesar el archivo Excel: {str(e)}"
         )
