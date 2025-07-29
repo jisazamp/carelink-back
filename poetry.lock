@@ -1070,6 +1070,7 @@ files = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "pytz"
 version = "2025.2"
 description = "World timezone definitions, modern and historical"
@@ -1081,6 +1082,8 @@ files = [
 ]
 
 [[package]]
+=======
+>>>>>>> origin/main
 name = "reportlab"
 version = "4.4.2"
 description = "The Reportlab Toolkit"
@@ -1382,4 +1385,8 @@ standard = ["colorama (>=0.4)", "httptools (>=0.5.0)", "python-dotenv (>=0.13)",
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.8.0"
+<<<<<<< HEAD
 content-hash = "12876da0b353b7181ac02a2d8b3a87aaef61bd449fa14663685e350d2261940e"
+=======
+content-hash = "88adbb09e3712003be17a9d1b80174b18bb5ab592b6d29b0684920a275d46c9c"
+>>>>>>> origin/main
