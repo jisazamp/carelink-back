@@ -1,3 +1,4 @@
+from app.dto.v1.request.authorized_users import AuthorizedUserUpdate
 from app.dto.v1.request.contracts import ContratoCreateDTO
 from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
 from app.dto.v1.response.contracts import (
