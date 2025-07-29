@@ -90,6 +90,7 @@ from app.models.authorized_users import AuthorizedUsers
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.clinical_evolutions import EvolucionesClinicas
 from app.models.family_member import FamilyMember
+from app.models.family_members_by_user import FamiliaresYAcudientesPorUsuario
 from app.models.interventions_per_user import IntervencionesPorUsuario
 from app.models.medical_record import MedicalRecord
 from app.models.medical_report import ReportesClinicos
@@ -166,6 +167,7 @@ import io
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Border, Side, Alignment, PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.utils import get_column_letter
 
 
 token_auth_scheme = HTTPBearer()
@@ -4758,6 +4760,12 @@ async def import_users_from_excel(
                 results["total_success"] += 1
                 
             except Exception as e:
+                # Hacer rollback de la sesión si hay error
+                try:
+                    crud.__carelink_session.rollback()
+                except:
+                    pass
+                
                 results["errors"].append({
                     "row": row_num,
                     "error": f"Error al procesar fila: {str(e)}"
@@ -4770,6 +4778,337 @@ async def import_users_from_excel(
             message=f"Importación completada. {results['total_success']} usuarios creados, {results['total_errors']} errores.",
             error=None,
         )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al procesar el archivo Excel: {str(e)}"
+        )
+
+@router.get("/family-members/template/excel")
+async def export_family_member_template(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    """Generar plantilla Excel para importación masiva de familiares"""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+        from openpyxl.utils import get_column_letter
+        import io
+        
+        # Crear workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Familiares"
+        
+        # Definir estilos
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        center_alignment = Alignment(horizontal='center', vertical='center')
+        
+        # Definir columnas
+        columns = [
+            "N° Documento del Paciente",
+            "N° Documento del Familiar", 
+            "Nombres del Familiar",
+            "Apellidos del Familiar",
+            "Teléfono del Familiar",
+            "Dirección del Familiar",
+            "Email del Familiar",
+            "Parentesco",
+            "Es Acudiente (Sí/No)",
+            "Vive (Sí/No)"
+        ]
+        
+        # Agregar encabezados
+        for col, header in enumerate(columns, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = border
+            cell.alignment = center_alignment
+        
+        # Ajustar ancho de columnas
+        for col in range(1, len(columns) + 1):
+            ws.column_dimensions[get_column_letter(col)].width = 20
+        
+        # Agregar datos de ejemplo
+        example_data = [
+            ["12345678", "87654321", "María", "González", "3001234567", "Calle 123 #45-67", "maria@email.com", "Madre", "Sí", "Sí"],
+            ["23456789", "98765432", "Juan", "Pérez", "3009876543", "Carrera 78 #12-34", "juan@email.com", "Padre", "No", "Sí"]
+        ]
+        
+        for row, data in enumerate(example_data, 2):
+            for col, value in enumerate(data, 1):
+                cell = ws.cell(row=row, column=col, value=value)
+                cell.border = border
+                cell.alignment = center_alignment
+        
+        # Guardar en buffer
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        
+        return FileResponse(
+            buffer,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename="plantilla_familiares.xlsx"
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al generar plantilla: {str(e)}"
+        )
+
+
+@router.post("/family-members/import/excel")
+async def import_family_members_from_excel(
+    file: UploadFile = File(...),
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    """Importar familiares desde archivo Excel"""
+    try:
+        from openpyxl import load_workbook
+        import tempfile
+        import os
+        
+        # Validar tipo de archivo
+        if not file.filename.endswith('.xlsx'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Solo se permiten archivos Excel (.xlsx)"
+            )
+        
+        # Guardar archivo temporalmente
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+            content = await file.read()
+            tmp_file.write(content)
+            tmp_file_path = tmp_file.name
+        
+        try:
+            # Cargar workbook
+            wb = load_workbook(tmp_file_path, data_only=True)
+            ws = wb.active
+            
+            # Validar columnas requeridas
+            expected_columns = [
+                "N° Documento del Paciente",
+                "N° Documento del Familiar", 
+                "Nombres del Familiar",
+                "Apellidos del Familiar",
+                "Teléfono del Familiar",
+                "Dirección del Familiar",
+                "Email del Familiar",
+                "Parentesco",
+                "Es Acudiente (Sí/No)",
+                "Vive (Sí/No)"
+            ]
+            
+            headers = [cell.value for cell in ws[1]]
+            if not all(col in headers for col in expected_columns):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="El archivo no contiene todas las columnas requeridas"
+                )
+            
+            # Procesar filas
+            results = {
+                "success": [],
+                "errors": [],
+                "total_processed": 0,
+                "total_success": 0,
+                "total_errors": 0
+            }
+            
+            for row_num in range(2, ws.max_row + 1):
+                results["total_processed"] += 1
+                
+                try:
+                    # Obtener datos de la fila
+                    row_data = {}
+                    for col, header in enumerate(headers, 1):
+                        cell_value = ws.cell(row=row_num, column=col).value
+                        row_data[header] = cell_value if cell_value is not None else ""
+                    
+                    # Validar datos requeridos
+                    paciente_documento = str(row_data.get("N° Documento del Paciente", "")).strip()
+                    if not paciente_documento:
+                        results["errors"].append({
+                            "row": row_num,
+                            "error": "El número de documento del paciente es obligatorio"
+                        })
+                        results["total_errors"] += 1
+                        continue
+                    
+                    familiar_documento = str(row_data.get("N° Documento del Familiar", "")).strip()
+                    if not familiar_documento:
+                        results["errors"].append({
+                            "row": row_num,
+                            "error": "El número de documento del familiar es obligatorio"
+                        })
+                        results["total_errors"] += 1
+                        continue
+                    
+                    nombres = str(row_data.get("Nombres del Familiar", "")).strip()
+                    if not nombres:
+                        results["errors"].append({
+                            "row": row_num,
+                            "error": "Los nombres del familiar son obligatorios"
+                        })
+                        results["total_errors"] += 1
+                        continue
+                    
+                    apellidos = str(row_data.get("Apellidos del Familiar", "")).strip()
+                    if not apellidos:
+                        results["errors"].append({
+                            "row": row_num,
+                            "error": "Los apellidos del familiar son obligatorios"
+                        })
+                        results["total_errors"] += 1
+                        continue
+                    
+                    parentesco = str(row_data.get("Parentesco", "")).strip()
+                    if not parentesco:
+                        results["errors"].append({
+                            "row": row_num,
+                            "error": "El parentesco es obligatorio"
+                        })
+                        results["total_errors"] += 1
+                        continue
+                    
+                    # Buscar paciente por documento
+                    paciente = crud.get_user_by_document(paciente_documento)
+                    if not paciente:
+                        results["errors"].append({
+                            "row": row_num,
+                            "error": f"No se encontró un paciente con el documento {paciente_documento}"
+                        })
+                        results["total_errors"] += 1
+                        continue
+                    
+                    # Validar si el familiar ya existe
+                    existing_family_member = crud.get_family_member_by_document(familiar_documento)
+                    if existing_family_member:
+                        results["errors"].append({
+                            "row": row_num,
+                            "error": f"Ya existe un familiar con el documento {familiar_documento}"
+                        })
+                        results["total_errors"] += 1
+                        continue
+                    
+                    # Procesar campos opcionales
+                    telefono = str(row_data.get("Teléfono del Familiar", "")).strip() or None
+                    direccion = str(row_data.get("Dirección del Familiar", "")).strip() or None
+                    email = str(row_data.get("Email del Familiar", "")).strip() or None
+                    
+                    # Truncar campos según restricciones de la base de datos
+                    if telefono and len(telefono) > 50:
+                        telefono = telefono[:50]
+                    if direccion and len(direccion) > 255:
+                        direccion = direccion[:255]
+                    if email and len(email) > 50:
+                        email = email[:50]
+                    if nombres and len(nombres) > 50:
+                        nombres = nombres[:50]
+                    if apellidos and len(apellidos) > 50:
+                        apellidos = apellidos[:50]
+                    
+                    # Validar email para tabla Usuarios (máximo 30 caracteres)
+                    if email and len(email) > 30:
+                        # Si el email es demasiado largo para Usuarios, no lo usamos
+                        email = None
+                    
+                    # Procesar campos booleanos
+                    es_acudiente_raw = str(row_data.get("Es Acudiente (Sí/No)", "")).strip().lower()
+                    es_acudiente = es_acudiente_raw in ["sí", "si", "s", "yes", "y", "true", "1"]
+                    
+                    vive_raw = str(row_data.get("Vive (Sí/No)", "")).strip().lower()
+                    vive = vive_raw in ["sí", "si", "s", "yes", "y", "true", "1"]
+                    
+                    # Verificar si ya existe un acudiente para este usuario
+                    if es_acudiente:
+                        existing_acudiente = crud.check_existing_acudiente(paciente.id_usuario)
+                        if existing_acudiente:
+                            results["errors"].append({
+                                "row": row_num,
+                                "error": f"El paciente ya tiene un acudiente registrado"
+                            })
+                            results["total_errors"] += 1
+                            continue
+                    
+                    # Crear datos del familiar
+                    family_member_data = {
+                        "n_documento": familiar_documento,
+                        "nombres": nombres,
+                        "apellidos": apellidos,
+                        "telefono": telefono,
+                        "direccion": direccion,
+                        "email": email,
+                        "acudiente": es_acudiente,
+                        "vive": vive,
+                        "is_deleted": False
+                    }
+                    
+                    # Crear el familiar usando el método público del CRUD
+                    family_member = crud.create_family_member(family_member_data)
+
+                    # Crear la relación
+                    relationship = crud.create_family_member_relationship(
+                        paciente.id_usuario,
+                        family_member.id_acudiente,
+                        parentesco
+                    )
+
+                    # Actualizar campos del usuario si es acudiente
+                    if es_acudiente:
+                        crud.update_user_contact_info(paciente, family_member)
+
+                    # Confirmar cambios
+                    crud.commit_changes()
+                    
+                    results["success"].append({
+                        "row": row_num,
+                        "family_member_id": family_member.id_acudiente,
+                        "paciente_nombre": f"{paciente.nombres} {paciente.apellidos}",
+                        "familiar_nombre": f"{nombres} {apellidos}",
+                        "parentesco": parentesco,
+                        "es_acudiente": es_acudiente
+                    })
+                    results["total_success"] += 1
+                    
+                except Exception as e:
+                    # Hacer rollback de la sesión si hay error
+                    try:
+                        crud.__carelink_session.rollback()
+                    except:
+                        pass
+                    
+                    results["errors"].append({
+                        "row": row_num,
+                        "error": f"Error al procesar fila: {str(e)}"
+                    })
+                    results["total_errors"] += 1
+                
+            return Response[dict](
+                data=results,
+                status_code=HTTPStatus.OK,
+                message=f"Importación completada. {results['total_success']} familiares creados, {results['total_errors']} errores.",
+                error=None,
+            )
+            
+        finally:
+            # Limpiar archivo temporal
+            if os.path.exists(tmp_file_path):
+                os.unlink(tmp_file_path)
         
     except Exception as e:
         raise HTTPException(

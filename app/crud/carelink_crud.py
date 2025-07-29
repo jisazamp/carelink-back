@@ -2222,6 +2222,72 @@ class CareLinkCrud:
                 detail=f"Error al obtener datos de eficiencia operativa: {str(e)}"
             )
 
+    def get_user_by_document(self, document: str) -> User | None:
+        """Obtener usuario por número de documento"""
+        return self.__carelink_session.execute(
+            select(User).where(
+                User.n_documento == document,
+                User.is_deleted == False
+            )
+        ).scalar_one_or_none()
+
+    def get_family_member_by_document(self, document: str) -> FamilyMember | None:
+        """Obtener familiar por número de documento"""
+        return self.__carelink_session.execute(
+            select(FamilyMember).where(
+                FamilyMember.n_documento == document,
+                FamilyMember.is_deleted == False
+            )
+        ).scalar_one_or_none()
+
+    def check_existing_acudiente(self, user_id: int) -> FamilyMember | None:
+        """Verificar si un usuario ya tiene un acudiente principal"""
+        return self.__carelink_session.execute(
+            select(FamilyMember)
+            .join(FamiliaresYAcudientesPorUsuario, FamiliaresYAcudientesPorUsuario.id_acudiente == FamilyMember.id_acudiente)
+            .where(FamiliaresYAcudientesPorUsuario.id_usuario == user_id, FamilyMember.acudiente == True)
+        ).scalar_one_or_none()
+
+    def create_family_member(self, family_member_data: dict) -> FamilyMember:
+        """Crear un nuevo familiar"""
+        family_member = FamilyMember(**family_member_data)
+        self.__carelink_session.add(family_member)
+        self.__carelink_session.flush()
+        return family_member
+
+    def create_family_member_relationship(self, user_id: int, family_member_id: int, parentesco: str) -> FamiliaresYAcudientesPorUsuario:
+        """Crear relación entre usuario y familiar"""
+        relationship = FamiliaresYAcudientesPorUsuario(
+            id_usuario=user_id,
+            id_acudiente=family_member_id,
+            parentesco=parentesco
+        )
+        self.__carelink_session.add(relationship)
+        self.__carelink_session.flush()
+        return relationship
+
+    def update_user_contact_info(self, user: User, family_member: FamilyMember):
+        """Actualizar información de contacto del usuario si el familiar es acudiente"""
+        if family_member.telefono:
+            # Validar longitud del teléfono (máximo 20 caracteres)
+            telefono = family_member.telefono[:20] if len(family_member.telefono) > 20 else family_member.telefono
+            user.telefono = telefono
+        if family_member.email:
+            # Validar longitud del email (máximo 30 caracteres)
+            if len(family_member.email) <= 30:
+                user.email = family_member.email
+            # Si el email es demasiado largo, no lo actualizamos
+        if family_member.direccion:
+            # Validar longitud de la dirección (máximo 150 caracteres)
+            direccion = family_member.direccion[:150] if len(family_member.direccion) > 150 else family_member.direccion
+            user.direccion = direccion
+        self.__carelink_session.add(user)
+        self.__carelink_session.flush()
+
+    def commit_changes(self):
+        """Commit changes to the database session"""
+        self.__carelink_session.commit()
+
 
 def get_bill_payments_total(db, id_factura: int) -> float:
     """
