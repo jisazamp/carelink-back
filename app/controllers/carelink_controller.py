@@ -267,7 +267,9 @@ async def list_users(
 @router.get("/users/home-visits", response_model=Response[List[UserResponseDTO]])
 async def list_users_with_home_visits(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value, Role.TRANSPORT.value)
+    ),
 ) -> Response[List[UserResponseDTO]]:
     users = crud.list_users_with_home_visits()
     users_list = []
@@ -822,7 +824,11 @@ async def calculate_partial_bill(
 
 @router.post("/calcular/total_factura", response_model=Response[float])
 async def calculate_total_factura(
-    payload: dict, crud: CareLinkCrud = Depends(get_crud)
+    payload: dict,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[float]:
     """
     Calcula el total de factura incluyendo impuestos y descuentos
@@ -882,7 +888,9 @@ async def create_users(
     user: str = Form(...),
     photo: Optional[UploadFile] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[dict]:
     """
     Crea un nuevo usuario en el sistema.
@@ -1420,7 +1428,9 @@ async def update_user_medical_record_simplified(
     record_id: int,
     record: UpdateUserMedicalRecordRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[object]:
     """Endpoint para actualizar historias clínicas simplificadas (solo el registro principal)"""
     update_data = record.dict(exclude_unset=True)
@@ -2273,7 +2283,7 @@ def crear_cronograma_asistencia(
     cronograma_data: CronogramaAsistenciaCreateDTO,
     db: Session = Depends(get_carelink_db),
     _: AuthorizedUsers = Depends(
-        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value, Role.TRANSPORT.value)
     ),
 ) -> Response[CronogramaAsistenciaResponseDTO]:
     """
@@ -2348,7 +2358,7 @@ def agregar_paciente_cronograma(
     paciente_data: CronogramaAsistenciaPacienteCreateDTO,
     db: Session = Depends(get_carelink_db),
     _: AuthorizedUsers = Depends(
-        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value, Role.TRANSPORT.value)
     ),
 ) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
     """
@@ -2450,7 +2460,7 @@ def get_cronogramas_por_rango(
     fecha_fin: str,
     db: Session = Depends(get_carelink_db),
     _: AuthorizedUsers = Depends(
-        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value, Role.TRANSPORT.value)
     ),
 ) -> Response[List[CronogramaAsistenciaResponseDTO]]:
     """
@@ -2568,7 +2578,7 @@ def get_cronogramas_por_profesional(
     id_profesional: int,
     db: Session = Depends(get_carelink_db),
     _: AuthorizedUsers = Depends(
-        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value, Role.TRANSPORT.value)
     ),
 ) -> Response[List[CronogramaAsistenciaResponseDTO]]:
     """
@@ -2676,7 +2686,7 @@ def update_estado_asistencia(
     estado_data: EstadoAsistenciaUpdateDTO,
     db: Session = Depends(get_carelink_db),
     _: AuthorizedUsers = Depends(
-        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value, Role.TRANSPORT.value)
     ),
 ) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
     """
@@ -2788,7 +2798,7 @@ def reagendar_asistencia_paciente(
     estado_data: EstadoAsistenciaUpdateDTO,
     db: Session = Depends(get_carelink_db),
     _: AuthorizedUsers = Depends(
-        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value, Role.TRANSPORT.value)
     ),
 ) -> Response[CronogramaAsistenciaPacienteResponseDTO]:
     """
@@ -3690,7 +3700,9 @@ def get_facturacion_completa(
 @router.get("/tarifas-servicios", response_model=Response[TarifasServicioResponseDTO])
 async def get_all_service_rates(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[TarifasServicioResponseDTO]:
     """
     Obtener todas las tarifas de servicios por año con información del servicio
@@ -3744,7 +3756,9 @@ async def get_all_service_rates(
 async def update_service_rates(
     tarifas_data: TarifasServicioUpdateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[TarifasServicioResponseDTO]:
     """
     Actualizar múltiples tarifas de servicios por año
@@ -3813,7 +3827,9 @@ async def update_service_rates(
 @router.get("/facturas/estadisticas")
 def get_facturas_estadisticas(
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     """
     Obtiene estadísticas calculadas de facturación
@@ -3882,7 +3898,9 @@ def get_facturas_estadisticas(
 def get_bill_payments_total_endpoint(
     id_factura: int,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     """
     Retorna el total de pagos asociados a una factura
@@ -3897,7 +3915,9 @@ def get_bill_payments_total_endpoint(
 async def generate_factura_pdf(
     id_factura: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     """
     Genera un PDF de la factura con toda la información relacionada
@@ -3931,7 +3951,13 @@ async def generate_factura_pdf(
 
 
 @router.delete("/contratos/{id_contrato}", status_code=204)
-def eliminar_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
+def eliminar_contrato(
+    id_contrato: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
     """
     Elimina un contrato y desasocia las facturas (pone id_contrato en NULL).
     - Elimina cronogramas asociados con estado 'PENDIENTE'.
@@ -3982,7 +4008,9 @@ def eliminar_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
 async def get_user_home_visits(
     user_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[VisitaDomiciliariaConProfesionalResponseDTO]]:
     """Obtener todas las visitas domiciliarias de un usuario"""
     try:
@@ -4009,7 +4037,9 @@ async def get_user_home_visits(
 )
 async def get_all_home_visits(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[VisitaDomiciliariaConProfesionalResponseDTO]]:
     """Obtener todas las visitas domiciliarias (para permitir filtrado completo)"""
     try:
@@ -4036,7 +4066,9 @@ async def get_all_home_visits(
 )
 async def get_all_home_visits_history(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[VisitaDomiciliariaConProfesionalResponseDTO]]:
     """Obtener todas las visitas domiciliarias (historial completo)"""
     try:
@@ -4064,7 +4096,9 @@ async def get_all_home_visits_history(
 async def get_home_visit_by_id(
     visita_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[VisitaDomiciliariaResponseDTO]:
     """Obtener una visita domiciliaria por ID"""
     try:
@@ -4091,7 +4125,9 @@ async def create_home_visit(
     user_id: int,
     visita_data: VisitaDomiciliariaCreateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[VisitaDomiciliariaResponseDTO]:
     """Crear una nueva visita domiciliaria"""
     try:
@@ -4131,7 +4167,9 @@ async def update_home_visit(
     visita_id: int,
     visita_data: VisitaDomiciliariaUpdateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[VisitaDomiciliariaResponseDTO]:
     """Actualizar una visita domiciliaria"""
     try:
@@ -4158,7 +4196,9 @@ async def update_home_visit(
 async def delete_home_visit(
     visita_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[dict]:
     """Eliminar una visita domiciliaria"""
     try:
@@ -4186,7 +4226,9 @@ async def update_user_home_visit(
     visita_id: int,
     visita_data: VisitaDomiciliariaUpdateDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[VisitaDomiciliariaResponseDTO]:
     """Actualizar una visita domiciliaria específica de un usuario"""
     try:
@@ -4221,7 +4263,9 @@ async def update_user_home_visit(
 def get_asistencia_diaria(
     fecha: Optional[str] = None,
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[AsistenciaDiariaResponseDTO]]:
     """
     Obtiene la asistencia del día actual (o fecha especificada) para el dashboard
@@ -4322,7 +4366,9 @@ def get_asistencia_diaria(
 async def get_pagos_by_factura(
     factura_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[PaymentResponseDTO]]:
     """Obtiene todos los pagos de una factura específica"""
     try:
@@ -4358,7 +4404,9 @@ async def add_pagos_to_factura(
     factura_id: int,
     pagos: List[PagoCreate],
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[dict]:
     """Agrega múltiples pagos a una factura específica"""
     try:
@@ -4428,7 +4476,9 @@ async def add_pagos_to_factura(
 @router.get("/user-flow", response_model=Response[UserFlowResponseDTO])
 async def get_user_flow(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[UserFlowResponseDTO]:
     """
     Obtiene los datos del flujo de usuarios para el dashboard.
@@ -4454,7 +4504,9 @@ async def get_user_flow(
 @router.get("/quarterly-visits", response_model=Response[QuarterlyVisitsResponseDTO])
 async def get_quarterly_visits(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[QuarterlyVisitsResponseDTO]:
     """
     Obtiene los datos de visitas del trimestre para el dashboard.
@@ -4480,7 +4532,9 @@ async def get_quarterly_visits(
 @router.get("/monthly-payments", response_model=Response[MonthlyPaymentsResponseDTO])
 async def get_monthly_payments(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[MonthlyPaymentsResponseDTO]:
     """
     Obtiene los datos de pagos mensuales para el dashboard.
@@ -4508,7 +4562,9 @@ async def get_monthly_payments(
 )
 async def get_operational_efficiency(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[OperationalEfficiencyResponseDTO]:
     """
     Obtiene los datos de eficiencia operativa para el dashboard.
@@ -4542,7 +4598,9 @@ async def get_operational_efficiency(
 async def get_activity_with_users(
     activity_id: int,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[ActivityWithUsersDTO]:
     """Obtener una actividad con sus usuarios asignados"""
     try:
@@ -4569,7 +4627,9 @@ async def get_activity_with_users(
 async def get_users_for_activity_date(
     activity_date: str,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[List[UserForActivityDTO]]:
     """Obtener usuarios disponibles para una fecha específica basado en el cronograma"""
     try:
@@ -4601,7 +4661,9 @@ async def download_contract(
         None, description="Cantidad de días para el contrato"
     ),
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     """Descargar contrato de Word con información renderizada"""
     try:
@@ -4716,7 +4778,9 @@ async def assign_users_to_activity(
     activity_id: int,
     assign_data: AssignUsersToActivityDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[dict]:
     """Asignar usuarios a una actividad"""
     try:
@@ -4746,7 +4810,9 @@ async def remove_users_from_activity(
     activity_id: int,
     user_ids: List[int],
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[dict]:
     """Remover usuarios de una actividad"""
     try:
@@ -4773,7 +4839,9 @@ async def update_user_activity_status(
     activity_user_id: int,
     status_data: UpdateUserActivityStatusDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[dict]:
     """Actualizar el estado de participación de un usuario en una actividad"""
     try:

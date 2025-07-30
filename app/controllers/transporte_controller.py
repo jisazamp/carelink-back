@@ -372,4 +372,3 @@ def eliminar_transporte(
         raise HTTPException(
             status_code=500, detail=f"Error interno del servidor: {str(e)}"
         )
-
