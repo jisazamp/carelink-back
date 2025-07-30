@@ -1504,7 +1504,7 @@ class CareLinkCrud:
                 DATE_FORMAT(vdp.fecha_asignacion, '%Y-%m-%d %H:%i:%s') as fecha_asignacion,
                 CASE 
                     WHEN p.nombres IS NOT NULL THEN CONCAT(p.nombres, ' ', p.apellidos)
-                    ELSE NULL 
+                    ELSE 'Sin asignar'
                 END as profesional_asignado,
                 CONCAT(u.nombres, ' ', u.apellidos) as paciente_nombre
             FROM VisitasDomiciliarias vd
@@ -1546,7 +1546,7 @@ class CareLinkCrud:
                 DATE_FORMAT(vdp.fecha_asignacion, '%Y-%m-%d %H:%i:%s') as fecha_asignacion,
                 CASE 
                     WHEN p.nombres IS NOT NULL THEN CONCAT(p.nombres, ' ', p.apellidos)
-                    ELSE NULL 
+                    ELSE 'Sin asignar'
                 END as profesional_asignado,
                 CONCAT(u.nombres, ' ', u.apellidos) as paciente_nombre
             FROM VisitasDomiciliarias vd

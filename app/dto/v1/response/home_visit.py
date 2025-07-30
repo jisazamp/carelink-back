@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from datetime import date, time, datetime
 from typing import Optional
 from decimal import Decimal
@@ -17,6 +17,42 @@ class VisitaDomiciliariaResponseDTO(BaseModel):
     observaciones: Optional[str] = None
     fecha_creacion: str
     fecha_actualizacion: str
+
+    @validator('fecha_visita', pre=True)
+    def format_fecha_visita(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, date):
+            return v.strftime('%Y-%m-%d')
+        if isinstance(v, datetime):
+            return v.strftime('%Y-%m-%d')
+        return str(v) if v else None
+
+    @validator('hora_visita', pre=True)
+    def format_hora_visita(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, time):
+            return v.strftime('%H:%M:%S')
+        if isinstance(v, datetime):
+            return v.strftime('%H:%M:%S')
+        return str(v) if v else None
+
+    @validator('fecha_creacion', pre=True)
+    def format_fecha_creacion(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v.strftime('%Y-%m-%d %H:%M:%S')
+        return str(v) if v else None
+
+    @validator('fecha_actualizacion', pre=True)
+    def format_fecha_actualizacion(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v.strftime('%Y-%m-%d %H:%M:%S')
+        return str(v) if v else None
 
     class Config:
         orm_mode = True
@@ -48,6 +84,50 @@ class VisitaDomiciliariaConProfesionalResponseDTO(BaseModel):
     # Campos calculados
     profesional_asignado: Optional[str] = None  # Nombre del profesional asignado
     paciente_nombre: Optional[str] = None  # Nombre completo del paciente
+
+    @validator('fecha_visita', pre=True)
+    def format_fecha_visita(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, date):
+            return v.strftime('%Y-%m-%d')
+        if isinstance(v, datetime):
+            return v.strftime('%Y-%m-%d')
+        return str(v) if v else None
+
+    @validator('hora_visita', pre=True)
+    def format_hora_visita(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, time):
+            return v.strftime('%H:%M:%S')
+        if isinstance(v, datetime):
+            return v.strftime('%H:%M:%S')
+        return str(v) if v else None
+
+    @validator('fecha_creacion', pre=True)
+    def format_fecha_creacion(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v.strftime('%Y-%m-%d %H:%M:%S')
+        return str(v) if v else None
+
+    @validator('fecha_actualizacion', pre=True)
+    def format_fecha_actualizacion(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v.strftime('%Y-%m-%d %H:%M:%S')
+        return str(v) if v else None
+
+    @validator('fecha_asignacion', pre=True)
+    def format_fecha_asignacion(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v.strftime('%Y-%m-%d %H:%M:%S')
+        return str(v) if v else None
 
     class Config:
         orm_mode = True 
