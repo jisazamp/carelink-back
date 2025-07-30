@@ -50,6 +50,7 @@ from datetime import date, datetime
 from fastapi import HTTPException, UploadFile, status
 from passlib.context import CryptContext
 from sqlalchemy import select, delete
+from sqlalchemy import select, delete, text
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional, Tuple
