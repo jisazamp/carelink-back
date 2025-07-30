@@ -2278,8 +2278,248 @@ class CareLinkCrud:
         self.__carelink_session.flush()
 
     def commit_changes(self):
-        """Commit changes to the database session"""
+        """Commit los cambios en la sesión de base de datos"""
         self.__carelink_session.commit()
+
+    def get_complete_factura_data_for_pdf(self, id_factura: int) -> dict:
+        """
+        Obtiene todos los datos necesarios para generar el PDF de una factura
+        
+        Args:
+            id_factura: ID de la factura
+            
+        Returns:
+            dict: Datos completos de la factura incluyendo cliente, servicios, pagos
+        """
+        try:
+            # Obtener la factura con relaciones
+            factura = self.__carelink_session.query(Facturas)\
+                .filter(Facturas.id_factura == id_factura)\
+                .first()
+            
+            if not factura:
+                raise EntityNotFoundError(f"Factura con ID {id_factura} no encontrada")
+            
+            # Obtener datos del contrato y usuario
+            contrato = None
+            usuario = None
+            if factura.id_contrato:
+                contrato = self.__carelink_session.query(Contratos)\
+                    .filter(Contratos.id_contrato == factura.id_contrato)\
+                    .first()
+                if contrato:
+                    usuario = self.__carelink_session.query(User)\
+                        .filter(User.id_usuario == contrato.id_usuario)\
+                        .first()
+            
+            # Obtener pagos de la factura
+            pagos = self.__carelink_session.query(Pagos)\
+                .filter(Pagos.id_factura == id_factura)\
+                .all()
+            
+            # Obtener detalles de factura
+            detalles = self.__carelink_session.query(DetalleFactura)\
+                .filter(DetalleFactura.id_factura == id_factura)\
+                .all()
+            
+            # Obtener servicios contratados para los detalles
+            servicios_contratados = []
+            for detalle in detalles:
+                if detalle.id_servicio_contratado:
+                    servicio_contratado = self.__carelink_session.query(ServiciosPorContrato)\
+                        .filter(ServiciosPorContrato.id_servicio_contratado == detalle.id_servicio_contratado)\
+                        .first()
+                    if servicio_contratado:
+                        servicio = self.__carelink_session.query(Servicios)\
+                            .filter(Servicios.id_servicio == servicio_contratado.id_servicio)\
+                            .first()
+                        servicios_contratados.append({
+                            'detalle': detalle,
+                            'servicio_contratado': servicio_contratado,
+                            'servicio': servicio
+                        })
+            
+            # Calcular totales
+            total_pagado = sum(pago.valor for pago in pagos) if pagos else 0
+            saldo_pendiente = factura.total_factura - total_pagado if factura.total_factura else 0
+            
+            return {
+                'factura': factura,
+                'contrato': contrato,
+                'usuario': usuario,
+                'pagos': pagos,
+                'detalles': detalles,
+                'servicios_contratados': servicios_contratados,
+                'total_pagado': total_pagado,
+                'saldo_pendiente': saldo_pendiente,
+                'fecha_generacion': datetime.now()
+            }
+            
+        except Exception as e:
+            print(f"Error obteniendo datos de factura {id_factura}: {str(e)}")
+            raise
+
+    def generate_factura_pdf(self, factura_data: dict) -> bytes:
+        """
+        Genera el PDF de la factura usando los datos proporcionados
+        
+        Args:
+            factura_data: Diccionario con todos los datos de la factura
+            
+        Returns:
+            bytes: Contenido del PDF generado
+        """
+        try:
+            # Importar librerías necesarias para generar PDF
+            from reportlab.lib.pagesizes import letter, A4
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.lib import colors
+            from io import BytesIO
+            from datetime import datetime
+            
+            # Crear buffer para el PDF
+            buffer = BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=A4)
+            story = []
+            
+            # Estilos
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=16,
+                spaceAfter=30,
+                alignment=1  # Centrado
+            )
+            
+            # Título del documento
+            story.append(Paragraph("FACTURA", title_style))
+            story.append(Spacer(1, 20))
+            
+            # Información de la factura
+            factura = factura_data['factura']
+            story.append(Paragraph(f"<b>Número de Factura:</b> {factura.numero_factura}", styles['Normal']))
+            story.append(Paragraph(f"<b>Fecha de Emisión:</b> {factura.fecha_emision}", styles['Normal']))
+            story.append(Paragraph(f"<b>Fecha de Vencimiento:</b> {factura.fecha_vencimiento}", styles['Normal']))
+            story.append(Paragraph(f"<b>Estado:</b> {factura.estado_factura}", styles['Normal']))
+            story.append(Spacer(1, 20))
+            
+            # Información del cliente
+            if factura_data['usuario']:
+                usuario = factura_data['usuario']
+                story.append(Paragraph("<b>DATOS DEL USUARIO</b>", styles['Heading2']))
+                story.append(Paragraph(f"<b>Nombre:</b> {usuario.nombres} {usuario.apellidos}", styles['Normal']))
+                story.append(Paragraph(f"<b>Documento:</b> {usuario.n_documento}", styles['Normal']))
+                if usuario.direccion:
+                    story.append(Paragraph(f"<b>Dirección:</b> {usuario.direccion}", styles['Normal']))
+                story.append(Spacer(1, 20))
+            
+            # Detalles de servicios
+            if factura_data['servicios_contratados']:
+                story.append(Paragraph("<b>DETALLES DE SERVICIOS</b>", styles['Heading2']))
+                
+                # Crear tabla de servicios
+                table_data = [['Descripción', 'Cantidad', 'Valor Unitario', 'Total']]
+                
+                for item in factura_data['servicios_contratados']:
+                    detalle = item['detalle']
+                    servicio = item['servicio']
+                    descripcion = servicio.nombre if servicio else detalle.descripcion_servicio or "Servicio"
+                    
+                    table_data.append([
+                        descripcion,
+                        str(detalle.cantidad),
+                        f"${detalle.valor_unitario:,.2f}",
+                        f"${detalle.subtotal_linea:,.2f}"
+                    ])
+                
+                # Agregar totales
+                table_data.append(['', '', '<b>Subtotal:</b>', f"<b>${factura.subtotal:,.2f}</b>"])
+                table_data.append(['', '', '<b>Impuestos:</b>', f"<b>${factura.impuestos:,.2f}</b>"])
+                table_data.append(['', '', '<b>Descuentos:</b>', f"<b>${factura.descuentos:,.2f}</b>"])
+                table_data.append(['', '', '<b>TOTAL:</b>', f"<b>${factura.total_factura:,.2f}</b>"])
+                
+                # Crear tabla
+                table = Table(table_data, colWidths=[3*inch, 1*inch, 1.5*inch, 1.5*inch])
+                table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 12),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -4), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('ALIGN', (3, -3), (-1, -1), 'RIGHT'),  # Alinear totales a la derecha
+                ]))
+                
+                story.append(table)
+                story.append(Spacer(1, 20))
+            
+            # Información de pagos
+            if factura_data['pagos']:
+                story.append(Paragraph("<b>HISTORIAL DE PAGOS</b>", styles['Heading2']))
+                
+                pagos_data = [['Fecha', 'Método', 'Tipo', 'Valor']]
+                for pago in factura_data['pagos']:
+                    # Obtener nombres de método y tipo de pago
+                    metodo = self.__carelink_session.query(MetodoPago)\
+                        .filter(MetodoPago.id_metodo_pago == pago.id_metodo_pago)\
+                        .first()
+                    tipo = self.__carelink_session.query(TipoPago)\
+                        .filter(TipoPago.id_tipo_pago == pago.id_tipo_pago)\
+                        .first()
+                    
+                    pagos_data.append([
+                        str(pago.fecha_pago),
+                        metodo.nombre if metodo else "N/A",
+                        tipo.nombre if tipo else "N/A",
+                        f"${pago.valor:,.2f}"
+                    ])
+                
+                pagos_table = Table(pagos_data, colWidths=[1.5*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+                pagos_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ]))
+                
+                story.append(pagos_table)
+                story.append(Spacer(1, 20))
+            
+            # Resumen de pagos
+            story.append(Paragraph("<b>RESUMEN DE PAGOS</b>", styles['Heading2']))
+            story.append(Paragraph(f"<b>Total Factura:</b> ${factura.total_factura:,.2f}", styles['Normal']))
+            story.append(Paragraph(f"<b>Total Pagado:</b> ${factura_data['total_pagado']:,.2f}", styles['Normal']))
+            story.append(Paragraph(f"<b>Saldo Pendiente:</b> ${factura_data['saldo_pendiente']:,.2f}", styles['Normal']))
+            
+            # Observaciones
+            if factura.observaciones:
+                story.append(Spacer(1, 20))
+                story.append(Paragraph("<b>OBSERVACIONES</b>", styles['Heading2']))
+                story.append(Paragraph(factura.observaciones, styles['Normal']))
+            
+            # Pie de página
+            story.append(Spacer(1, 30))
+            story.append(Paragraph(f"<i>Documento generado el {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</i>", styles['Normal']))
+            
+            # Generar PDF
+            doc.build(story)
+            pdf_bytes = buffer.getvalue()
+            buffer.close()
+            
+            return pdf_bytes
+            
+        except Exception as e:
+            print(f"Error generando PDF: {str(e)}")
+            raise Exception(f"Error generando PDF: {str(e)}")
 
 
 def get_bill_payments_total(db, id_factura: int) -> float:
