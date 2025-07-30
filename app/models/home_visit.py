@@ -31,7 +31,7 @@ class VisitasDomiciliarias(Base):
 
 
 class VisitasDomiciliariasPorProfesional(Base):
-    __tablename__ = "VisitasDomiciliariasPorProfesional"
+    __tablename__ = "VisitasDomiciliariasporprofesional"
 
     id_visitadomiciliaria = Column(Integer, ForeignKey("VisitasDomiciliarias.id_visitadomiciliaria"), primary_key=True)
     id_profesional = Column(Integer, ForeignKey("Profesionales.id_profesional"), primary_key=True)

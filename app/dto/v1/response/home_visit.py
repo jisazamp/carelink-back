@@ -8,15 +8,15 @@ class VisitaDomiciliariaResponseDTO(BaseModel):
     id_visitadomiciliaria: int
     id_contrato: Optional[int] = None
     id_usuario: Optional[int] = None
-    fecha_visita: Optional[str] = None
-    hora_visita: Optional[str] = None
+    fecha_visita: Optional[date] = None
+    hora_visita: Optional[time] = None
     estado_visita: str
     direccion_visita: str
     telefono_visita: Optional[str] = None
     valor_dia: Decimal
     observaciones: Optional[str] = None
-    fecha_creacion: str
-    fecha_actualizacion: str
+    fecha_creacion: datetime
+    fecha_actualizacion: datetime
 
     class Config:
         orm_mode = True
@@ -26,26 +26,15 @@ class VisitaDomiciliariaConProfesionalResponseDTO(BaseModel):
     id_visitadomiciliaria: int
     id_contrato: Optional[int] = None
     id_usuario: Optional[int] = None
-    fecha_visita: Optional[str] = None
-    hora_visita: Optional[str] = None
+    fecha_visita: Optional[date] = None
+    hora_visita: Optional[time] = None
     estado_visita: str
     direccion_visita: str
     telefono_visita: Optional[str] = None
     valor_dia: Decimal
     observaciones: Optional[str] = None
-    fecha_creacion: str
-    fecha_actualizacion: str
-    # Campos del usuario
-    nombres: Optional[str] = None
-    apellidos: Optional[str] = None
-    n_documento: Optional[str] = None
-    telefono: Optional[str] = None
-    # Campos del profesional
-    profesional_nombres: Optional[str] = None
-    profesional_especialidad: Optional[str] = None
-    estado_asignacion: Optional[str] = None
-    fecha_asignacion: Optional[str] = None
-    # Campos calculados
+    fecha_creacion: datetime
+    fecha_actualizacion: datetime
     profesional_asignado: Optional[str] = None  # Nombre del profesional asignado
     paciente_nombre: Optional[str] = None  # Nombre completo del paciente
 

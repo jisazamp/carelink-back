@@ -1474,49 +1474,64 @@ class CareLinkCrud:
 
     def get_home_visits_with_professionals(self, user_id: int) -> List[dict]:
         """Obtener visitas domiciliarias con información del profesional asignado"""
+        from sqlalchemy.orm import joinedload
+        from datetime import datetime
+        from app.models.user import User
+        
         # Primero, actualizar automáticamente el estado de las visitas vencidas
         self._update_expired_visits_status()
         
-        query = text("""
-            SELECT 
-                vd.id_visitadomiciliaria,
-                vd.id_contrato,
-                vd.id_usuario,
-                DATE_FORMAT(vd.fecha_visita, '%Y-%m-%d') as fecha_visita,
-                CASE 
-                    WHEN vd.hora_visita IS NULL THEN NULL 
-                    ELSE TIME_FORMAT(vd.hora_visita, '%H:%i:%s') 
-                END as hora_visita,
-                vd.estado_visita,
-                vd.direccion_visita,
-                vd.telefono_visita,
-                vd.valor_dia,
-                vd.observaciones,
-                DATE_FORMAT(vd.fecha_creacion, '%Y-%m-%d %H:%i:%s') as fecha_creacion,
-                DATE_FORMAT(vd.fecha_actualizacion, '%Y-%m-%d %H:%i:%s') as fecha_actualizacion,
-                u.nombres,
-                u.apellidos,
-                u.n_documento,
-                u.telefono,
-                p.nombres as profesional_nombres,
-                p.especialidad as profesional_especialidad,
-                vdp.estado_asignacion,
-                DATE_FORMAT(vdp.fecha_asignacion, '%Y-%m-%d %H:%i:%s') as fecha_asignacion,
-                CASE 
-                    WHEN p.nombres IS NOT NULL THEN CONCAT(p.nombres, ' ', p.apellidos)
-                    ELSE NULL 
-                END as profesional_asignado,
-                CONCAT(u.nombres, ' ', u.apellidos) as paciente_nombre
-            FROM VisitasDomiciliarias vd
-            LEFT JOIN Usuarios u ON vd.id_usuario = u.id_usuario
-            LEFT JOIN VisitasDomiciliariasPorProfesional vdp ON vd.id_visitadomiciliaria = vdp.id_visitadomiciliaria
-            LEFT JOIN Profesionales p ON vdp.id_profesional = p.id_profesional
-            WHERE vd.id_usuario = :user_id
-            ORDER BY vd.fecha_creacion DESC
-        """)
+        visitas = self.__carelink_session.query(VisitasDomiciliarias).options(
+            joinedload(VisitasDomiciliarias.usuario)
+        ).filter(
+            VisitasDomiciliarias.id_usuario == user_id
+        ).order_by(VisitasDomiciliarias.fecha_visita.desc()).all()
         
-        result = self.__carelink_session.execute(query, {"user_id": user_id})
-        return [dict(row) for row in result.mappings()]
+        result = []
+        for visita in visitas:
+            # Intentar obtener el usuario directamente si la relación no funciona
+            paciente_nombre = "Sin paciente"
+            if visita.usuario:
+                paciente_nombre = f"{visita.usuario.nombres} {visita.usuario.apellidos}"
+            elif visita.id_usuario:
+                # Buscar el usuario directamente en la base de datos
+                usuario_directo = self.__carelink_session.query(User).filter(User.id_usuario == visita.id_usuario).first()
+                if usuario_directo:
+                    paciente_nombre = f"{usuario_directo.nombres} {usuario_directo.apellidos}"
+            
+            visita_dict = {
+                "id_visitadomiciliaria": visita.id_visitadomiciliaria,
+                "id_contrato": visita.id_contrato,
+                "id_usuario": visita.id_usuario,
+                "fecha_visita": visita.fecha_visita,
+                "hora_visita": visita.hora_visita,
+                "estado_visita": visita.estado_visita,
+                "direccion_visita": visita.direccion_visita,
+                "telefono_visita": visita.telefono_visita,
+                "valor_dia": visita.valor_dia,
+                "observaciones": visita.observaciones,
+                "fecha_creacion": visita.fecha_creacion,
+                "fecha_actualizacion": visita.fecha_actualizacion,
+                "profesional_asignado": None,
+                "paciente_nombre": paciente_nombre
+            }
+            
+            # Buscar si hay un profesional asignado
+            asignacion = self.__carelink_session.query(VisitasDomiciliariasPorProfesional).filter(
+                VisitasDomiciliariasPorProfesional.id_visitadomiciliaria == visita.id_visitadomiciliaria,
+                VisitasDomiciliariasPorProfesional.estado_asignacion == "ACTIVA"
+            ).first()
+            
+            if asignacion:
+                profesional = self.__carelink_session.query(Profesionales).filter(
+                    Profesionales.id_profesional == asignacion.id_profesional
+                ).first()
+                if profesional:
+                    visita_dict["profesional_asignado"] = f"{profesional.nombres} {profesional.apellidos}"
+            
+            result.append(visita_dict)
+        
+        return result
 
     def get_all_home_visits_with_professionals(self) -> List[dict]:
         """Obtener todas las visitas domiciliarias con información de profesionales"""
@@ -1524,31 +1539,23 @@ class CareLinkCrud:
             SELECT 
                 vd.id_visitadomiciliaria,
                 vd.id_usuario,
-                DATE_FORMAT(vd.fecha_visita, '%Y-%m-%d') as fecha_visita,
-                CASE 
-                    WHEN vd.hora_visita IS NULL THEN NULL 
-                    ELSE TIME_FORMAT(vd.hora_visita, '%H:%i:%s') 
-                END as hora_visita,
+                vd.fecha_visita,
+                vd.hora_visita,
                 vd.estado_visita,
                 vd.direccion_visita,
                 vd.telefono_visita,
                 vd.valor_dia,
                 vd.observaciones,
-                DATE_FORMAT(vd.fecha_creacion, '%Y-%m-%d %H:%i:%s') as fecha_creacion,
-                DATE_FORMAT(vd.fecha_actualizacion, '%Y-%m-%d %H:%i:%s') as fecha_actualizacion,
+                vd.fecha_creacion,
+                vd.fecha_actualizacion,
                 u.nombres,
                 u.apellidos,
                 u.n_documento,
                 u.telefono,
-                p.nombres as profesional_nombres,
-                p.especialidad as profesional_especialidad,
+                p.nombre_profesional,
+                p.especialidad,
                 vdp.estado_asignacion,
-                DATE_FORMAT(vdp.fecha_asignacion, '%Y-%m-%d %H:%i:%s') as fecha_asignacion,
-                CASE 
-                    WHEN p.nombres IS NOT NULL THEN CONCAT(p.nombres, ' ', p.apellidos)
-                    ELSE NULL 
-                END as profesional_asignado,
-                CONCAT(u.nombres, ' ', u.apellidos) as paciente_nombre
+                vdp.fecha_asignacion
             FROM VisitasDomiciliarias vd
             LEFT JOIN Usuarios u ON vd.id_usuario = u.id_usuario
             LEFT JOIN VisitasDomiciliariasPorProfesional vdp ON vd.id_visitadomiciliaria = vdp.id_visitadomiciliaria
