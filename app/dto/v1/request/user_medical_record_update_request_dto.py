@@ -45,3 +45,4 @@ class UpdateUserMedicalRecordRequestDTO(BaseModel):
     tipo_sangre: Optional[str] = None
     diagnosticos: Optional[str] = None
     porte_clinico: Optional[str] = None
+    url_hc_adjunto: Optional[str] = None  # URL del archivo adjunto en S3

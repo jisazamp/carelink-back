@@ -1250,7 +1250,40 @@ async def update_user_medical_record(
         interventions_objs = [CreateUserAssociatedInterventionsRequestDTO(**intervention) for intervention in interventions_data]
         vaccines_objs = [CreateUserAssociatedVaccinesRequestDTO(**vaccine) for vaccine in vaccines_data]
         
+        # Manejar archivos adjuntos
+        attachment_urls = []
+        if attachments:
+            for attachment in attachments:
+                if attachment and attachment.filename:
+                    # Generar nombre único para el archivo
+                    import uuid
+                    import os
+                    from datetime import datetime
+                    
+                    file_extension = os.path.splitext(attachment.filename)[1]
+                    unique_filename = f"{uuid.uuid4()}{file_extension}"
+                    
+                    # Crear ruta en S3
+                    s3_path = f"medical_records/{id}/{record_id}/{unique_filename}"
+                    
+                    # Subir archivo a S3
+                    try:
+                        file_content = await attachment.read()
+                        s3_url = crud.upload_file_to_s3(
+                            file_content, 
+                            "images-care-link", 
+                            s3_path
+                        )
+                        attachment_urls.append(s3_url)
+                    except Exception as e:
+                        print(f"Error al subir archivo a S3: {e}")
+                        continue
+        
+        # Actualizar el record con las URLs de los archivos adjuntos
         update_data = record_obj.dict(exclude_unset=True)
+        if attachment_urls:
+            update_data["url_hc_adjunto"] = ",".join(attachment_urls)
+        
         medicines_to_save = [
             MedicamentosPorUsuario(**medicine.__dict__) for medicine in medicines_objs
         ]
@@ -1298,30 +1331,75 @@ async def update_user_medical_record_simplified(
     id: int,
     record_id: int,
     record: str = Form(...),
+    attachments: Optional[List[UploadFile]] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     """Endpoint para actualizar historias clínicas simplificadas (solo el registro principal)"""
     import json
     
-    # Parsear el JSON string
-    record_data = json.loads(record)
-    
-    # Convertir a objeto Pydantic
-    record_obj = UpdateUserMedicalRecordRequestDTO(**record_data)
-    
-    update_data = record_obj.dict(exclude_unset=True)
-    crud.update_user_medical_record_simplified(
-        id,
-        record_id,
-        update_data,
-    )
-    return Response[object](
-        data={},
-        message="Historia clínica simplificada actualizada con éxito",
-        status_code=200,
-        error=None,
-    )
+    try:
+        # Parsear el JSON string
+        record_data = json.loads(record)
+        
+        # Convertir a objeto Pydantic
+        record_obj = UpdateUserMedicalRecordRequestDTO(**record_data)
+        
+        # Manejar archivos adjuntos
+        attachment_urls = []
+        if attachments:
+            for attachment in attachments:
+                if attachment and attachment.filename:
+                    # Generar nombre único para el archivo
+                    import uuid
+                    import os
+                    from datetime import datetime
+                    
+                    file_extension = os.path.splitext(attachment.filename)[1]
+                    unique_filename = f"{uuid.uuid4()}{file_extension}"
+                    
+                    # Crear ruta en S3
+                    s3_path = f"medical_records/{id}/{record_id}/{unique_filename}"
+                    
+                    # Subir archivo a S3
+                    try:
+                        file_content = await attachment.read()
+                        s3_url = crud.upload_file_to_s3(
+                            file_content, 
+                            "images-care-link", 
+                            s3_path
+                        )
+                        attachment_urls.append(s3_url)
+                    except Exception as e:
+                        print(f"Error al subir archivo a S3: {e}")
+                        continue
+        
+        # Actualizar el record con las URLs de los archivos adjuntos
+        update_data = record_obj.dict(exclude_unset=True)
+        if attachment_urls:
+            update_data["url_hc_adjunto"] = ",".join(attachment_urls)
+        
+        crud.update_user_medical_record_simplified(
+            id,
+            record_id,
+            update_data,
+        )
+        return Response[object](
+            data={},
+            message="Historia clínica simplificada actualizada con éxito",
+            status_code=200,
+            error=None,
+        )
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error al parsear JSON: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al actualizar historia clínica: {str(e)}"
+        )
 
 
 @router.patch("/medical_reports/{reporte_id}", response_model=Response[ReporteClinicoResponse])
