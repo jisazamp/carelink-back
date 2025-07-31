@@ -38,6 +38,7 @@ class ReporteClinicoResponse(BaseModel):
     saturacionOxigeno: Optional[int] = None
     temperatura_corporal: Optional[float] = None
     tipo_reporte: Optional[str] = None
+    url_adjunto: Optional[str] = None
 
     class Config:
         orm_mode = True

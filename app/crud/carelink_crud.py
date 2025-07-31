@@ -285,8 +285,21 @@ class CareLinkCrud:
 
         self.__carelink_session.commit()
 
-    def save_medical_report(self, report: ReportesClinicos):
+    def save_medical_report(self, report: ReportesClinicos, attachments: List[UploadFile] = None):
         self.__carelink_session.add(report)
+        self.__carelink_session.flush()
+
+        # Manejar archivos adjuntos si se proporcionan
+        if attachments:
+            for attachment in attachments:
+                attachment_url = self.upload_file_to_s3(
+                    attachment.file,
+                    "images-care-link",
+                    f"report_attachments/{report.id_reporteclinico}/{attachment.filename}",
+                )
+                # Guardar la URL del archivo adjunto en la base de datos
+                report.url_adjunto = attachment_url
+
         self.__carelink_session.commit()
         self.__carelink_session.refresh(report)
         return report

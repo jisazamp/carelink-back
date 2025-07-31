@@ -44,6 +44,7 @@ class ReportesClinicos(Base):
     frecuencia_actividadfisica = Column(
         Enum("Baja", "Moderada", "Alta", name="frecuencia_actividadfisica")
     )
+    url_adjunto = Column(Text, nullable=True)  # URL del archivo adjunto del reporte clínico
 
     profesional = relationship(
         "Profesionales", foreign_keys=[id_profesional], lazy="joined"
