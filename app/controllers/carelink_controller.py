@@ -4795,7 +4795,8 @@ async def export_family_member_template(
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
         from openpyxl.utils import get_column_letter
-        import io
+        import tempfile
+        import os
         
         # Crear workbook
         wb = Workbook()
@@ -4851,13 +4852,13 @@ async def export_family_member_template(
                 cell.border = border
                 cell.alignment = center_alignment
         
-        # Guardar en buffer
-        buffer = io.BytesIO()
-        wb.save(buffer)
-        buffer.seek(0)
+        # Guardar en archivo temporal
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+            wb.save(tmp_file.name)
+            tmp_file_path = tmp_file.name
         
         return FileResponse(
-            buffer,
+            tmp_file_path,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             filename="plantilla_familiares.xlsx"
         )
