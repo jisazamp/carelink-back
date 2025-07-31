@@ -1224,39 +1224,69 @@ async def update_family_member(
 async def update_user_medical_record(
     id: int,
     record_id: int,
-    record: UpdateUserMedicalRecordRequestDTO,
-    medicines: List[CreateUserAssociatedMedicinesRequestDTO],
-    cares: List[CreateUserAssociatedCaresRequestDTO],
-    interventions: List[CreateUserAssociatedInterventionsRequestDTO],
-    vaccines: List[CreateUserAssociatedVaccinesRequestDTO],
+    record: str = Form(...),
+    medicines: str = Form(...),
+    cares: str = Form(...),
+    interventions: str = Form(...),
+    vaccines: str = Form(...),
+    attachments: Optional[List[UploadFile]] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
-    update_data = record.dict(exclude_unset=True)
-    medicines_to_save = [
-        MedicamentosPorUsuario(**medicine.__dict__) for medicine in medicines
-    ]
-    cares_to_save = [CuidadosEnfermeriaPorUsuario(**care.__dict__) for care in cares]
-    interventions_to_save = [
-        IntervencionesPorUsuario(**intervention.__dict__)
-        for intervention in interventions
-    ]
-    vaccines_to_save = [VacunasPorUsuario(**vaccine.__dict__) for vaccine in vaccines]
-    crud.update_user_medical_record(
-        id,
-        record_id,
-        update_data,
-        medicines_to_save,
-        cares_to_save,
-        interventions_to_save,
-        vaccines_to_save,
-    )
-    return Response[object](
-        data={},
-        message="Historia clínica actualizada con éxito",
-        status_code=200,
-        error=None,
-    )
+    import json
+    
+    try:
+        # Parsear los JSON strings
+        record_data = json.loads(record)
+        medicines_data = json.loads(medicines)
+        cares_data = json.loads(cares)
+        interventions_data = json.loads(interventions)
+        vaccines_data = json.loads(vaccines)
+        
+        # Convertir a objetos Pydantic
+        record_obj = UpdateUserMedicalRecordRequestDTO(**record_data)
+        medicines_objs = [CreateUserAssociatedMedicinesRequestDTO(**medicine) for medicine in medicines_data]
+        cares_objs = [CreateUserAssociatedCaresRequestDTO(**care) for care in cares_data]
+        interventions_objs = [CreateUserAssociatedInterventionsRequestDTO(**intervention) for intervention in interventions_data]
+        vaccines_objs = [CreateUserAssociatedVaccinesRequestDTO(**vaccine) for vaccine in vaccines_data]
+        
+        update_data = record_obj.dict(exclude_unset=True)
+        medicines_to_save = [
+            MedicamentosPorUsuario(**medicine.__dict__) for medicine in medicines_objs
+        ]
+        cares_to_save = [CuidadosEnfermeriaPorUsuario(**care.__dict__) for care in cares_objs]
+        interventions_to_save = [
+            IntervencionesPorUsuario(**intervention.__dict__)
+            for intervention in interventions_objs
+        ]
+        vaccines_to_save = [VacunasPorUsuario(**vaccine.__dict__) for vaccine in vaccines_objs]
+        
+        crud.update_user_medical_record(
+            id,
+            record_id,
+            update_data,
+            medicines_to_save,
+            cares_to_save,
+            interventions_to_save,
+            vaccines_to_save,
+        )
+        
+        return Response[object](
+            data={},
+            message="Historia clínica actualizada con éxito",
+            status_code=200,
+            error=None,
+        )
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error al parsear JSON: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al actualizar historia clínica: {str(e)}"
+        )
 
 
 @router.patch(
@@ -1267,12 +1297,20 @@ async def update_user_medical_record(
 async def update_user_medical_record_simplified(
     id: int,
     record_id: int,
-    record: UpdateUserMedicalRecordRequestDTO,
+    record: str = Form(...),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     """Endpoint para actualizar historias clínicas simplificadas (solo el registro principal)"""
-    update_data = record.dict(exclude_unset=True)
+    import json
+    
+    # Parsear el JSON string
+    record_data = json.loads(record)
+    
+    # Convertir a objeto Pydantic
+    record_obj = UpdateUserMedicalRecordRequestDTO(**record_data)
+    
+    update_data = record_obj.dict(exclude_unset=True)
     crud.update_user_medical_record_simplified(
         id,
         record_id,
