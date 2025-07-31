@@ -3564,6 +3564,7 @@ def get_facturas_estadisticas(
         total_facturas = len(facturas)
         total_valor = 0
         valor_pendiente = 0
+        valor_pagado = 0
         pagadas = 0
         pendientes = 0
         vencidas = 0
@@ -3577,6 +3578,7 @@ def get_facturas_estadisticas(
             # Calcular total pagado
             pagos = db.query(Pagos).filter(Pagos.id_factura == factura.id_factura).all()
             total_pagado = sum(float(pago.valor) for pago in pagos if pago.valor)
+            valor_pagado += total_pagado
             valor_pendiente += max(0, total_factura - total_pagado)
             
             # Contar por estado
@@ -3592,16 +3594,26 @@ def get_facturas_estadisticas(
             elif estado == 'ANULADA':
                 anuladas += 1
         
+        # Calcular porcentajes
+        porcentaje_pagadas = (pagadas / total_facturas * 100) if total_facturas > 0 else 0
+        porcentaje_valor_pagado = (valor_pagado / total_valor * 100) if total_valor > 0 else 0
+        promedio_por_factura = total_valor / total_facturas if total_facturas > 0 else 0
+        
         return {
-            "total": total_facturas,
-            "pagadas": pagadas,
-            "pendientes": pendientes,
-            "vencidas": vencidas,
-            "canceladas": canceladas,
-            "anuladas": anuladas,
-            "totalValor": total_valor,
-            "valorPendiente": valor_pendiente,
-            "valorPagado": total_valor - valor_pendiente
+            "data": {
+                "total_facturas": total_facturas,
+                "facturas_pagadas": pagadas,
+                "facturas_pendientes": pendientes,
+                "facturas_vencidas": vencidas,
+                "facturas_canceladas": canceladas,
+                "facturas_anuladas": anuladas,
+                "valor_total": total_valor,
+                "valor_pagado": valor_pagado,
+                "valor_pendiente": valor_pendiente,
+                "promedio_por_factura": promedio_por_factura,
+                "porcentaje_pagadas": round(porcentaje_pagadas, 1),
+                "porcentaje_valor_pagado": round(porcentaje_valor_pagado, 1)
+            }
         }
         
     except Exception as e:
