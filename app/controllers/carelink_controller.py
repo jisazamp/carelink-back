@@ -1229,6 +1229,7 @@ async def update_user_medical_record(
     cares: List[CreateUserAssociatedCaresRequestDTO],
     interventions: List[CreateUserAssociatedInterventionsRequestDTO],
     vaccines: List[CreateUserAssociatedVaccinesRequestDTO],
+    attachments: Optional[List[UploadFile]] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
@@ -1250,6 +1251,7 @@ async def update_user_medical_record(
         cares_to_save,
         interventions_to_save,
         vaccines_to_save,
+        attachments,
     )
     return Response[object](
         data={},

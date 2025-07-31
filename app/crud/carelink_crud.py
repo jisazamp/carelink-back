@@ -275,11 +275,13 @@ class CareLinkCrud:
 
         if attachments:
             for attachment in attachments:
-                self.upload_file_to_s3(
+                attachment_url = self.upload_file_to_s3(
                     attachment.file,
                     "images-care-link",
                     f"user_attachments/{id}/{attachment.filename}",
                 )
+                # Guardar la URL del archivo adjunto en la base de datos
+                record.url_hc_adjunto = attachment_url
 
         self.__carelink_session.commit()
 
@@ -510,6 +512,7 @@ class CareLinkCrud:
         cares: List[CuidadosEnfermeriaPorUsuario],
         interventions: List[IntervencionesPorUsuario],
         vaccines: List[VacunasPorUsuario],
+        attachments: List[UploadFile] = None,
     ) -> MedicalRecord:
         self._get_user_by_id(user_id)
         db_record = self._get_medical_record_by_id(record_id)
@@ -533,6 +536,17 @@ class CareLinkCrud:
         for vaccine in vaccines:
             vaccine.id_historiaClinica = record_id
             self.__carelink_session.add(vaccine)
+
+        # Manejar archivos adjuntos si se proporcionan
+        if attachments:
+            for attachment in attachments:
+                attachment_url = self.upload_file_to_s3(
+                    attachment.file,
+                    "images-care-link",
+                    f"user_attachments/{user_id}/{attachment.filename}",
+                )
+                # Guardar la URL del archivo adjunto en la base de datos
+                db_record.url_hc_adjunto = attachment_url
 
         self.__carelink_session.commit()
         self.__carelink_session.refresh(db_record)
