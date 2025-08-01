@@ -168,6 +168,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Border, Side, Alignment, PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.utils import get_column_letter
+from pydantic import ValidationError
 
 
 token_auth_scheme = HTTPBearer()
@@ -1234,21 +1235,90 @@ async def update_user_medical_record(
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     import json
+    from pydantic import ValidationError
     
     try:
-        # Parsear los JSON strings
-        record_data = json.loads(record)
-        medicines_data = json.loads(medicines)
-        cares_data = json.loads(cares)
-        interventions_data = json.loads(interventions)
-        vaccines_data = json.loads(vaccines)
+        # Parsear los JSON strings con mejor manejo de errores
+        try:
+            record_data = json.loads(record)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al parsear JSON del record: {str(e)}"
+            )
         
-        # Convertir a objetos Pydantic
-        record_obj = UpdateUserMedicalRecordRequestDTO(**record_data)
-        medicines_objs = [CreateUserAssociatedMedicinesRequestDTO(**medicine) for medicine in medicines_data]
-        cares_objs = [CreateUserAssociatedCaresRequestDTO(**care) for care in cares_data]
-        interventions_objs = [CreateUserAssociatedInterventionsRequestDTO(**intervention) for intervention in interventions_data]
-        vaccines_objs = [CreateUserAssociatedVaccinesRequestDTO(**vaccine) for vaccine in vaccines_data]
+        try:
+            medicines_data = json.loads(medicines)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al parsear JSON de medicines: {str(e)}"
+            )
+        
+        try:
+            cares_data = json.loads(cares)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al parsear JSON de cares: {str(e)}"
+            )
+        
+        try:
+            interventions_data = json.loads(interventions)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al parsear JSON de interventions: {str(e)}"
+            )
+        
+        try:
+            vaccines_data = json.loads(vaccines)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al parsear JSON de vaccines: {str(e)}"
+            )
+        
+        # Convertir a objetos Pydantic con mejor manejo de errores
+        try:
+            record_obj = UpdateUserMedicalRecordRequestDTO(**record_data)
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error de validación en record: {str(e)}"
+            )
+        
+        try:
+            medicines_objs = [CreateUserAssociatedMedicinesRequestDTO(**medicine) for medicine in medicines_data]
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error de validación en medicines: {str(e)}"
+            )
+        
+        try:
+            cares_objs = [CreateUserAssociatedCaresRequestDTO(**care) for care in cares_data]
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error de validación en cares: {str(e)}"
+            )
+        
+        try:
+            interventions_objs = [CreateUserAssociatedInterventionsRequestDTO(**intervention) for intervention in interventions_data]
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error de validación en interventions: {str(e)}"
+            )
+        
+        try:
+            vaccines_objs = [CreateUserAssociatedVaccinesRequestDTO(**vaccine) for vaccine in vaccines_data]
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error de validación en vaccines: {str(e)}"
+            )
         
         # Manejar archivos adjuntos
         attachment_urls = []
@@ -1310,15 +1380,13 @@ async def update_user_medical_record(
             status_code=200,
             error=None,
         )
-    except json.JSONDecodeError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Error al parsear JSON: {str(e)}"
-        )
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"Error inesperado en update_user_medical_record: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error al actualizar historia clínica: {str(e)}"
+            detail=f"Error interno del servidor: {str(e)}"
         )
 
 
