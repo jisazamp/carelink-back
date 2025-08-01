@@ -474,18 +474,24 @@ class CareLinkCrud:
         self, user_id: int, user: User, photo: Optional[UploadFile] = None
     ) -> User:
         db_user = self._get_user_by_id(user_id)
-        updated_user = self._update_user(user, db_user)
 
         if photo:
-            image_url = self.upload_file_to_s3(
+            self.delete_s3_folder("images-care-link", f"user_photos/{user_id}")
+            photo_url = self.upload_file_to_s3(
                 photo.file,
                 "images-care-link",
                 f"user_photos/{user_id}/{photo.filename}",
             )
-            updated_user.url_imagen = image_url
-            self.__carelink_session.commit()
-
+            user.url_imagen = photo_url
+        
+        updated_user = self._update_user(user, db_user)
         return updated_user
+
+    def delete_user_photo(self, user_id: int):
+        self.delete_s3_folder("images-care-link", f"user_photo/{user_id}")
+        user = self._get_user_by_id(user_id)
+        user.url_imagen = None
+        self.__carelink_session.commit() 
 
     def update_clinical_evolution(
         self, evolution_id: int, evolution: EvolucionesClinicas
