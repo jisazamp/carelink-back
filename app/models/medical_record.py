@@ -28,7 +28,9 @@ class MedicalRecord(Base):
     historial_cirugias = Column(Text)
     id_historiaclinica = Column(Integer, primary_key=True, autoincrement=True)
     id_usuario = Column(Integer, ForeignKey("Usuarios.id_usuario"), nullable=False)
-    id_profesional = Column(Integer, ForeignKey("Profesionales.id_profesional"), nullable=True)
+    id_profesional = Column(
+        Integer, ForeignKey("Profesionales.id_profesional"), nullable=True
+    )
     limitaciones = Column(Text)
     maltratado = Column(Text)
     maltrato = Column(Text)

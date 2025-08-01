@@ -34,6 +34,7 @@ class ReporteClinicoCreate(BaseModel):
     saturacionOxigeno: Optional[int] = None
     temperatura_corporal: Optional[float] = None
     tipo_reporte: Optional[str] = None
+    url_adjunto: Optional[str] = None
 
 
 class ReporteClinicoUpdate(BaseModel):
@@ -65,3 +66,4 @@ class ReporteClinicoUpdate(BaseModel):
     saturacionOxigeno: Optional[int] = None
     temperatura_corporal: Optional[float] = None
     tipo_reporte: Optional[str] = None
+    url_adjunto: Optional[str] = None

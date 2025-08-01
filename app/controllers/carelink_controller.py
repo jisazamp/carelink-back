@@ -1026,12 +1026,75 @@ async def create_user(
 
 @router.post("/medical_reports/", response_model=Response[ReporteClinicoResponse])
 def create_reporte_clinico(
-    reporte: ReporteClinicoCreate,
+    id_historiaclinica: int = Form(...),
+    id_profesional: int = Form(...),
+    IMC: Optional[float] = Form(None),
+    Obs_habitosalimenticios: Optional[str] = Form(None),
+    Porc_grasacorporal: Optional[float] = Form(None),
+    Porc_masamuscular: Optional[float] = Form(None),
+    area_afectiva: Optional[str] = Form(None),
+    area_comportamental: Optional[str] = Form(None),
+    areacognitiva: Optional[str] = Form(None),
+    areainterpersonal: Optional[str] = Form(None),
+    areasomatica: Optional[str] = Form(None),
+    circunferencia_cadera: Optional[float] = Form(None),
+    circunferencia_cintura: Optional[float] = Form(None),
+    consumo_aguadiaria: Optional[float] = Form(None),
+    diagnostico: Optional[str] = Form(None),
+    fecha_registro: Optional[str] = Form(None),
+    frecuencia_actividadfisica: Optional[str] = Form(None),
+    frecuencia_cardiaca: Optional[int] = Form(None),
+    frecuencia_respiratoria: Optional[int] = Form(None),
+    motivo_consulta: Optional[str] = Form(None),
+    nivel_dolor: Optional[int] = Form(None),
+    observaciones: Optional[str] = Form(None),
+    peso: Optional[int] = Form(None),
+    presion_arterial: Optional[int] = Form(None),
+    pruebas_examenes: Optional[str] = Form(None),
+    recomendaciones: Optional[str] = Form(None),
+    remision: Optional[str] = Form(None),
+    saturacionOxigeno: Optional[int] = Form(None),
+    temperatura_corporal: Optional[float] = Form(None),
+    tipo_reporte: Optional[str] = Form(None),
+    attachments: Optional[List[UploadFile]] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[ReporteClinicoResponse]:
-    report_to_save = ReportesClinicos(**reporte.dict())
-    resulting_report = crud.save_medical_report(report_to_save)
+    report_data = {
+        "id_historiaclinica": id_historiaclinica,
+        "id_profesional": id_profesional,
+        "IMC": IMC,
+        "Obs_habitosalimenticios": Obs_habitosalimenticios,
+        "Porc_grasacorporal": Porc_grasacorporal,
+        "Porc_masamuscular": Porc_masamuscular,
+        "area_afectiva": area_afectiva,
+        "area_comportamental": area_comportamental,
+        "areacognitiva": areacognitiva,
+        "areainterpersonal": areainterpersonal,
+        "areasomatica": areasomatica,
+        "circunferencia_cadera": circunferencia_cadera,
+        "circunferencia_cintura": circunferencia_cintura,
+        "consumo_aguadiaria": consumo_aguadiaria,
+        "diagnostico": diagnostico,
+        "fecha_registro": fecha_registro,
+        "frecuencia_actividadfisica": frecuencia_actividadfisica,
+        "frecuencia_cardiaca": frecuencia_cardiaca,
+        "frecuencia_respiratoria": frecuencia_respiratoria,
+        "motivo_consulta": motivo_consulta,
+        "nivel_dolor": nivel_dolor,
+        "observaciones": observaciones,
+        "peso": peso,
+        "presion_arterial": presion_arterial,
+        "pruebas_examenes": pruebas_examenes,
+        "recomendaciones": recomendaciones,
+        "remision": remision,
+        "saturacionOxigeno": saturacionOxigeno,
+        "temperatura_corporal": temperatura_corporal,
+        "tipo_reporte": tipo_reporte,
+    }
+    
+    report_to_save = ReportesClinicos(**report_data)
+    resulting_report = crud.save_medical_report(report_to_save, attachments)
     return Response[ReporteClinicoResponse](
         data=ReporteClinicoResponse(**resulting_report.__dict__),
         message="Reporte clínico creado de manera exitosa",
@@ -3713,22 +3776,26 @@ def get_facturas_estadisticas(
             elif estado == 'ANULADA':
                 anuladas += 1
         
-        # Calcular porcentajes y promedios
-        promedio_por_factura = total_valor / total_facturas if total_facturas > 0 else 0
+        # Calcular porcentajes
         porcentaje_pagadas = (pagadas / total_facturas * 100) if total_facturas > 0 else 0
         porcentaje_valor_pagado = (valor_pagado / total_valor * 100) if total_valor > 0 else 0
+        promedio_por_factura = total_valor / total_facturas if total_facturas > 0 else 0
         
         return {
-            "total_facturas": total_facturas,
-            "facturas_pendientes": pendientes,
-            "facturas_pagadas": pagadas,
-            "facturas_vencidas": vencidas,
-            "valor_total": total_valor,
-            "valor_pagado": valor_pagado,
-            "valor_pendiente": valor_pendiente,
-            "promedio_por_factura": promedio_por_factura,
-            "porcentaje_pagadas": porcentaje_pagadas,
-            "porcentaje_valor_pagado": porcentaje_valor_pagado
+            "data": {
+                "total_facturas": total_facturas,
+                "facturas_pagadas": pagadas,
+                "facturas_pendientes": pendientes,
+                "facturas_vencidas": vencidas,
+                "facturas_canceladas": canceladas,
+                "facturas_anuladas": anuladas,
+                "valor_total": total_valor,
+                "valor_pagado": valor_pagado,
+                "valor_pendiente": valor_pendiente,
+                "promedio_por_factura": promedio_por_factura,
+                "porcentaje_pagadas": round(porcentaje_pagadas, 1),
+                "porcentaje_valor_pagado": round(porcentaje_valor_pagado, 1)
+            }
         }
         
     except Exception as e:
