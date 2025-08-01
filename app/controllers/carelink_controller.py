@@ -4328,10 +4328,8 @@ async def generate_factura_pdf(
 @router.delete("/photo/{user_id}")
 async def delete_user_photo(user_id: int, crud: CareLinkCrud = Depends(get_crud)):
     crud.delete_user_photo(user_id)
-    raise HTTPException(
-        status_code=500,
-        detail=f"Error generando PDF: {str(e)}"
-    )
+    raise HTTPException(status_code=500, detail=f"Error generando PDF: {str(e)}")
+
 
 @router.delete("/contratos/{id_contrato}", status_code=204)
 def eliminar_contrato(id_contrato: int, db: Session = Depends(get_carelink_db)):
@@ -5769,6 +5767,37 @@ async def export_family_member_template(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al generar plantilla: {str(e)}",
         )
+
+
+@router.get("/usuarios/registrados")
+async def list_all_authorized_users(
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value)),
+) -> Response[List[AuthorizedUserDTO]]:
+    users_list = crud._get_all_authorized_users()
+    users_list_response = [AuthorizedUserDTO.from_orm(user) for user in users_list]
+    return Response[List[AuthorizedUserDTO]](
+        message="Usuarios consultados",
+        error=None,
+        data=users_list_response,
+        status_code=HTTPStatus.OK,
+    )
+
+
+@router.get("/usuarios/registrados/{user_id}")
+async def list_authorized_user_by_id(
+    user_id: int,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(require_roles(Role.ADMIN.value)),
+) -> Response[AuthorizedUserDTO]:
+    user = crud._get_authorized_user_info(user_id)
+    user_response = AuthorizedUserDTO.from_orm(user)
+    return Response[AuthorizedUserDTO](
+        message="Usuario consultado",
+        error=None,
+        status_code=HTTPStatus.OK,
+        data=user_response,
+    )
 
 
 @router.post("/family-members/import/excel")
