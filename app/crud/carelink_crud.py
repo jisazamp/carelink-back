@@ -1,11 +1,20 @@
+from app.dto.v1.request.authorized_users import AuthorizedUserUpdate
 from app.dto.v1.request.contracts import ContratoCreateDTO
 from app.dto.v1.request.payment_method import CreateUserPaymentRequestDTO
-from app.dto.v1.response.contracts import ContratoResponseDTO, ServicioContratoDTO, FechaServicioDTO
+from app.dto.v1.response.contracts import (
+    ContratoResponseDTO,
+    ServicioContratoDTO,
+    FechaServicioDTO,
+)
 from app.exceptions.exceptions_classes import EntityNotFoundError
 from app.models.activities import ActividadesGrupales, TipoActividad
 from app.models.activity_users import ActividadesUsuarios
 from app.models.authorized_users import AuthorizedUsers
-from app.models.attendance_schedule import CronogramaAsistencia, CronogramaAsistenciaPacientes, EstadoAsistencia
+from app.models.attendance_schedule import (
+    CronogramaAsistencia,
+    CronogramaAsistenciaPacientes,
+    EstadoAsistencia,
+)
 from app.models.cares_per_user import CuidadosEnfermeriaPorUsuario
 from app.models.clinical_evolutions import EvolucionesClinicas
 from app.models.contracts import (
@@ -704,10 +713,27 @@ class CareLinkCrud:
         return payment_data
 
     def create_user(self, user_data: AuthorizedUsers) -> AuthorizedUsers:
+        existing_user = (
+            self.__carelink_session.query(AuthorizedUsers)
+            .filter(AuthorizedUsers.email == user_data.email)
+            .first()
+        )
+
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El correo electrónico ya está registrado.",
+            )
+
         self.__carelink_session.add(user_data)
         self.__carelink_session.commit()
         self.__carelink_session.refresh(user_data)
         return user_data
+
+    def create_professional_user(self, professional_user: Profesionales) -> object:
+        self.__carelink_session.add(professional_user)
+        self.__carelink_session.commit()
+        self.__carelink_session.refresh(professional_user)
 
     def get_contract_bill(self, contract_id: int) -> Facturas:
         return self.__carelink_session.execute(
@@ -846,6 +872,8 @@ class CareLinkCrud:
             'servicios_por_contrato': servicios_por_contrato
         }
 
+        return {"contrato": contract, "servicios_por_contrato": servicios_por_contrato}
+
     def create_user_medical_record(
         self, user_id: int, record: MedicalRecord
     ) -> MedicalRecord:
@@ -978,6 +1006,62 @@ class CareLinkCrud:
         ).scalar_one_or_none()
         if not user:
             raise EntityNotFoundError(f"Usuario con ID {user_id} no encontrado")
+        return user
+
+    def _get_authorized_user_info(self, user_id) -> AuthorizedUsers:
+        return self.__carelink_session.execute(
+            select(AuthorizedUsers).where(AuthorizedUsers.id == user_id)
+        ).scalar_one_or_none()
+
+    def update_authorized_user(
+        self, user_id: int, update_data: AuthorizedUserUpdate, db: Session
+    ) -> AuthorizedUsers:
+        user = db.query(AuthorizedUsers).filter(AuthorizedUsers.id == user_id).first()
+        if not user:
+            raise ValueError(f"User with ID {user_id} not found")
+
+        professional = (
+            db.query(Profesionales).filter(Profesionales.id_user == user_id).first()
+        )
+
+        user_fields = {"email", "first_name", "last_name", "role"}
+
+        data = update_data.dict(exclude_unset=True)
+
+        for field, value in data.items():
+            if field in user_fields:
+                setattr(user, field, value)
+
+        if "password" in data and data["password"]:
+            user.password = hash_password(data["password"])
+
+        professional_data = {
+            "nombres": data.get("first_name", user.first_name),
+            "apellidos": data.get("last_name", user.last_name),
+            "n_documento": data.get("document_number"),
+            "t_profesional": data.get("professional_id_number"),
+            "fecha_nacimiento": data.get("birthdate"),
+            "fecha_ingreso": data.get("entry_date"),
+            "profesion": data.get("profession"),
+            "especialidad": data.get("specialty"),
+            "cargo": data.get("charge"),
+            "telefono": data.get("phone_number"),
+            "e_mail": data.get("email", user.email),
+            "direccion": data.get("home_address"),
+            "estado": "Activo",
+        }
+
+        if any(v is not None for v in professional_data.values()):
+            if professional:
+                for field, value in professional_data.items():
+                    if value is not None:
+                        setattr(professional, field, value)
+            else:
+                new_professional = Profesionales(id_user=user_id, **professional_data)
+                db.add(new_professional)
+
+        db.commit()
+        db.refresh(user)
         return user
 
     def _get_authorized_user_info(self, user_id) -> AuthorizedUsers:
@@ -2737,6 +2821,7 @@ def get_bill_payments_total(db, id_factura: int) -> float:
     pagos = db.query(Pagos).filter(Pagos.id_factura == id_factura).all()
     total = sum(float(pago.valor) for pago in pagos)
     return total
+
 
 
 

@@ -4,6 +4,7 @@ from datetime import date
 
 class ProfessionalResponse(BaseModel):
     id_profesional: int
+    id_user: int | None
     apellidos: str
     cargo: str
     direccion: str
@@ -16,7 +17,7 @@ class ProfessionalResponse(BaseModel):
     nombres: str
     profesion: str
     t_profesional: str
-    telefono: int
+    telefono: str
 
     class Config:
         orm_mode = True
