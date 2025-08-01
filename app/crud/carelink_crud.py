@@ -329,6 +329,8 @@ class CareLinkCrud:
         for key, value in user.__dict__.items():
             if key != "_sa_instance_state":
                 if hasattr(db_user, key):
+                    if key == "url_imagen" and value is None:
+                        continue
                     setattr(db_user, key, value)
         self.__carelink_session.commit()
         self.__carelink_session.refresh(db_user)
@@ -476,7 +478,6 @@ class CareLinkCrud:
         db_user = self._get_user_by_id(user_id)
 
         if photo:
-            self.delete_s3_folder("images-care-link", f"user_photos/{user_id}")
             photo_url = self.upload_file_to_s3(
                 photo.file,
                 "images-care-link",
