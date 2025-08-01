@@ -830,7 +830,11 @@ async def calculate_partial_bill(
 
 @router.post("/calcular/total_factura", response_model=Response[float])
 async def calculate_total_factura(
-    payload: dict, crud: CareLinkCrud = Depends(get_crud)
+    payload: dict,
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[float]:
     """
     Calcula el total de factura incluyendo impuestos y descuentos
@@ -4015,7 +4019,9 @@ def get_facturacion_completa(db: Session = Depends(get_carelink_db)):
 @router.get("/tarifas-servicios", response_model=Response[TarifasServicioResponseDTO])
 async def get_all_service_rates(
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[TarifasServicioResponseDTO]:
     """
     Obtener todas las tarifas de servicios por año con información del servicio
@@ -4062,7 +4068,9 @@ async def get_all_service_rates(
 async def update_service_rates(
     tarifas_data: TarifasServicioUpdateRequestDTO,
     crud: CareLinkCrud = Depends(get_crud),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ) -> Response[TarifasServicioResponseDTO]:
     """
     Actualizar múltiples tarifas de servicios por año
@@ -4123,7 +4131,9 @@ async def update_service_rates(
 @router.get("/facturas/estadisticas")
 def get_facturas_estadisticas(
     db: Session = Depends(get_carelink_db),
-    _: AuthorizedUsers = Depends(get_current_user),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
 ):
     """
     Obtiene estadísticas calculadas de facturación
@@ -4194,8 +4204,16 @@ def get_facturas_estadisticas(
         )
 
 
-@router.get("/facturas/{id_factura}/pagos/total", response_model=BillPaymentsTotalResponseDTO)
-def get_bill_payments_total_endpoint(id_factura: int, db: Session = Depends(get_carelink_db), _: AuthorizedUsers = Depends(get_current_user)):
+@router.get(
+    "/facturas/{id_factura}/pagos/total", response_model=BillPaymentsTotalResponseDTO
+)
+def get_bill_payments_total_endpoint(
+    id_factura: int,
+    db: Session = Depends(get_carelink_db),
+    _: AuthorizedUsers = Depends(
+        require_roles(Role.ADMIN.value, Role.PROFESSIONAL.value)
+    ),
+):
     """
     Retorna el total de pagos asociados a una factura
     """
@@ -4239,6 +4257,12 @@ async def generate_factura_pdf(
         
     except Exception as e:
         print(f"Error generando PDF de factura {id_factura}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generando PDF: {str(e)}")
+
+
+@router.delete("/photo/{user_id}")
+async def delete_user_photo(user_id: int, crud: CareLinkCrud = Depends(get_crud)):
+    crud.delete_user_photo(user_id)
         raise HTTPException(
             status_code=500,
             detail=f"Error generando PDF: {str(e)}"
@@ -5764,4 +5788,3 @@ async def import_family_members_from_excel(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al procesar el archivo Excel: {str(e)}"
         )
-
