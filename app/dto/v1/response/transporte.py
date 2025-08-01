@@ -30,7 +30,7 @@ class RutaTransporteResponse(BaseModel):
     apellidos: str
     n_documento: str
     direccion_recogida: Optional[str] = None
-    direccion_entrega: Optional[str] = None
+    telefono_contacto: Optional[str] = None
     hora_recogida: Optional[str] = None
     hora_entrega: Optional[str] = None
     estado: str

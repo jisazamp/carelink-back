@@ -121,6 +121,48 @@ def crear_transporte(
         )
 
 
+@router.patch("/{id_transporte}/horarios", response_model=TransporteResponse)
+def actualizar_horarios_transporte(
+    id_transporte: int,
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """Actualizar solo las horas de recogida y entrega de un transporte"""
+    try:
+        transporte = db.query(CronogramaTransporte).filter(
+            CronogramaTransporte.id_transporte == id_transporte
+        ).first()
+        
+        if not transporte:
+            raise HTTPException(status_code=404, detail="Transporte no encontrado")
+        
+        # Convertir horarios
+        if 'hora_recogida' in request and request['hora_recogida'] is not None:
+            try:
+                transporte.hora_recogida = datetime.strptime(request['hora_recogida'], "%H:%M:%S").time()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Formato de hora de recogida inválido")
+        
+        if 'hora_entrega' in request and request['hora_entrega'] is not None:
+            try:
+                transporte.hora_entrega = datetime.strptime(request['hora_entrega'], "%H:%M:%S").time()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Formato de hora de entrega inválido")
+        
+        db.commit()
+        db.refresh(transporte)
+        
+        return TransporteResponse(
+            message="Horarios de transporte actualizados exitosamente",
+            data=CronogramaTransporteResponse.from_orm(transporte)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
+
 @router.patch("/{id_transporte}", response_model=TransporteResponse)
 def actualizar_transporte(
     id_transporte: int,
@@ -250,18 +292,10 @@ def obtener_ruta_diaria(
                         nombres=usuario.nombres,
                         apellidos=usuario.apellidos,
                         n_documento=usuario.n_documento,
-                        direccion_recogida=transporte.direccion_recogida,
-                        direccion_entrega=transporte.direccion_entrega,
-                        hora_recogida=(
-                            str(transporte.hora_recogida)
-                            if transporte.hora_recogida
-                            else None
-                        ),
-                        hora_entrega=(
-                            str(transporte.hora_entrega)
-                            if transporte.hora_entrega
-                            else None
-                        ),
+                        direccion_recogida=usuario.direccion,  # Usar dirección del usuario
+                        telefono_contacto=usuario.telefono,    # Agregar teléfono del usuario
+                        hora_recogida=str(transporte.hora_recogida) if transporte.hora_recogida else None,
+                        hora_entrega=str(transporte.hora_entrega) if transporte.hora_entrega else None,
                         estado=transporte.estado.value,
                         observaciones=transporte.observaciones,
                     )

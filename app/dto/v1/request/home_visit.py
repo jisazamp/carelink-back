@@ -22,6 +22,7 @@ class VisitaDomiciliariaCreateDTO(BaseModel):
 
     @validator('fecha_visita')
     def validate_fecha_visita(cls, v):
+        # Para nuevas visitas, no permitir fechas pasadas
         if v is not None and v < date.today():
             raise ValueError('La fecha de visita no puede ser anterior a hoy')
         return v
@@ -45,8 +46,8 @@ class VisitaDomiciliariaUpdateDTO(BaseModel):
 
     @validator('fecha_visita')
     def validate_fecha_visita(cls, v):
-        if v is not None and v < date.today():
-            raise ValueError('La fecha de visita no puede ser anterior a hoy')
+        # Para actualizaciones, permitir fechas pasadas (visitas ya programadas)
+        # No validar fechas pasadas en actualizaciones
         return v
 
     @validator('estado_visita')

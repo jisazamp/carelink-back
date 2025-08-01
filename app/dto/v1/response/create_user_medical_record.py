@@ -47,3 +47,4 @@ class CreateUserMedicalRecordResponseDTO(BaseModel):
     tipo_sangre: str | None
     diagnosticos: str
     porte_clinico: str | None = None
+    url_hc_adjunto: str | None = None
