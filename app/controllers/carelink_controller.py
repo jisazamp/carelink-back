@@ -1299,6 +1299,7 @@ async def update_user_medical_record(
 ) -> Response[object]:
     import json
     from pydantic import ValidationError
+    from io import BytesIO
     
     try:
         # Parsear los JSON strings con mejor manejo de errores
@@ -1402,8 +1403,9 @@ async def update_user_medical_record(
                     # Subir archivo a S3
                     try:
                         file_content = await attachment.read()
+                        file_obj = BytesIO(file_content)
                         s3_url = crud.upload_file_to_s3(
-                            file_content, 
+                            file_obj, 
                             "images-care-link", 
                             s3_path
                         )
