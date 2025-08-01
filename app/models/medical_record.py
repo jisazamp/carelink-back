@@ -28,7 +28,9 @@ class MedicalRecord(Base):
     historial_cirugias = Column(Text)
     id_historiaclinica = Column(Integer, primary_key=True, autoincrement=True)
     id_usuario = Column(Integer, ForeignKey("Usuarios.id_usuario"), nullable=False)
-    id_profesional = Column(Integer, ForeignKey("Profesionales.id_profesional"), nullable=True)
+    id_profesional = Column(
+        Integer, ForeignKey("Profesionales.id_profesional"), nullable=True
+    )
     limitaciones = Column(Text)
     maltratado = Column(Text)
     maltrato = Column(Text)
@@ -50,4 +52,4 @@ class MedicalRecord(Base):
     tipo_sangre = Column(String(3), nullable=False)  # ENUM values are max 3 chars
     diagnosticos = Column(Text)
     porte_clinico = Column(Text)  # Campo específico para visitas domiciliarias
-    url_hc_adjunto = Column(Text, nullable=True)  # URL del archivo adjunto de la historia clínica
+    url_hc_adjunto = Column(Text, nullable=True)  # URL del archivo adjunto en S3

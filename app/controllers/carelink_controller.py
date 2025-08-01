@@ -168,6 +168,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Border, Side, Alignment, PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.utils import get_column_letter
+from pydantic import ValidationError
 
 
 token_auth_scheme = HTTPBearer()
@@ -1287,41 +1288,169 @@ async def update_family_member(
 async def update_user_medical_record(
     id: int,
     record_id: int,
-    record: UpdateUserMedicalRecordRequestDTO,
-    medicines: List[CreateUserAssociatedMedicinesRequestDTO],
-    cares: List[CreateUserAssociatedCaresRequestDTO],
-    interventions: List[CreateUserAssociatedInterventionsRequestDTO],
-    vaccines: List[CreateUserAssociatedVaccinesRequestDTO],
+    record: str = Form(...),
+    medicines: str = Form(...),
+    cares: str = Form(...),
+    interventions: str = Form(...),
+    vaccines: str = Form(...),
     attachments: Optional[List[UploadFile]] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
-    update_data = record.dict(exclude_unset=True)
-    medicines_to_save = [
-        MedicamentosPorUsuario(**medicine.__dict__) for medicine in medicines
-    ]
-    cares_to_save = [CuidadosEnfermeriaPorUsuario(**care.__dict__) for care in cares]
-    interventions_to_save = [
-        IntervencionesPorUsuario(**intervention.__dict__)
-        for intervention in interventions
-    ]
-    vaccines_to_save = [VacunasPorUsuario(**vaccine.__dict__) for vaccine in vaccines]
-    crud.update_user_medical_record(
-        id,
-        record_id,
-        update_data,
-        medicines_to_save,
-        cares_to_save,
-        interventions_to_save,
-        vaccines_to_save,
-        attachments,
-    )
-    return Response[object](
-        data={},
-        message="Historia clínica actualizada con éxito",
-        status_code=200,
-        error=None,
-    )
+    import json
+    from pydantic import ValidationError
+    
+    try:
+        # Parsear los JSON strings con mejor manejo de errores
+        try:
+            record_data = json.loads(record)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al parsear JSON del record: {str(e)}"
+            )
+        
+        try:
+            medicines_data = json.loads(medicines)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al parsear JSON de medicines: {str(e)}"
+            )
+        
+        try:
+            cares_data = json.loads(cares)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al parsear JSON de cares: {str(e)}"
+            )
+        
+        try:
+            interventions_data = json.loads(interventions)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al parsear JSON de interventions: {str(e)}"
+            )
+        
+        try:
+            vaccines_data = json.loads(vaccines)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error al parsear JSON de vaccines: {str(e)}"
+            )
+        
+        # Convertir a objetos Pydantic con mejor manejo de errores
+        try:
+            record_obj = UpdateUserMedicalRecordRequestDTO(**record_data)
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error de validación en record: {str(e)}"
+            )
+        
+        try:
+            medicines_objs = [CreateUserAssociatedMedicinesRequestDTO(**medicine) for medicine in medicines_data]
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error de validación en medicines: {str(e)}"
+            )
+        
+        try:
+            cares_objs = [CreateUserAssociatedCaresRequestDTO(**care) for care in cares_data]
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error de validación en cares: {str(e)}"
+            )
+        
+        try:
+            interventions_objs = [CreateUserAssociatedInterventionsRequestDTO(**intervention) for intervention in interventions_data]
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error de validación en interventions: {str(e)}"
+            )
+        
+        try:
+            vaccines_objs = [CreateUserAssociatedVaccinesRequestDTO(**vaccine) for vaccine in vaccines_data]
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error de validación en vaccines: {str(e)}"
+            )
+        
+        # Manejar archivos adjuntos
+        attachment_urls = []
+        if attachments:
+            for attachment in attachments:
+                if attachment and attachment.filename:
+                    # Generar nombre único para el archivo
+                    import uuid
+                    import os
+                    from datetime import datetime
+                    
+                    file_extension = os.path.splitext(attachment.filename)[1]
+                    unique_filename = f"{uuid.uuid4()}{file_extension}"
+                    
+                    # Crear ruta en S3
+                    s3_path = f"medical_records/{id}/{record_id}/{unique_filename}"
+                    
+                    # Subir archivo a S3
+                    try:
+                        file_content = await attachment.read()
+                        s3_url = crud.upload_file_to_s3(
+                            file_content, 
+                            "images-care-link", 
+                            s3_path
+                        )
+                        attachment_urls.append(s3_url)
+                    except Exception as e:
+                        print(f"Error al subir archivo a S3: {e}")
+                        continue
+        
+        # Actualizar el record con las URLs de los archivos adjuntos
+        update_data = record_obj.dict(exclude_unset=True)
+        if attachment_urls:
+            update_data["url_hc_adjunto"] = ",".join(attachment_urls)
+        
+        medicines_to_save = [
+            MedicamentosPorUsuario(**medicine.__dict__) for medicine in medicines_objs
+        ]
+        cares_to_save = [CuidadosEnfermeriaPorUsuario(**care.__dict__) for care in cares_objs]
+        interventions_to_save = [
+            IntervencionesPorUsuario(**intervention.__dict__)
+            for intervention in interventions_objs
+        ]
+        vaccines_to_save = [VacunasPorUsuario(**vaccine.__dict__) for vaccine in vaccines_objs]
+        
+        crud.update_user_medical_record(
+            id,
+            record_id,
+            update_data,
+            medicines_to_save,
+            cares_to_save,
+            interventions_to_save,
+            vaccines_to_save,
+        )
+        
+        return Response[object](
+            data={},
+            message="Historia clínica actualizada con éxito",
+            status_code=200,
+            error=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error inesperado en update_user_medical_record: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
 
 
 @router.patch(
@@ -1332,23 +1461,76 @@ async def update_user_medical_record(
 async def update_user_medical_record_simplified(
     id: int,
     record_id: int,
-    record: UpdateUserMedicalRecordRequestDTO,
+    record: str = Form(...),
+    attachments: Optional[List[UploadFile]] = File(None),
     crud: CareLinkCrud = Depends(get_crud),
     _: AuthorizedUsers = Depends(get_current_user),
 ) -> Response[object]:
     """Endpoint para actualizar historias clínicas simplificadas (solo el registro principal)"""
-    update_data = record.dict(exclude_unset=True)
-    crud.update_user_medical_record_simplified(
-        id,
-        record_id,
-        update_data,
-    )
-    return Response[object](
-        data={},
-        message="Historia clínica simplificada actualizada con éxito",
-        status_code=200,
-        error=None,
-    )
+    import json
+    
+    try:
+        # Parsear el JSON string
+        record_data = json.loads(record)
+        
+        # Convertir a objeto Pydantic
+        record_obj = UpdateUserMedicalRecordRequestDTO(**record_data)
+        
+        # Manejar archivos adjuntos
+        attachment_urls = []
+        if attachments:
+            for attachment in attachments:
+                if attachment and attachment.filename:
+                    # Generar nombre único para el archivo
+                    import uuid
+                    import os
+                    from datetime import datetime
+                    
+                    file_extension = os.path.splitext(attachment.filename)[1]
+                    unique_filename = f"{uuid.uuid4()}{file_extension}"
+                    
+                    # Crear ruta en S3
+                    s3_path = f"medical_records/{id}/{record_id}/{unique_filename}"
+                    
+                    # Subir archivo a S3
+                    try:
+                        file_content = await attachment.read()
+                        s3_url = crud.upload_file_to_s3(
+                            file_content, 
+                            "images-care-link", 
+                            s3_path
+                        )
+                        attachment_urls.append(s3_url)
+                    except Exception as e:
+                        print(f"Error al subir archivo a S3: {e}")
+                        continue
+        
+        # Actualizar el record con las URLs de los archivos adjuntos
+        update_data = record_obj.dict(exclude_unset=True)
+        if attachment_urls:
+            update_data["url_hc_adjunto"] = ",".join(attachment_urls)
+        
+        crud.update_user_medical_record_simplified(
+            id,
+            record_id,
+            update_data,
+        )
+        return Response[object](
+            data={},
+            message="Historia clínica simplificada actualizada con éxito",
+            status_code=200,
+            error=None,
+        )
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error al parsear JSON: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al actualizar historia clínica: {str(e)}"
+        )
 
 
 @router.patch("/medical_reports/{reporte_id}", response_model=Response[ReporteClinicoResponse])
