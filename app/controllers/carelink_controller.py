@@ -6080,3 +6080,66 @@ async def import_family_members_from_excel(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al procesar el archivo Excel: {str(e)}",
         )
+
+
+@router.put("/authorized-users/{user_id}")
+def update_authorized_user(
+    user_id: int,
+    update_data: AuthorizedUserUpdate,
+    db: Session = Depends(get_carelink_db),
+) -> AuthorizedUsers:
+    user = db.query(AuthorizedUsers).filter(AuthorizedUsers.id == user_id).first()
+    if not user:
+        raise ValueError(f"User with ID {user_id} not found")
+
+    professional = (
+        db.query(Profesionales).filter(Profesionales.id_user == user_id).first()
+    )
+
+    user_fields = {"email", "first_name", "last_name", "role", "password"}
+
+    professional_data = {
+        "nombres": update_data.first_name or user.first_name,
+        "apellidos": update_data.last_name or user.last_name,
+        "n_documento": update_data.document_number,
+        "t_profesional": update_data.professional_id_number,
+        "fecha_nacimiento": update_data.birthdate,
+        "fecha_ingreso": update_data.entry_date,
+        "profesion": update_data.profession,
+        "especialidad": update_data.specialty,
+        "cargo": update_data.charge,
+        "telefono": update_data.phone_number,
+        "e_mail": update_data.email or user.email,
+        "direccion": update_data.home_address,
+        "estado": "Activo",
+    }
+
+    data = update_data.dict(exclude_unset=True)
+
+    # ✅ Update basic user info
+    for field, value in data.items():
+        if field in user_fields:
+            setattr(user, field, value)
+
+    # ✅ Handle role change
+    new_role = data.get("role", user.role)
+
+    if new_role != RoleEnum.profesional:
+        # If the user is no longer a professional, unlink the record
+        if professional:
+            professional.id_user = None
+            db.add(professional)
+    else:
+        # ✅ Update or create professional record
+        if any(v is not None for v in professional_data.values()):
+            if professional:
+                for field, value in professional_data.items():
+                    if value is not None:
+                        setattr(professional, field, value)
+            else:
+                new_professional = Profesionales(id_user=user_id, **professional_data)
+                db.add(new_professional)
+
+    db.commit()
+    db.refresh(user)
+    return user
