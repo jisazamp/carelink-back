@@ -6116,21 +6116,21 @@ def update_authorized_user(
 
     data = update_data.dict(exclude_unset=True)
 
-    # ✅ Update basic user info
     for field, value in data.items():
         if field in user_fields:
-            setattr(user, field, value)
+            if field == "password" and value:
+                setattr(user, field, hash_password(value))
+            else:
+                setattr(user, field, value)
 
     # ✅ Handle role change
     new_role = data.get("role", user.role)
 
     if new_role != RoleEnum.profesional:
-        # If the user is no longer a professional, unlink the record
         if professional:
             professional.id_user = None
             db.add(professional)
     else:
-        # ✅ Update or create professional record
         if any(v is not None for v in professional_data.values()):
             if professional:
                 for field, value in professional_data.items():
