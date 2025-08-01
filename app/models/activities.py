@@ -25,6 +25,13 @@ class ActividadesGrupales(Base):
     tipo_actividad = relationship(
         "TipoActividad", foreign_keys=[id_tipo_actividad], lazy="joined"
     )
+    
+    # Relación con usuarios asignados
+    usuarios_asignados = relationship(
+        "ActividadesUsuarios", 
+        back_populates="actividad",
+        cascade="all, delete-orphan"
+    )
 
     class Config:
         orm_mode = True

@@ -30,6 +30,7 @@ class UserResponseDTO(BaseModel):
     url_imagen: str | None
     profesion: str | None
     tipo_usuario: str | None
+    visitas_domiciliarias: bool | None
 
     class Config:
         orm_mode = True
@@ -62,6 +63,7 @@ class UserUpdateRequestDTO(BaseModel):
     url_imagen: str | None
     profesion: str | None
     tipo_usuario: str | None
+    visitas_domiciliarias: bool | None
 
     class Config:
         orm_mode = True

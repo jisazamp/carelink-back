@@ -25,6 +25,7 @@ class CreateUserMedicalRecordResponseDTO(BaseModel):
     frecuencia_cardiaca: float | None
     historial_cirugias: str | None
     id_usuario: int | None
+    id_profesional: int | None
     limitaciones: str | None
     maltratado: str | None
     maltrato: str | None
@@ -44,4 +45,6 @@ class CreateUserMedicalRecordResponseDTO(BaseModel):
     tipo_de_movilidad: str | None
     tipo_de_sueno: str | None
     tipo_sangre: str | None
-    diagnosticos: str | None
+    diagnosticos: str
+    porte_clinico: str | None = None
+    url_hc_adjunto: str | None = None

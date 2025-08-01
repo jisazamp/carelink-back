@@ -41,6 +41,7 @@ class Facturas(Base):
     )
     numero_factura = Column(String(20), unique=True, nullable=True)
     id_contrato = Column(Integer, ForeignKey("Contratos.id_contrato"), nullable=True)
+    id_visita_domiciliaria = Column(Integer, ForeignKey("VisitasDomiciliarias.id_visitadomiciliaria"), nullable=True)
     fecha_emision = Column(Date)
     fecha_vencimiento = Column(Date, nullable=True)
     total_factura = Column(DECIMAL(10, 2), default=0.00)

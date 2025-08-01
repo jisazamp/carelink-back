@@ -8,9 +8,10 @@ class VacunasPorUsuario(Base):
     id = Column(
         Integer,
         primary_key=True,
+        autoincrement=True
     )
     id_historiaClinica = Column(
-        Integer, ForeignKey("HistoriaClinica.id_historiaclinica"), primary_key=True
+        Integer, ForeignKey("HistoriaClinica.id_historiaclinica")
     )
     efectos_secundarios = Column(Text)
     fecha_administracion = Column(Date, nullable=True)

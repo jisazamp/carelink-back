@@ -18,43 +18,43 @@ def check_tables():
     engine = create_engine("mysql+pymysql://root:@localhost/carelink")
     
     with engine.connect() as connection:
-        print("🔍 Verificando estructura de tablas...")
+        print(" Verificando estructura de tablas...")
         
         # Verificar tabla cronograma_asistencia
         try:
             result = connection.execute(text("""
                 DESCRIBE cronograma_asistencia
             """))
-            print("\n✅ Tabla cronograma_asistencia existe:")
+            print("\n Tabla cronograma_asistencia existe:")
             for row in result:
                 print(f"  - {row[0]}: {row[1]}")
         except Exception as e:
-            print(f"❌ Error con tabla cronograma_asistencia: {e}")
+            print(f" Error con tabla cronograma_asistencia: {e}")
         
         # Verificar tabla cronograma_asistencia_pacientes
         try:
             result = connection.execute(text("""
                 DESCRIBE cronograma_asistencia_pacientes
             """))
-            print("\n✅ Tabla cronograma_asistencia_pacientes existe:")
+            print("\n Tabla cronograma_asistencia_pacientes existe:")
             for row in result:
                 print(f"  - {row[0]}: {row[1]}")
         except Exception as e:
-            print(f"❌ Error con tabla cronograma_asistencia_pacientes: {e}")
+            print(f" Error con tabla cronograma_asistencia_pacientes: {e}")
         
         # Verificar tabla cronograma_transporte
         try:
             result = connection.execute(text("""
                 DESCRIBE cronograma_transporte
             """))
-            print("\n✅ Tabla cronograma_transporte existe:")
+            print("\n Tabla cronograma_transporte existe:")
             for row in result:
                 print(f"  - {row[0]}: {row[1]}")
         except Exception as e:
-            print(f"❌ Error con tabla cronograma_transporte: {e}")
+            print(f" Error con tabla cronograma_transporte: {e}")
         
         # Verificar datos existentes
-        print("\n📊 Datos existentes:")
+        print("\n Datos existentes:")
         
         try:
             result = connection.execute(text("SELECT COUNT(*) FROM cronograma_asistencia"))
@@ -80,7 +80,7 @@ def check_tables():
         # Verificar contratos existentes
         try:
             result = connection.execute(text("SELECT id_contrato, id_usuario, tipo_contrato FROM Contratos ORDER BY id_contrato DESC LIMIT 5"))
-            print(f"\n📋 Últimos 5 contratos:")
+            print(f"\n Últimos 5 contratos:")
             for row in result:
                 print(f"  - Contrato {row[0]}: Usuario {row[1]}, Tipo: {row[2]}")
         except Exception as e:
@@ -89,7 +89,7 @@ def check_tables():
 def test_contrato_creation():
     """Simula la creación de un contrato para verificar el proceso"""
     
-    print("\n🧪 Simulando creación de contrato...")
+    print("\n Simulando creación de contrato...")
     
     # Datos de prueba
     test_data = {
@@ -123,7 +123,7 @@ def test_contrato_creation():
         ]
     }
     
-    print(f"📝 Datos de prueba:")
+    print(f" Datos de prueba:")
     print(f"  - Usuario: {test_data['id_usuario']}")
     print(f"  - Tipo: {test_data['tipo_contrato']}")
     print(f"  - Fechas: {test_data['fecha_inicio']} a {test_data['fecha_fin']}")
@@ -136,4 +136,4 @@ if __name__ == "__main__":
     print("🚀 Iniciando debug de contratos y cronogramas...")
     check_tables()
     test_contrato_creation()
-    print("\n✅ Debug completado") 
+    print("\n Debug completado") 

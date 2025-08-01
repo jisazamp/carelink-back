@@ -1,0 +1,10 @@
+class AuthorizedUserUpdate(AuthorizedUserBase):
+    document_number: Optional[str]
+    professional_id_number: Optional[str]
+    birthdate: Optional[date]
+    entry_date: Optional[date]
+    profession: Optional[ProfessionEnum]
+    specialty: Optional[SpecialtyEnum]
+    charge: Optional[ChargeEnum]
+    phone_number: Optional[str]
+    home_address: Optional[str]
