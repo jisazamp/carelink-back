@@ -5,14 +5,14 @@ from typing import Optional
 class FamilyMemberResponseDTO(BaseModel):
     id_acudiente: int
     acudiente: bool
-    apellidos: str
-    direccion: str
-    email: str
-    n_documento: str
-    nombres: str
-    telefono: str
+    apellidos: Optional[str] = None
+    direccion: Optional[str] = None
+    email: Optional[str] = None
+    n_documento: Optional[str] = None
+    nombres: Optional[str] = None
+    telefono: Optional[str] = None
     vive: bool
-    parentesco: Optional[str]
+    parentesco: Optional[str] = None
 
     class Config:
         orm_mode = True
