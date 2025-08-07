@@ -3511,6 +3511,166 @@ class CareLinkCrud:
             print(f"Error generando PDF: {str(e)}")
             raise Exception(f"Error generando PDF: {str(e)}")
 
+    def search_patients_with_attendance_stats(self, query: str) -> List[dict]:
+        """
+        Buscar pacientes por nombre o documento con estadísticas de asistencia
+        """
+        try:
+            sql_query = text("""
+                SELECT
+                    u.id_usuario,
+                    u.nombres,
+                    u.apellidos,
+                    u.n_documento,
+                    COUNT(cap.id_cronograma_paciente) as total_agendado,
+                    SUM(CASE WHEN cap.estado_asistencia = 'ASISTIO' THEN 1 ELSE 0 END) as total_asistio,
+                    SUM(CASE WHEN cap.estado_asistencia = 'NO_ASISTIO' THEN 1 ELSE 0 END) as total_no_asistio,
+                    SUM(CASE WHEN cap.estado_asistencia = 'PENDIENTE' THEN 1 ELSE 0 END) as total_pendiente,
+                    CASE
+                        WHEN COUNT(cap.id_cronograma_paciente) > 0
+                        THEN ROUND((SUM(CASE WHEN cap.estado_asistencia = 'ASISTIO' THEN 1 ELSE 0 END) * 100.0 / COUNT(cap.id_cronograma_paciente)), 1)
+                        ELSE 0
+                    END as porcentaje_asistencia
+                FROM Usuarios u
+                LEFT JOIN cronograma_asistencia_pacientes cap ON u.id_usuario = cap.id_usuario
+                WHERE (u.nombres LIKE :query OR u.apellidos LIKE :query OR u.n_documento LIKE :query)
+                GROUP BY u.id_usuario, u.nombres, u.apellidos, u.n_documento
+                ORDER BY u.nombres, u.apellidos
+                LIMIT 10
+            """)
+
+            result = self.__carelink_session.execute(sql_query, {"query": f"%{query}%"}).fetchall()
+
+            patients = []
+            for row in result:
+                patients.append({
+                    "id_usuario": row[0],
+                    "nombres": row[1],
+                    "apellidos": row[2],
+                    "n_documento": row[3],
+                    "total_agendado": row[4] or 0,
+                    "total_asistio": row[5] or 0,
+                    "total_no_asistio": row[6] or 0,
+                    "total_pendiente": row[7] or 0,
+                    "porcentaje_asistencia": row[8] or 0.0
+                })
+
+            return patients
+        except Exception as e:
+            print(f"Error en search_patients_with_attendance_stats: {e}")
+            raise e
+
+    def get_patient_attendance_report(self, patient_id: int, fecha_inicio: Optional[str] = None, fecha_fin: Optional[str] = None) -> dict:
+        """
+        Obtener informe detallado de asistencia de un paciente específico
+        """
+        try:
+            # Obtener información del paciente
+            patient_query = text("""
+                SELECT id_usuario, nombres, apellidos, n_documento
+                FROM Usuarios
+                WHERE id_usuario = :patient_id
+            """)
+
+            patient_result = self.__carelink_session.execute(patient_query, {"patient_id": patient_id}).fetchone()
+            if not patient_result:
+                raise Exception(f"Paciente con ID {patient_id} no encontrado")
+
+            paciente = {
+                "id_usuario": patient_result[0],
+                "nombres": patient_result[1],
+                "apellidos": patient_result[2],
+                "n_documento": patient_result[3]
+            }
+
+            # Construir condiciones de fecha
+            date_conditions = ""
+            params = {"patient_id": patient_id}
+
+            if fecha_inicio and fecha_fin:
+                date_conditions = "AND ca.fecha BETWEEN :fecha_inicio AND :fecha_fin"
+                params.update({"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin})
+            elif fecha_inicio:
+                date_conditions = "AND ca.fecha >= :fecha_inicio"
+                params["fecha_inicio"] = fecha_inicio
+            elif fecha_fin:
+                date_conditions = "AND ca.fecha <= :fecha_fin"
+                params["fecha_fin"] = fecha_fin
+
+            # Obtener estadísticas
+            stats_query = text(f"""
+                SELECT
+                    COUNT(cap.id_cronograma_paciente) as total_agendado,
+                    SUM(CASE WHEN cap.estado_asistencia = 'ASISTIO' THEN 1 ELSE 0 END) as total_asistio,
+                    SUM(CASE WHEN cap.estado_asistencia = 'NO_ASISTIO' THEN 1 ELSE 0 END) as total_no_asistio,
+                    SUM(CASE WHEN cap.estado_asistencia = 'PENDIENTE' THEN 1 ELSE 0 END) as total_pendiente,
+                    SUM(CASE WHEN cap.estado_asistencia = 'CANCELADO' THEN 1 ELSE 0 END) as total_cancelado,
+                    CASE
+                        WHEN COUNT(cap.id_cronograma_paciente) > 0
+                        THEN ROUND((SUM(CASE WHEN cap.estado_asistencia = 'ASISTIO' THEN 1 ELSE 0 END) * 100.0 / COUNT(cap.id_cronograma_paciente)), 1)
+                        ELSE 0
+                    END as porcentaje_asistencia,
+                    MIN(ca.fecha) as periodo_inicio,
+                    MAX(ca.fecha) as periodo_fin
+                FROM cronograma_asistencia_pacientes cap
+                JOIN cronograma_asistencia ca ON cap.id_cronograma = ca.id_cronograma
+                WHERE cap.id_usuario = :patient_id {date_conditions}
+            """)
+
+            stats_result = self.__carelink_session.execute(stats_query, params).fetchone()
+
+            estadisticas = {
+                "total_agendado": stats_result[0] or 0,
+                "total_asistio": stats_result[1] or 0,
+                "total_no_asistio": stats_result[2] or 0,
+                "total_pendiente": stats_result[3] or 0,
+                "total_cancelado": stats_result[4] or 0,
+                "porcentaje_asistencia": stats_result[5] or 0.0,
+                "periodo_inicio": stats_result[6].isoformat() if stats_result[6] else None,
+                "periodo_fin": stats_result[7].isoformat() if stats_result[7] else None
+            }
+
+            # Obtener detalles por fecha
+            details_query = text(f"""
+                SELECT
+                    cap.id_cronograma_paciente,
+                    ca.fecha,
+                    cap.estado_asistencia,
+                    p.nombres as profesional_nombre,
+                    p.apellidos as profesional_apellidos,
+                    cap.observaciones,
+                    cap.requiere_transporte
+                FROM cronograma_asistencia_pacientes cap
+                JOIN cronograma_asistencia ca ON cap.id_cronograma = ca.id_cronograma
+                LEFT JOIN Profesionales p ON ca.id_profesional = p.id_profesional
+                WHERE cap.id_usuario = :patient_id {date_conditions}
+                ORDER BY ca.fecha DESC
+            """)
+
+            details_result = self.__carelink_session.execute(details_query, params).fetchall()
+
+            detalles = []
+            for row in details_result:
+                detalles.append({
+                    "id_cronograma_paciente": row[0],
+                    "fecha": row[1].isoformat() if row[1] else None,
+                    "estado_asistencia": row[2],
+                    "profesional_nombre": row[3] or "",
+                    "profesional_apellidos": row[4] or "",
+                    "observaciones": row[5] or "",
+                    "requiere_transporte": bool(row[6]) if row[6] is not None else False
+                })
+
+            return {
+                "paciente": paciente,
+                "estadisticas": estadisticas,
+                "detalles": detalles
+            }
+
+        except Exception as e:
+            print(f"Error en get_patient_attendance_report: {e}")
+            raise e
+
 
 def get_bill_payments_total(db, id_factura: int) -> float:
     """
