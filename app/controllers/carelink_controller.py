@@ -1,10 +1,10 @@
-from sqlalchemy import func, text
+from sqlalchemy import func, text, and_
 from app.crud.carelink_crud import CareLinkCrud
 from app.database.connection import get_carelink_db
 import os
 import tempfile
 from docxtpl import DocxTemplate
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import Query, status
 from app.dto.v1.request.activities import (
@@ -4193,33 +4193,40 @@ def get_facturas_estadisticas(
     ),
 ):
     """
-    Obtiene estadísticas calculadas de facturación
+    Obtiene estadísticas calculadas de facturación con mejoras para el dashboard
     """
     try:
-        # Obtener todas las facturas con sus pagos
+        from datetime import datetime, timedelta
+        from sqlalchemy import func, and_
+        
+        # Obtener fecha actual y rango del mes
+        now = datetime.now()
+        start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end_of_month = (start_of_month + timedelta(days=32)).replace(day=1) - timedelta(seconds=1)
+        
+        # Obtener todas las facturas
         facturas = db.query(Facturas).all()
-
+        
+        # Obtener todos los pagos
+        pagos = db.query(Pagos).all()
+        
+        # Estadísticas generales
         total_facturas = len(facturas)
-        total_valor = 0
-        valor_pendiente = 0
-        valor_pagado = 0
+        total_pagos = len(pagos)
+        
+        # Calcular valores totales
+        total_valor_facturado = sum(float(f.total_factura) for f in facturas if f.total_factura)
+        total_valor_pagado = sum(float(p.valor) for p in pagos if p.valor)
+        valor_pendiente = max(0, total_valor_facturado - total_valor_pagado)
+        
+        # Contar facturas por estado
         pagadas = 0
         pendientes = 0
         vencidas = 0
         canceladas = 0
         anuladas = 0
-
+        
         for factura in facturas:
-            total_factura = float(factura.total_factura) if factura.total_factura else 0
-            total_valor += total_factura
-
-            # Calcular total pagado
-            pagos = db.query(Pagos).filter(Pagos.id_factura == factura.id_factura).all()
-            total_pagado = sum(float(pago.valor) for pago in pagos if pago.valor)
-            valor_pagado += total_pagado
-            valor_pendiente += max(0, total_factura - total_pagado)
-
-            # Contar por estado
             estado = (
                 factura.estado_factura.value
                 if hasattr(factura.estado_factura, "value")
@@ -4235,30 +4242,93 @@ def get_facturas_estadisticas(
                 canceladas += 1
             elif estado == "ANULADA":
                 anuladas += 1
-
+        
+        # Facturas del mes actual
+        facturas_mes = db.query(Facturas).filter(
+            and_(
+                Facturas.fecha_creacion >= start_of_month,
+                Facturas.fecha_creacion <= end_of_month
+            )
+        ).all()
+        
+        pagos_mes = db.query(Pagos).filter(
+            and_(
+                Pagos.fecha_pago >= start_of_month,
+                Pagos.fecha_pago <= end_of_month
+            )
+        ).all()
+        
+        # Valores del mes actual
+        valor_facturado_mes = sum(float(f.total_factura) for f in facturas_mes if f.total_factura)
+        valor_pagado_mes = sum(float(p.valor) for p in pagos_mes if p.valor)
+        
         # Calcular porcentajes
-        porcentaje_pagadas = (
-            (pagadas / total_facturas * 100) if total_facturas > 0 else 0
-        )
-        porcentaje_valor_pagado = (
-            (valor_pagado / total_valor * 100) if total_valor > 0 else 0
-        )
-        promedio_por_factura = total_valor / total_facturas if total_facturas > 0 else 0
-
+        porcentaje_pagadas = (pagadas / total_facturas * 100) if total_facturas > 0 else 0
+        porcentaje_valor_pagado = (total_valor_pagado / total_valor_facturado * 100) if total_valor_facturado > 0 else 0
+        promedio_por_factura = total_valor_facturado / total_facturas if total_facturas > 0 else 0
+        
+        # Calcular meta de facturación (ejemplo: 2M por mes)
+        meta_mensual = 2000000  # 2 millones
+        cumplimiento_meta = (valor_facturado_mes / meta_mensual * 100) if meta_mensual > 0 else 0
+        
+        # Facturas vencidas (más de 30 días)
+        fecha_limite_vencimiento = now - timedelta(days=30)
+        facturas_vencidas = db.query(Facturas).filter(
+            and_(
+                Facturas.estado_factura == "PENDIENTE",
+                Facturas.fecha_vencimiento < fecha_limite_vencimiento
+            )
+        ).count()
+        
+        # Valor de facturas vencidas
+        valor_vencido = db.query(func.sum(Facturas.total_factura)).filter(
+            and_(
+                Facturas.estado_factura == "PENDIENTE",
+                Facturas.fecha_vencimiento < fecha_limite_vencimiento
+            )
+        ).scalar() or 0
+        
         return {
             "data": {
+                # Estadísticas generales
                 "total_facturas": total_facturas,
+                "total_pagos": total_pagos,
                 "facturas_pagadas": pagadas,
                 "facturas_pendientes": pendientes,
                 "facturas_vencidas": vencidas,
                 "facturas_canceladas": canceladas,
                 "facturas_anuladas": anuladas,
-                "valor_total": total_valor,
-                "valor_pagado": valor_pagado,
-                "valor_pendiente": valor_pendiente,
-                "promedio_por_factura": promedio_por_factura,
+                
+                # Valores monetarios
+                "valor_total_facturado": round(total_valor_facturado, 2),
+                "valor_pagado": round(total_valor_pagado, 2),
+                "valor_pendiente": round(valor_pendiente, 2),
+                "promedio_por_factura": round(promedio_por_factura, 2),
+                
+                # Estadísticas del mes actual
+                "facturas_mes": len(facturas_mes),
+                "pagos_mes": len(pagos_mes),
+                "valor_facturado_mes": round(valor_facturado_mes, 2),
+                "valor_pagado_mes": round(valor_pagado_mes, 2),
+                
+                # Porcentajes
                 "porcentaje_pagadas": round(porcentaje_pagadas, 1),
                 "porcentaje_valor_pagado": round(porcentaje_valor_pagado, 1),
+                "cumplimiento_meta_mensual": round(cumplimiento_meta, 1),
+                
+                # Alertas y métricas adicionales
+                "facturas_vencidas_count": facturas_vencidas,
+                "valor_vencido": round(float(valor_vencido), 2),
+                "meta_mensual": meta_mensual,
+                
+                # Indicadores de salud financiera
+                "salud_financiera": "EXCELENTE" if porcentaje_valor_pagado >= 90 else 
+                                   "BUENA" if porcentaje_valor_pagado >= 70 else
+                                   "REGULAR" if porcentaje_valor_pagado >= 50 else "CRÍTICA",
+                
+                # Tendencia (comparación con mes anterior)
+                "tendencia_facturacion": "CRECIENTE" if valor_facturado_mes > 0 else "ESTABLE",
+                "tendencia_cobranza": "CRECIENTE" if valor_pagado_mes > 0 else "ESTABLE"
             }
         }
 

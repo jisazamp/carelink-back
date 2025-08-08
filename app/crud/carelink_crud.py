@@ -2306,6 +2306,40 @@ class CareLinkCrud:
             else:
                 growth_percentage = 0.0 if current_month_visits == 0 else 100.0
 
+            # Obtener estadísticas adicionales por estado de visita
+            visits_by_status = (
+                self.__carelink_session.query(
+                    VisitasDomiciliarias.estado_visita,
+                    func.count(VisitasDomiciliarias.id_visitadomiciliaria).label('count')
+                )
+                .filter(
+                    and_(
+                        extract("year", VisitasDomiciliarias.fecha_visita) == current_year,
+                        extract("month", VisitasDomiciliarias.fecha_visita) >= quarter_start_month,
+                        extract("month", VisitasDomiciliarias.fecha_visita) <= quarter_end_month,
+                        VisitasDomiciliarias.fecha_visita.isnot(None),
+                    )
+                )
+                .group_by(VisitasDomiciliarias.estado_visita)
+                .all()
+            )
+
+            # Obtener profesionales más activos del trimestre (simplificado por ahora)
+            # Nota: La relación profesional-visita se maneja de forma diferente en el modelo actual
+            active_professionals = []  # Se implementará cuando se defina la relación profesional-visita
+
+            # Calcular métricas de rendimiento
+            completed_visits = sum(count for status, count in visits_by_status if status == 'REALIZADA')
+            pending_visits = sum(count for status, count in visits_by_status if status == 'PENDIENTE')
+            cancelled_visits = sum(count for status, count in visits_by_status if status == 'CANCELADA')
+            rescheduled_visits = sum(count for status, count in visits_by_status if status == 'REPROGRAMADA')
+
+            # Calcular porcentaje de completitud
+            completion_rate = (completed_visits / total_quarterly_visits * 100) if total_quarterly_visits > 0 else 0
+
+            # Calcular eficiencia (visitas completadas vs programadas)
+            efficiency_rate = (completed_visits / (completed_visits + cancelled_visits) * 100) if (completed_visits + cancelled_visits) > 0 else 0
+
             return QuarterlyVisitsResponseDTO(
                 total_quarterly_visits=total_quarterly_visits,
                 average_daily_visits=average_daily_visits,
@@ -2313,6 +2347,14 @@ class CareLinkCrud:
                 current_month_visits=current_month_visits,
                 previous_month_visits=previous_month_visits,
                 growth_percentage=growth_percentage,
+                visits_by_status=dict(visits_by_status),
+                active_professionals=active_professionals,
+                completed_visits=completed_visits,
+                pending_visits=pending_visits,
+                cancelled_visits=cancelled_visits,
+                rescheduled_visits=rescheduled_visits,
+                completion_rate=round(completion_rate, 1),
+                efficiency_rate=round(efficiency_rate, 1),
             )
 
         except Exception as e:
