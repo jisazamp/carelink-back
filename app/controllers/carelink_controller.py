@@ -6123,7 +6123,7 @@ def update_authorized_user(
             else:
                 setattr(user, field, value)
 
-    # ✅ Handle role change
+    #  Handle role change
     new_role = data.get("role", user.role)
 
     if new_role != RoleEnum.profesional:

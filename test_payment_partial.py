@@ -27,16 +27,16 @@ def test_partial_payment():
     try:
         login_response = requests.post(LOGIN_URL, json=login_data)
         if login_response.status_code != 200:
-            print(f"❌ Error en login: {login_response.status_code}")
+            print(f" Error en login: {login_response.status_code}")
             print(f"Respuesta: {login_response.text}")
             return
         
         token = login_response.json()["data"]["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
-        print("✅ Login exitoso")
+        print(" Login exitoso")
         
     except Exception as e:
-        print(f"❌ Error en login: {e}")
+        print(f" Error en login: {e}")
         return
 
     # 2. Probar pago parcial (menor al total de la factura)
@@ -62,12 +62,12 @@ def test_partial_payment():
         print(f"Respuesta: {payment_response.text}")
         
         if payment_response.status_code == 201:
-            print("✅ Pago parcial registrado exitosamente")
+            print(" Pago parcial registrado exitosamente")
         else:
-            print("❌ Error al registrar pago parcial")
+            print(" Error al registrar pago parcial")
             
     except Exception as e:
-        print(f"❌ Error en pago parcial: {e}")
+        print(f" Error en pago parcial: {e}")
 
     # 3. Probar pago adicional (para completar la factura)
     print("\n3. Probando pago adicional...")
@@ -91,12 +91,12 @@ def test_partial_payment():
         print(f"Respuesta: {payment_response.text}")
         
         if payment_response.status_code == 201:
-            print("✅ Pago adicional registrado exitosamente")
+            print(" Pago adicional registrado exitosamente")
         else:
-            print("❌ Error al registrar pago adicional")
+            print(" Error al registrar pago adicional")
             
     except Exception as e:
-        print(f"❌ Error en pago adicional: {e}")
+        print(f" Error en pago adicional: {e}")
 
     # 4. Probar pago que excede el total (debe fallar)
     print("\n4. Probando pago que excede el total (debe fallar)...")
@@ -120,13 +120,13 @@ def test_partial_payment():
         print(f"Respuesta: {payment_response.text}")
         
         if payment_response.status_code == 400:
-            print("✅ Correctamente rechazó pago que excede el total")
+            print(" Correctamente rechazó pago que excede el total")
         else:
-            print("❌ Debería haber rechazado el pago excesivo")
+            print(" Debería haber rechazado el pago excesivo")
             
     except Exception as e:
-        print(f"❌ Error en pago excesivo: {e}")
+        print(f" Error en pago excesivo: {e}")
 
 if __name__ == "__main__":
     test_partial_payment()
-    print("\n✅ Pruebas de pagos parciales completadas") 
+    print("\n Pruebas de pagos parciales completadas") 

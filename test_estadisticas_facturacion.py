@@ -28,16 +28,16 @@ def test_estadisticas_facturacion():
     try:
         login_response = requests.post(LOGIN_URL, json=login_data)
         if login_response.status_code != 200:
-            print(f"❌ Error en login: {login_response.status_code}")
+            print(f" Error en login: {login_response.status_code}")
             print(f"Respuesta: {login_response.text}")
             return
         
         token = login_response.json()["data"]["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
-        print("✅ Login exitoso")
+        print(" Login exitoso")
         
     except Exception as e:
-        print(f"❌ Error en login: {e}")
+        print(f" Error en login: {e}")
         return
 
     # 2. Obtener todas las facturas
@@ -49,7 +49,7 @@ def test_estadisticas_facturacion():
         
         if facturas_response.status_code == 200:
             facturas = facturas_response.json()["data"]
-            print(f"✅ Facturas obtenidas: {len(facturas)}")
+            print(f" Facturas obtenidas: {len(facturas)}")
             
             # Mostrar información de cada factura
             for factura in facturas:
@@ -60,10 +60,10 @@ def test_estadisticas_facturacion():
                 else:
                     print(f"    Sin pagos registrados")
         else:
-            print("❌ Error al obtener facturas")
+            print(" Error al obtener facturas")
             
     except Exception as e:
-        print(f"❌ Error al obtener facturas: {e}")
+        print(f" Error al obtener facturas: {e}")
 
     # 3. Obtener estadísticas
     print("\n3. Obteniendo estadísticas de facturación...")
@@ -74,7 +74,7 @@ def test_estadisticas_facturacion():
         
         if estadisticas_response.status_code == 200:
             estadisticas = estadisticas_response.json()
-            print("✅ Estadísticas obtenidas:")
+            print(" Estadísticas obtenidas:")
             print(f"  - Total facturas: {estadisticas['total']}")
             print(f"  - Pagadas: {estadisticas['pagadas']}")
             print(f"  - Pendientes: {estadisticas['pendientes']}")
@@ -88,22 +88,22 @@ def test_estadisticas_facturacion():
             # Verificar cálculos
             total_calculado = estadisticas['pagadas'] + estadisticas['pendientes'] + estadisticas['vencidas'] + estadisticas['canceladas'] + estadisticas['anuladas']
             if total_calculado == estadisticas['total']:
-                print("✅ Verificación de totales: CORRECTO")
+                print(" Verificación de totales: CORRECTO")
             else:
-                print(f"❌ Error en totales: {total_calculado} vs {estadisticas['total']}")
+                print(f" Error en totales: {total_calculado} vs {estadisticas['total']}")
             
             valor_calculado = estadisticas['valorPagado'] + estadisticas['valorPendiente']
             if abs(valor_calculado - estadisticas['totalValor']) < 1:  # Tolerancia para decimales
-                print("✅ Verificación de valores: CORRECTO")
+                print(" Verificación de valores: CORRECTO")
             else:
-                print(f"❌ Error en valores: {valor_calculado} vs {estadisticas['totalValor']}")
+                print(f" Error en valores: {valor_calculado} vs {estadisticas['totalValor']}")
                 
         else:
-            print("❌ Error al obtener estadísticas")
+            print(" Error al obtener estadísticas")
             print(f"Respuesta: {estadisticas_response.text}")
             
     except Exception as e:
-        print(f"❌ Error al obtener estadísticas: {e}")
+        print(f" Error al obtener estadísticas: {e}")
 
     # 4. Verificar consistencia entre facturas y estadísticas
     print("\n4. Verificando consistencia...")
@@ -138,9 +138,9 @@ def test_estadisticas_facturacion():
             print(f"  Valor pendiente: ${valor_pendiente_manual:,.0f} vs ${estadisticas['valorPendiente']:,.0f}")
             
     except Exception as e:
-        print(f"❌ Error en verificación de consistencia: {e}")
+        print(f" Error en verificación de consistencia: {e}")
 
-    print("\n✅ Pruebas de estadísticas completadas")
+    print("\n Pruebas de estadísticas completadas")
 
 if __name__ == "__main__":
     test_estadisticas_facturacion() 
