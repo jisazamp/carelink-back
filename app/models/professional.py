@@ -16,8 +16,8 @@ class Profesionales(Base):
     estado = Column(Enum("Activo", "Inactivo", name="estado_enum"), nullable=False)
     profesion = Column(
         Enum(
-            "Médico",
-            "Enfermero",
+            "Enfermero(a)",
+            "Gerontólogo",
             "Nutricionista",
             "Psicólogo",
             "Fisioterapeuta",
@@ -28,7 +28,7 @@ class Profesionales(Base):
     especialidad = Column(
         Enum(
             "Cardiología",
-            "Pediatría",
+            "Gerontología",
             "Nutrición",
             "Psicología Clínica",
             "Fisioterapia",

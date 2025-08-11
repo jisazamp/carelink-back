@@ -11,16 +11,17 @@ class RoleEnum(str, Enum):
 
 
 class ProfessionEnum(str, Enum):
-    medico = "Médico"
-    enfermero = "Enfermero"
+    enfermero = "Enfermero(a)"
+    gerontologo = "Gerontólogo"
     nutricionista = "Nutricionista"
     psicologo = "Psicólogo"
     fisioterapeuta = "Fisioterapeuta"
+    medico = "Médico"
 
 
 class SpecialtyEnum(str, Enum):
     cardiologia = "Cardiología"
-    pediatria = "Pediatría"
+    gerontologia = "Gerontología"
     nutricion = "Nutrición"
     psicologia_clinica = "Psicología Clínica"
     fisioterapia = "Fisioterapia"
