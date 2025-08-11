@@ -28,16 +28,16 @@ def test_service_rates_endpoints():
     try:
         login_response = requests.post(LOGIN_URL, json=login_data)
         if login_response.status_code != 200:
-            print(f"❌ Error en login: {login_response.status_code}")
+            print(f" Error en login: {login_response.status_code}")
             print(f"Respuesta: {login_response.text}")
             return
         
         token = login_response.json()["data"]["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
-        print("✅ Login exitoso")
+        print(" Login exitoso")
         
     except Exception as e:
-        print(f"❌ Error en login: {e}")
+        print(f" Error en login: {e}")
         return
 
     # 2. Obtener tarifas actuales
@@ -50,14 +50,14 @@ def test_service_rates_endpoints():
         
         if get_response.status_code == 200:
             rates_data = get_response.json()
-            print("✅ Tarifas obtenidas exitosamente")
-            print(f"✅ Número de tarifas: {len(rates_data.get('data', {}).get('TarifasServicioPorAnio', []))}")
+            print(" Tarifas obtenidas exitosamente")
+            print(f" Número de tarifas: {len(rates_data.get('data', {}).get('TarifasServicioPorAnio', []))}")
         else:
-            print("❌ Error al obtener tarifas")
+            print(" Error al obtener tarifas")
             return
             
     except Exception as e:
-        print(f"❌ Error al obtener tarifas: {e}")
+        print(f" Error al obtener tarifas: {e}")
         return
 
     # 3. Actualizar tarifas
@@ -93,12 +93,12 @@ def test_service_rates_endpoints():
         print(f"Respuesta: {update_response.text}")
         
         if update_response.status_code == 200:
-            print("✅ Tarifas actualizadas exitosamente")
+            print(" Tarifas actualizadas exitosamente")
         else:
-            print("❌ Error al actualizar tarifas")
+            print(" Error al actualizar tarifas")
             
     except Exception as e:
-        print(f"❌ Error al actualizar tarifas: {e}")
+        print(f" Error al actualizar tarifas: {e}")
 
     # 4. Verificar tarifas actualizadas
     print("\n4. Verificando tarifas actualizadas...")
@@ -109,16 +109,16 @@ def test_service_rates_endpoints():
         
         if verify_response.status_code == 200:
             updated_rates = verify_response.json()
-            print("✅ Tarifas verificadas después de actualización")
+            print(" Tarifas verificadas después de actualización")
             for rate in updated_rates.get('data', {}).get('TarifasServicioPorAnio', []):
                 print(f"  - Servicio {rate['id_servicio']}: ${rate['precio_por_dia']:,.2f}")
         else:
-            print("❌ Error al verificar tarifas actualizadas")
+            print(" Error al verificar tarifas actualizadas")
             
     except Exception as e:
-        print(f"❌ Error en verificación: {e}")
+        print(f" Error en verificación: {e}")
 
-    print("\n✅ Pruebas de tarifas de servicios completadas")
+    print("\n Pruebas de tarifas de servicios completadas")
 
 if __name__ == "__main__":
     test_service_rates_endpoints() 
