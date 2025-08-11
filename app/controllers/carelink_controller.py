@@ -6143,3 +6143,57 @@ def update_authorized_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.get("/patients/search")
+async def search_patients(
+    q: str = Query(..., description="Término de búsqueda (nombre o documento)"),
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    """
+    Buscar pacientes por nombre o documento con estadísticas de asistencia
+    """
+    try:
+        patients = crud.search_patients_with_attendance_stats(q)
+        return Response(
+            data=patients,
+            status_code=200,
+            message="Pacientes encontrados exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        return Response(
+            data=None,
+            status_code=500,
+            message=f"Error al buscar pacientes: {str(e)}",
+            error=[str(e)],
+        )
+
+
+@router.get("/cronograma_asistencia/paciente/{patient_id}/informe")
+async def get_patient_attendance_report_route(
+    patient_id: int,
+    fecha_inicio: Optional[str] = Query(None, description="Fecha de inicio (YYYY-MM-DD)"),
+    fecha_fin: Optional[str] = Query(None, description="Fecha de fin (YYYY-MM-DD)"),
+    crud: CareLinkCrud = Depends(get_crud),
+    _: AuthorizedUsers = Depends(get_current_user),
+):
+    """
+    Obtener informe detallado de asistencia de un paciente específico
+    """
+    try:
+        report = crud.get_patient_attendance_report(patient_id, fecha_inicio, fecha_fin)
+        return Response(
+            data=report,
+            status_code=200,
+            message="Informe de asistencia obtenido exitosamente",
+            error=None,
+        )
+    except Exception as e:
+        return Response(
+            data=None,
+            status_code=500,
+            message=f"Error al obtener informe de asistencia: {str(e)}",
+            error=[str(e)],
+        )
